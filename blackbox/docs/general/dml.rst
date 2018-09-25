@@ -218,7 +218,7 @@ commonly referred to as an *upsert*, being a combination of "update" and
     ...     'Ford',
     ...     1,
     ...     '2015-09-12'
-    ... ) on conflict do update set {
+    ... ) on conflict (name) do update set {
     ...     visits = visits + 1,
     ...     last_visit = '2015-01-12'
     ... };
@@ -260,7 +260,7 @@ values::
     ...     'Trillian',
     ...     5,
     ...     '2016-01-15'
-    ... ) on conflict do update set {
+    ... ) on conflict (name) do update set {
     ...     visits = visits + VALUES(visits),
     ...     last_visit = VALUES(last_visit)
     ... };
@@ -316,7 +316,7 @@ This can also be done when using a query instead of values::
     ... (
     ...     select id, name, visits, last_visit
     ...     from uservisits
-    ... ) on conflict do update set {
+    ... ) on conflict (name) do update set {
     ...     visits = visits + VALUES(visits),
     ...     last_visit = VALUES(last_visit)
     ... };
