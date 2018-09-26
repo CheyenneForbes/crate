@@ -3,7 +3,7 @@ apply from: "$rootDir/gradle/javaModule.gradle"
 archivesBaseName = 'crate-blob'
 
 versions << [
-    'tika': '1.0'
+    'tika': '1.19'
 ]
 
 dependencies {
