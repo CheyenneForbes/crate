@@ -46,6 +46,10 @@ public class PgClassTable extends StaticTableInfo {
 
     public static final RelationName IDENT = new RelationName(PgCatalogSchemaInfo.NAME, "pg_class");
 
+    private static final BytesRef TABLE_KIND = new BytesRef("r");
+    private static final BytesRef VIEW_KIND = new BytesRef("v");
+    private static final BytesRef PERSISTENCE = new BytesRef("p");
+
     static class Columns {
         static final ColumnIdent OID = new ColumnIdent("oid");
         static final ColumnIdent RELNAME = new ColumnIdent("relname");
@@ -79,11 +83,11 @@ public class PgClassTable extends StaticTableInfo {
         static final ColumnIdent RELOPTIONS = new ColumnIdent("reloptions");
     }
 
-    public static Map<ColumnIdent, RowCollectExpressionFactory<RelationInfo>> expressions() {
-        return ImmutableMap.<ColumnIdent, RowCollectExpressionFactory<RelationInfo>>builder()
-            .put(Columns.OID, () -> NestableCollectExpression.constant(0))
-            .put(Columns.RELNAME, () -> NestableCollectExpression.objToBytesRef(r -> r.ident().name()))
-            .put(Columns.RELNAMESPACE, () -> NestableCollectExpression.forFunction(r -> r.ident().schema().hashCode()))
+    public static Map<ColumnIdent, RowCollectExpressionFactory<ForeignOidProvider<RelationInfo>>> expressions() {
+        return ImmutableMap.<ColumnIdent, RowCollectExpressionFactory<ForeignOidProvider<RelationInfo>>>builder()
+            .put(Columns.OID, () -> NestableCollectExpression.forFunction(ForeignOidProvider::oid))
+            .put(Columns.RELNAME, () -> NestableCollectExpression.objToBytesRef(r -> r.delegate().ident().name()))
+            .put(Columns.RELNAMESPACE, () -> NestableCollectExpression.forFunction(ForeignOidProvider::foreignOid))
             .put(Columns.RELTYPE, () -> NestableCollectExpression.constant(0))
             .put(Columns.RELOFTYPE, () -> NestableCollectExpression.constant(0))
             .put(Columns.RELOWNER, () -> NestableCollectExpression.constant(0))
@@ -97,12 +101,13 @@ public class PgClassTable extends StaticTableInfo {
             .put(Columns.RELTOASTIDXID, () -> NestableCollectExpression.constant(0))
             .put(Columns.RELHASINDEX, () -> NestableCollectExpression.constant(false))
             .put(Columns.RELISSHARED, () -> NestableCollectExpression.constant(false))
-            .put(Columns.RELPERSISTENCE, () -> NestableCollectExpression.constant(new BytesRef("p")))
-            .put(Columns.RELKIND, () -> NestableCollectExpression.constant(new BytesRef("r")))
+            .put(Columns.RELPERSISTENCE, () -> NestableCollectExpression.constant(PERSISTENCE))
+            .put(Columns.RELKIND, () -> NestableCollectExpression.objToBytesRef(
+                r -> r.delegate().relationType() == RelationType.VIEW ? VIEW_KIND : TABLE_KIND))
             .put(Columns.RELNATTS, () -> NestableCollectExpression.constant(0))
             .put(Columns.RELCHECKS, () -> NestableCollectExpression.constant(0))
             .put(Columns.RELHASOIDS, () -> NestableCollectExpression.constant(false))
-            .put(Columns.RELHASPKEY, () -> NestableCollectExpression.forFunction(r -> r.primaryKey().size() > 0))
+            .put(Columns.RELHASPKEY, () -> NestableCollectExpression.forFunction(r -> r.delegate().primaryKey().size() > 0))
             .put(Columns.RELHASRULES, () -> NestableCollectExpression.constant(false))
             .put(Columns.RELHASTRIGGERS, () -> NestableCollectExpression.constant(false))
             .put(Columns.RELHASSUBCLASS, () -> NestableCollectExpression.constant(false))
@@ -112,7 +117,6 @@ public class PgClassTable extends StaticTableInfo {
             .put(Columns.RELACL, () -> NestableCollectExpression.constant(null))
             .put(Columns.RELOPTIONS, () -> NestableCollectExpression.constant(null))
             .build();
-
     }
 
     PgClassTable() {

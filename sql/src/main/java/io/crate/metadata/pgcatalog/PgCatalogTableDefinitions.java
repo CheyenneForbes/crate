@@ -26,6 +26,7 @@ import io.crate.analyze.user.Privilege;
 import io.crate.execution.engine.collect.sources.InformationSchemaIterables;
 import io.crate.expression.reference.StaticTableDefinition;
 import io.crate.metadata.RelationName;
+import io.crate.metadata.table.SchemaInfo;
 import io.crate.protocols.postgres.types.PGTypes;
 import org.elasticsearch.common.inject.Inject;
 
@@ -48,15 +49,20 @@ public class PgCatalogTableDefinitions {
             PgTypeTable.expressions()
         ));
         tableDefinitions.put(PgClassTable.IDENT, new StaticTableDefinition<>(
-            informationSchemaIterables::relations,
-            (user, t) -> user.hasAnyPrivilege(Privilege.Clazz.TABLE, t.ident().fqn())
+            () -> new ForeignOidIterable<>(
+                new OidIterable<>(informationSchemaIterables.relations()),
+                new OidIterable<>(informationSchemaIterables.schemas()),
+                r -> r.ident().schema(),
+                SchemaInfo::name
+                ),
+            (user, t) -> user.hasAnyPrivilege(Privilege.Clazz.TABLE, t.delegate().ident().fqn())
                          // we also need to check for views which have privileges set
-                         || user.hasAnyPrivilege(Privilege.Clazz.VIEW, t.ident().fqn()),
+                         || user.hasAnyPrivilege(Privilege.Clazz.VIEW, t.delegate().ident().fqn()),
             PgClassTable.expressions()
         ));
         tableDefinitions.put(PgNamespaceTable.IDENT, new StaticTableDefinition<>(
-            informationSchemaIterables::schemas,
-            (user, s) -> user.hasAnyPrivilege(Privilege.Clazz.SCHEMA, s.name()),
+            () ->  new OidIterable<>(informationSchemaIterables.schemas()),
+            (user, s) -> user.hasAnyPrivilege(Privilege.Clazz.SCHEMA, s.delegate().name()),
             PgNamespaceTable.expressions()
         ));
         tableDefinitions.put(PgAttrDefTable.IDENT, new StaticTableDefinition<>(

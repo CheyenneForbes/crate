@@ -52,10 +52,10 @@ public class PgNamespaceTable extends StaticTableInfo {
         static final ColumnIdent NSPACL = new ColumnIdent("nspacl");
     }
 
-    public static Map<ColumnIdent, RowCollectExpressionFactory<SchemaInfo>> expressions() {
-        return ImmutableMap.<ColumnIdent, RowCollectExpressionFactory<SchemaInfo>>builder()
-            .put(Columns.OID, () -> NestableCollectExpression.forFunction(s -> s.name().hashCode()))
-            .put(Columns.NSPNAME, () -> NestableCollectExpression.objToBytesRef(SchemaInfo::name))
+    public static Map<ColumnIdent, RowCollectExpressionFactory<OidProvider<SchemaInfo>>> expressions() {
+        return ImmutableMap.<ColumnIdent, RowCollectExpressionFactory<OidProvider<SchemaInfo>>>builder()
+            .put(Columns.OID, () -> NestableCollectExpression.forFunction(OidProvider::oid))
+            .put(Columns.NSPNAME, () -> NestableCollectExpression.objToBytesRef(s -> s.delegate().name()))
             .put(Columns.NSPOWNER, () -> NestableCollectExpression.constant(0))
             .put(Columns.NSPACL, () -> NestableCollectExpression.constant(null))
             .build();
