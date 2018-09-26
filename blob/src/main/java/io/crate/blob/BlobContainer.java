@@ -41,6 +41,37 @@ import java.util.NoSuchElementException;
 import java.util.UUID;
 import java.util.concurrent.Semaphore;
 
+import java.io.BufferedOutputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.Socket;
+//import java.net.SocketException;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+
+import javax.xml.transform.OutputKeys;
+import javax.xml.transform.TransformerConfigurationException;
+import javax.xml.transform.sax.SAXTransformerFactory;
+import javax.xml.transform.sax.TransformerHandler;
+import javax.xml.transform.stream.StreamResult;
+
+import org.apache.tika.exception.TikaException;
+import org.apache.tika.metadata.Metadata;
+import org.apache.tika.parser.AutoDetectParser;
+import org.apache.tika.parser.ParseContext;
+import org.xml.sax.SAXException;
+
+import org.xml.sax.ContentHandler;
+
+import org.apache.tika.extractor.EmbeddedDocumentExtractor;
+
+import java.io.FileInputStream;
+
+import io.crate.blob.ImageRewritingContentHandler;
+import io.crate.blob.FileEmbeddedDocumentEtractor;
+
 public class BlobContainer {
 
     private static final Logger logger = Loggers.getLogger(BlobContainer.class);
