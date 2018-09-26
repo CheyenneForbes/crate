@@ -190,6 +190,83 @@ public class BlobContainer {
         }
     }
 
+    public int virusScan(String digest) throws IOException {
+        try {
+            File _file = getFile(digest);
+            if (_file.length() < (30 * 1024 * 1024)) { //30mb
+                InputStream is = new FileInputStream(_file);
+                try (Socket s = new Socket("127.0.0.1",3310); OutputStream outs = new BufferedOutputStream(s.getOutputStream())) {
+                    s.setSoTimeout(DEFAULT_TIMEOUT); 
+
+                    // handshake
+                    outs.write(asBytes("zINSTREAM\0"));
+                    outs.flush();
+                    byte[] chunk = new byte[CHUNK_SIZE];
+
+                    try (InputStream clamIs = s.getInputStream()) {
+                        // send data
+                        int read = is.read(chunk);
+                        while (read >= 0) {
+                            // The format of the chunk is: '<length><data>' where <length> is the size of the following data in bytes expressed as a 4 byte unsigned
+                            // integer in network byte order and <data> is the actual chunk. Streaming is terminated by sending a zero-length chunk.
+                            byte[] chunkSize = ByteBuffer.allocate(4).putInt(read).array();
+
+                            outs.write(chunkSize);
+                            outs.write(chunk, 0, read);
+                            if (clamIs.available() > 0) {
+                                // reply from server before scan command has been terminated. 
+                                byte[] reply = assertSizeLimit(readAll(clamIs));
+                                throw new IOException("Scan aborted. Reply from server: " + new String(reply, StandardCharsets.US_ASCII));
+                            }
+                            read = is.read(chunk);
+                        }
+
+                        // terminate scan
+                        outs.write(new byte[]{0,0,0,0});
+                        outs.flush();
+                        // read reply
+                        String r = new String(readAll(clamIs), StandardCharsets.US_ASCII);
+                        if (r.contains("OK") && !r.contains("FOUND")) {
+                            return 0;
+                        } else {
+                            return 1;
+                        }
+                    }
+                }
+            }
+            return 2;
+        } catch (FileNotFoundException e) {
+            throw new DigestNotFoundException(digest);
+        }
+    }
+
+    public String tikaAsHtml(String digest) throws IOException, TikaException, TransformerConfigurationException, SAXException {
+        try {
+            File _file = getFile(digest);
+            if (_file.length() < (30 * 1024 * 1024)) { //30mb
+                SAXTransformerFactory factory = (SAXTransformerFactory) SAXTransformerFactory.newInstance();
+                TransformerHandler handler = factory.newTransformerHandler();
+                handler.getTransformer().setOutputProperty(OutputKeys.METHOD, "html");
+                handler.getTransformer().setOutputProperty(OutputKeys.INDENT, "yes");
+                handler.getTransformer().setOutputProperty(OutputKeys.ENCODING, "UTF-8");
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                handler.setResult(new StreamResult(out));
+                // ExpandedTitleContentHandler handler1 = new ExpandedTitleContentHandler(handler);
+                ContentHandler handler1 = new ImageRewritingContentHandler(handler);
+                ParseContext context = new ParseContext();
+                context.set(EmbeddedDocumentExtractor.class, new FileEmbeddedDocumentEtractor());
+                AutoDetectParser tikaParser = new AutoDetectParser();
+                tikaParser.parse(new FileInputStream(_file), handler1, new Metadata(), context);
+
+                return new String(out.toByteArray(), "UTF-8");
+            } else {
+                return new String();
+            }
+        } catch (FileNotFoundException e) {
+            throw new DigestNotFoundException(digest);
+        }
+    }
+
     private static class RecursiveFileIterable implements Iterable<File> {
 
         private final File[] subDirs;
