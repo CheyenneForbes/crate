@@ -190,6 +190,35 @@ public class BlobContainer {
         }
     }
 
+    // "do not exceed StreamMaxLength as defined in clamd.conf, otherwise clamd will reply with INSTREAM size limit exceeded and close the connection."
+    private static final int CHUNK_SIZE = 2048;
+    private static final int DEFAULT_TIMEOUT = 500;
+
+    private byte[] assertSizeLimit(byte[] reply) {
+        String r = new String(reply, StandardCharsets.US_ASCII);
+        if (r.startsWith("INSTREAM size limit exceeded.")) 
+            return null;
+        return reply;
+    }
+
+    // byte conversion based on ASCII character set regardless of the current system locale
+    private static byte[] asBytes(String s) {
+        return s.getBytes(StandardCharsets.US_ASCII);
+    }
+
+    // reads all available bytes from the stream
+    private static byte[] readAll(InputStream is) throws IOException {
+        ByteArrayOutputStream tmp = new ByteArrayOutputStream();
+
+        byte[] buf = new byte[2000];
+        int read = 0;
+        do {
+            read = is.read(buf);
+            tmp.write(buf, 0, read);
+        } while ((read > 0) && (is.available() > 0));
+        return tmp.toByteArray();
+    }
+
     public int virusScan(String digest) throws IOException {
         try {
             File _file = getFile(digest);
