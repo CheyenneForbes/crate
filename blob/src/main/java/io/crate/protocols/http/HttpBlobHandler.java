@@ -60,6 +60,7 @@ import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.util.concurrent.EsRejectedExecutionException;
 import org.elasticsearch.index.IndexNotFoundException;
+import org.apache.tika.exception.TikaException;
 
 import java.io.IOException;
 import java.io.RandomAccessFile;
@@ -305,10 +306,42 @@ public class HttpBlobHandler extends SimpleChannelInboundHandler<Object> {
 
     private void get(HttpRequest request, String index, final String digest) throws IOException {
         String range = request.headers().get(HttpHeaderNames.RANGE);
-        if (range != null) {
-            partialContentResponse(range, request, index, digest);
+        QueryStringDecoder queryDecoder = new QueryStringDecoder(request.getUri(), true);
+        Map<String, List<String>> parameters = queryDecoder.parameters();
+        if (parameters.containsKey("virusScan")) {
+            BlobShard blobShard = localBlobShard(index, digest);
+            switch (blobShard.blobContainer().virusScan(digest)) {
+                case 0:
+                    simpleResponse(HttpResponseStatus.OK);
+                    break;
+                case 1:
+                    simpleResponse(HttpResponseStatus.FOUND);
+                    break;
+                default:
+                    simpleResponse(HttpResponseStatus.EXPECTATION_FAILED);
+            }
+        } else if (parameters.containsKey("asHtml")) {
+            try {
+                BlobShard blobShard = localBlobShard(index, digest);
+                String body = blobShard.blobContainer().tikaAsHtml(digest);
+                if (body != null) {
+                    simpleResponse(HttpResponseStatus.OK, body);
+                } else {
+                    simpleResponse(HttpResponseStatus.EXPECTATION_FAILED);
+                }
+            } catch (Exception ex) {
+                if (ex instanceof TikaException) {
+                    simpleResponse(HttpResponseStatus.NOT_FOUND);
+                } else {
+                    simpleResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR);
+                }
+            }
         } else {
-            fullContentResponse(request, index, digest);
+            if (range != null) {
+                partialContentResponse(range, request, index, digest);
+            } else {
+                fullContentResponse(request, index, digest);
+            }
         }
     }
 
