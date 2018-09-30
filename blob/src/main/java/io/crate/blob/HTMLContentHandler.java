@@ -29,9 +29,23 @@ import org.xml.sax.helpers.AttributesImpl;
 
 import org.apache.tika.sax.ContentHandlerDecorator;
 
-public class ImageRewritingContentHandler extends ContentHandlerDecorator {
-    public ImageRewritingContentHandler(ContentHandler handler) {
+public class HTMLContentHandler extends ContentHandlerDecorator {
+
+    private boolean isTitleTagOpen;
+    private static final String TITLE_TAG = "TITLE";
+
+    public HTMLContentHandler() {
+        super();
+    }
+
+    public HTMLContentHandler(ContentHandler handler) {
         super(handler);
+    }
+
+    @Override
+    public void startDocument() throws SAXException {
+        super.startDocument();
+        isTitleTagOpen = false;
     }
 
     @Override
@@ -57,6 +71,34 @@ public class ImageRewritingContentHandler extends ContentHandlerDecorator {
             super.startElement(uri, localName, name, attrs);
         } else {
             super.startElement(uri, localName, name, origAttrs);
+        }
+
+        if (TITLE_TAG.equalsIgnoreCase(localName) && XHTMLContentHandler.XHTML.equals(uri)) {
+            isTitleTagOpen = true;
+        }
+    }
+
+    @Override
+    public void endElement(String uri, String localName, String qName)
+            throws SAXException {
+        super.endElement(uri, localName, qName);
+        if (TITLE_TAG.equalsIgnoreCase(localName) && XHTMLContentHandler.XHTML.equals(uri)) {
+            isTitleTagOpen = false;
+        }
+    }
+
+    @Override
+    public void characters(char[] ch, int start, int length)
+            throws SAXException {
+        if (isTitleTagOpen && length == 0) {
+            // Hack to close the title tag
+            try {
+                super.characters(new char[0], 0, 1);
+            } catch (ArrayIndexOutOfBoundsException e) {
+                // Expected, just wanted to close the title tag
+            }
+        } else {
+            super.characters(ch, start, length);
         }
     }
 }
