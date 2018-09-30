@@ -69,7 +69,7 @@ import org.apache.tika.extractor.EmbeddedDocumentExtractor;
 
 import java.io.FileInputStream;
 
-import io.crate.blob.ImageRewritingContentHandler;
+import io.crate.blob.HTMLContentHandler;
 import io.crate.blob.FileEmbeddedDocumentEtractor;
 
 public class BlobContainer {
@@ -311,12 +311,11 @@ public class BlobContainer {
                 handler.getTransformer().setOutputProperty(OutputKeys.ENCODING, "UTF-8");
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
                 handler.setResult(new StreamResult(out));
-                // ExpandedTitleContentHandler handler1 = new ExpandedTitleContentHandler(handler);
-                ContentHandler handler1 = new ImageRewritingContentHandler(handler);
+                ContentHandler handler2 = new HTMLContentHandler(handler);
                 ParseContext context = new ParseContext();
                 context.set(EmbeddedDocumentExtractor.class, new FileEmbeddedDocumentEtractor());
                 AutoDetectParser tikaParser = new AutoDetectParser();
-                tikaParser.parse(new FileInputStream(_file), handler1, new Metadata(), context);
+                tikaParser.parse(new FileInputStream(_file), handler2, new Metadata(), context);
 
                 return new String(out.toByteArray(), "UTF-8");
             } else {
