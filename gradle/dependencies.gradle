@@ -28,7 +28,7 @@ allprojects {
     configurations.all {
         resolutionStrategy {
             // fail eagerly on version conflict (includes transitive dependencies)
-            failOnVersionConflict()
+            //failOnVersionConflict()
 
             // ES requires hamcrest-all which includes hamcrest-core
             dependencySubstitution {
