@@ -29,6 +29,8 @@ import org.xml.sax.helpers.AttributesImpl;
 
 import org.apache.tika.sax.ContentHandlerDecorator;
 
+import org.apache.tika.sax.XHTMLContentHandler;
+
 public class HTMLContentHandler extends ContentHandlerDecorator {
 
     private boolean isTitleTagOpen;
