@@ -2,17 +2,13 @@ apply from: "$rootDir/gradle/javaModule.gradle"
 
 archivesBaseName = 'crate-blob'
 
-versions << [
-    'tika': '1.19'
-]
-
 dependencies {
     compile project(':core')
     compile project(':http')
     compile project(':es:es-transport')
     compile "org.apache.tika:tika-core:${versions.tika}"
     compile "org.apache.tika:tika-parsers:${versions.tika}"
-    compile 'commons-io:commons-io:2.6'
+    compile 'commons-io:commons-io:${versions.commonsio}'
     testCompile project(':integration-testing')
 }
 
