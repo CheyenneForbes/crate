@@ -79,6 +79,21 @@ import static io.netty.handler.codec.http.HttpResponseStatus.PARTIAL_CONTENT;
 import static io.netty.handler.codec.http.HttpResponseStatus.TEMPORARY_REDIRECT;
 import static io.netty.handler.codec.http.HttpVersion.HTTP_1_1;
 
+import org.elasticsearch.http.netty4.cors.Netty4CorsConfig;
+import org.elasticsearch.http.netty4.cors.Netty4CorsHandler;
+
+import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.Strings;
+import org.elasticsearch.http.netty4.cors.Netty4CorsConfig;
+import org.elasticsearch.http.netty4.cors.Netty4CorsConfigBuilder;
+import org.elasticsearch.rest.RestUtils;
+import static org.elasticsearch.http.HttpTransportSettings.SETTING_CORS_ALLOW_CREDENTIALS;
+import static org.elasticsearch.http.HttpTransportSettings.SETTING_CORS_ALLOW_HEADERS;
+import static org.elasticsearch.http.HttpTransportSettings.SETTING_CORS_ALLOW_METHODS;
+import static org.elasticsearch.http.HttpTransportSettings.SETTING_CORS_ALLOW_ORIGIN;
+import static org.elasticsearch.http.HttpTransportSettings.SETTING_CORS_ENABLED;
+import static org.elasticsearch.http.HttpTransportSettings.SETTING_CORS_MAX_AGE;
+
 
 public class HttpBlobHandler extends SimpleChannelInboundHandler<Object> {
 
@@ -104,6 +119,8 @@ public class HttpBlobHandler extends SimpleChannelInboundHandler<Object> {
     private ChannelHandlerContext ctx;
     private String index;
     private String digest;
+    
+    private final Netty4CorsConfig corsConfig;
 
     public HttpBlobHandler(BlobService blobService, BlobIndicesService blobIndicesService) {
         super(false);
@@ -111,6 +128,7 @@ public class HttpBlobHandler extends SimpleChannelInboundHandler<Object> {
         this.blobIndicesService = blobIndicesService;
         this.activeScheme = SCHEME_HTTP;
         this.sslEnabled = false;
+        this.corsConfig = corsConfig;
     }
 
     private boolean possibleRedirect(HttpRequest request, String index, String digest) {
@@ -472,6 +490,35 @@ public class HttpBlobHandler extends SimpleChannelInboundHandler<Object> {
         response.headers().set(HttpHeaderNames.ACCEPT_RANGES, "bytes");
         response.headers().set(HttpHeaderNames.EXPIRES, EXPIRES_VALUE);
         response.headers().set(HttpHeaderNames.CACHE_CONTROL, CACHE_CONTROL_VALUE);
+
+        Settings settings = blobService.getSettings();
+        if (SETTING_CORS_ENABLED.get(settings) == false) {
+            return Netty4CorsConfigBuilder.forOrigins().disable().build();
+        }
+        String origin = SETTING_CORS_ALLOW_ORIGIN.get(settings);
+        final Netty4CorsConfigBuilder builder;
+        if (Strings.isNullOrEmpty(origin)) {
+            builder = Netty4CorsConfigBuilder.forOrigins();
+        } else if (origin.equals(ANY_ORIGIN)) {
+            builder = Netty4CorsConfigBuilder.forAnyOrigin();
+        } else {
+            Pattern p = RestUtils.checkCorsSettingForRegex(origin);
+            if (p == null) {
+                builder = Netty4CorsConfigBuilder.forOrigins(RestUtils.corsSettingAsArray(origin));
+            } else {
+                builder = Netty4CorsConfigBuilder.forPattern(p);
+            }
+        }
+        if (SETTING_CORS_ALLOW_CREDENTIALS.get(settings)) {
+            builder.allowCredentials();
+        }
+        String[] strMethods = Strings.tokenizeToStringArray(SETTING_CORS_ALLOW_METHODS.get(settings), ",");
+        HttpMethod[] methods = Arrays.asList(strMethods).stream().map(HttpMethod::valueOf).toArray(size -> new HttpMethod[size]);
+        builder.allowedRequestMethods(methods)
+        builder.maxAge(SETTING_CORS_MAX_AGE.get(settings))
+        builder.allowedRequestHeaders(Strings.tokenizeToStringArray(SETTING_CORS_ALLOW_HEADERS.get(settings), ","));
+        Netty4CorsConfig corsConfig = builder.shortCircuit().build();
+        Netty4CorsHandler.setCorsResponseHeaders(currentMessage, response, corsConfig);
     }
 
     private void put(HttpContent content, String index, String digest) throws IOException {
