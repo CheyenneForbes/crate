@@ -120,8 +120,6 @@ public class HttpBlobHandler extends SimpleChannelInboundHandler<Object> {
     private ChannelHandlerContext ctx;
     private String index;
     private String digest;
-    
-    private final Netty4CorsConfig corsConfig;
 
     public HttpBlobHandler(BlobService blobService, BlobIndicesService blobIndicesService) {
         super(false);
@@ -129,7 +127,6 @@ public class HttpBlobHandler extends SimpleChannelInboundHandler<Object> {
         this.blobIndicesService = blobIndicesService;
         this.activeScheme = SCHEME_HTTP;
         this.sslEnabled = false;
-        this.corsConfig = corsConfig;
     }
 
     private boolean possibleRedirect(HttpRequest request, String index, String digest) {
