@@ -499,7 +499,7 @@ public class HttpBlobHandler extends SimpleChannelInboundHandler<Object> {
         final Netty4CorsConfigBuilder builder;
         if (Strings.isNullOrEmpty(origin)) {
             builder = Netty4CorsConfigBuilder.forOrigins();
-        } else if (origin.equals(ANY_ORIGIN)) {
+        } else if (origin.equals("*")) {
             builder = Netty4CorsConfigBuilder.forAnyOrigin();
         } else {
             Pattern p = RestUtils.checkCorsSettingForRegex(origin);
