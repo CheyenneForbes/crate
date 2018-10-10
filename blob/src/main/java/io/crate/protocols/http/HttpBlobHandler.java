@@ -492,32 +492,34 @@ public class HttpBlobHandler extends SimpleChannelInboundHandler<Object> {
         response.headers().set(HttpHeaderNames.CACHE_CONTROL, CACHE_CONTROL_VALUE);
 
         Settings settings = blobService.getSettings();
+        Netty4CorsConfig corsConfig;
         if (SETTING_CORS_ENABLED.get(settings) == false) {
-            return Netty4CorsConfigBuilder.forOrigins().disable().build();
-        }
-        String origin = SETTING_CORS_ALLOW_ORIGIN.get(settings);
-        final Netty4CorsConfigBuilder builder;
-        if (Strings.isNullOrEmpty(origin)) {
-            builder = Netty4CorsConfigBuilder.forOrigins();
-        } else if (origin.equals("*")) {
-            builder = Netty4CorsConfigBuilder.forAnyOrigin();
-        } else {
-            Pattern p = RestUtils.checkCorsSettingForRegex(origin);
-            if (p == null) {
-                builder = Netty4CorsConfigBuilder.forOrigins(RestUtils.corsSettingAsArray(origin));
+            corsConfig = Netty4CorsConfigBuilder.forOrigins().disable().build();
+        } else{
+            String origin = SETTING_CORS_ALLOW_ORIGIN.get(settings);
+            final Netty4CorsConfigBuilder builder;
+            if (Strings.isNullOrEmpty(origin)) {
+                builder = Netty4CorsConfigBuilder.forOrigins();
+            } else if (origin.equals("*")) {
+                builder = Netty4CorsConfigBuilder.forAnyOrigin();
             } else {
-                builder = Netty4CorsConfigBuilder.forPattern(p);
+                Pattern p = RestUtils.checkCorsSettingForRegex(origin);
+                if (p == null) {
+                    builder = Netty4CorsConfigBuilder.forOrigins(RestUtils.corsSettingAsArray(origin));
+                } else {
+                    builder = Netty4CorsConfigBuilder.forPattern(p);
+                }
             }
+            if (SETTING_CORS_ALLOW_CREDENTIALS.get(settings)) {
+                builder.allowCredentials();
+            }
+            String[] strMethods = Strings.tokenizeToStringArray(SETTING_CORS_ALLOW_METHODS.get(settings), ",");
+            HttpMethod[] methods = Arrays.asList(strMethods).stream().map(HttpMethod::valueOf).toArray(size -> new HttpMethod[size]);
+            builder.allowedRequestMethods(methods);
+            builder.maxAge(SETTING_CORS_MAX_AGE.get(settings));
+            builder.allowedRequestHeaders(Strings.tokenizeToStringArray(SETTING_CORS_ALLOW_HEADERS.get(settings), ","));
+            corsConfig = builder.shortCircuit().build();
         }
-        if (SETTING_CORS_ALLOW_CREDENTIALS.get(settings)) {
-            builder.allowCredentials();
-        }
-        String[] strMethods = Strings.tokenizeToStringArray(SETTING_CORS_ALLOW_METHODS.get(settings), ",");
-        HttpMethod[] methods = Arrays.asList(strMethods).stream().map(HttpMethod::valueOf).toArray(size -> new HttpMethod[size]);
-        builder.allowedRequestMethods(methods);
-        builder.maxAge(SETTING_CORS_MAX_AGE.get(settings));
-        builder.allowedRequestHeaders(Strings.tokenizeToStringArray(SETTING_CORS_ALLOW_HEADERS.get(settings), ","));
-        Netty4CorsConfig corsConfig = builder.shortCircuit().build();
         Netty4CorsHandler.setCorsResponseHeaders(currentMessage, response, corsConfig);
     }
 
