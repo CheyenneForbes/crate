@@ -514,8 +514,8 @@ public class HttpBlobHandler extends SimpleChannelInboundHandler<Object> {
         }
         String[] strMethods = Strings.tokenizeToStringArray(SETTING_CORS_ALLOW_METHODS.get(settings), ",");
         HttpMethod[] methods = Arrays.asList(strMethods).stream().map(HttpMethod::valueOf).toArray(size -> new HttpMethod[size]);
-        builder.allowedRequestMethods(methods)
-        builder.maxAge(SETTING_CORS_MAX_AGE.get(settings))
+        builder.allowedRequestMethods(methods);
+        builder.maxAge(SETTING_CORS_MAX_AGE.get(settings));
         builder.allowedRequestHeaders(Strings.tokenizeToStringArray(SETTING_CORS_ALLOW_HEADERS.get(settings), ","));
         Netty4CorsConfig corsConfig = builder.shortCircuit().build();
         Netty4CorsHandler.setCorsResponseHeaders(currentMessage, response, corsConfig);
