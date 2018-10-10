@@ -58,6 +58,8 @@ public class BlobService extends AbstractLifecycleComponent {
     private final Client client;
     private final PipelineRegistry piplineRegistry;
 
+    private final Settings settings;
+
     @Inject
     public BlobService(Settings settings,
                        ClusterService clusterService,
@@ -69,6 +71,7 @@ public class BlobService extends AbstractLifecycleComponent {
                        Client client,
                        PipelineRegistry pipelineRegistry) {
         super(settings);
+        this.settings = settings;
         this.clusterService = clusterService;
         this.blobIndicesService = blobIndicesService;
         this.blobHeadRequestHandler = blobHeadRequestHandler;
@@ -77,6 +80,10 @@ public class BlobService extends AbstractLifecycleComponent {
         this.blobTransferTarget = blobTransferTarget;
         this.client = client;
         this.piplineRegistry = pipelineRegistry;
+    }
+
+    public Settings getSettings() {
+        return this.settings;
     }
 
     public RemoteDigestBlob newBlob(String index, String digest) {
