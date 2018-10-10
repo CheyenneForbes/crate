@@ -88,6 +88,7 @@ import org.elasticsearch.common.Strings;
 import org.elasticsearch.http.netty4.cors.Netty4CorsConfig;
 import org.elasticsearch.http.netty4.cors.Netty4CorsConfigBuilder;
 import org.elasticsearch.rest.RestUtils;
+
 import static org.elasticsearch.http.HttpTransportSettings.SETTING_CORS_ALLOW_CREDENTIALS;
 import static org.elasticsearch.http.HttpTransportSettings.SETTING_CORS_ALLOW_HEADERS;
 import static org.elasticsearch.http.HttpTransportSettings.SETTING_CORS_ALLOW_METHODS;
@@ -493,7 +494,7 @@ public class HttpBlobHandler extends SimpleChannelInboundHandler<Object> {
         Netty4CorsConfig corsConfig;
         if (SETTING_CORS_ENABLED.get(settings) == false) {
             corsConfig = Netty4CorsConfigBuilder.forOrigins().disable().build();
-        } else{
+        } else {
             String origin = SETTING_CORS_ALLOW_ORIGIN.get(settings);
             final Netty4CorsConfigBuilder builder;
             if (Strings.isNullOrEmpty(origin)) {
