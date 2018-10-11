@@ -90,7 +90,7 @@ public class HttpBlobHandler extends SimpleChannelInboundHandler<Object> {
     private static final String CACHE_CONTROL_VALUE = "max-age=315360000";
     private static final String EXPIRES_VALUE = "Thu, 31 Dec 2037 23:59:59 GMT";
     private static final String BLOBS_ENDPOINT = "/_blobs";
-    public static final Pattern BLOBS_PATTERN = Pattern.compile(String.format(Locale.ENGLISH, "^%s/([^_/][^/]*)/([0-9a-f]{40})(\?([^=]+)=([^&]+))?$", BLOBS_ENDPOINT));
+    public static final Pattern BLOBS_PATTERN = Pattern.compile(String.format(Locale.ENGLISH, "^%s/([^_/][^/]*)/([0-9a-f]{40})(\\?([^=]+)=([^&]+))?$", BLOBS_ENDPOINT));
     private static final Logger LOGGER = Loggers.getLogger(HttpBlobHandler.class);
 
     private static final Pattern CONTENT_RANGE_PATTERN = Pattern.compile("^bytes=(\\d+)-(\\d*)$");
@@ -317,7 +317,6 @@ public class HttpBlobHandler extends SimpleChannelInboundHandler<Object> {
     }
 
     private void get(HttpRequest request, String index, final String digest) throws IOException {
-        String range = request.headers().get(HttpHeaderNames.RANGE);
         QueryStringDecoder queryDecoder = new QueryStringDecoder(request.getUri(), true);
         Map<String, List<String>> parameters = queryDecoder.parameters();
         if (parameters.containsKey("virusScan")) {
@@ -349,6 +348,7 @@ public class HttpBlobHandler extends SimpleChannelInboundHandler<Object> {
                 }
             }
         } else {
+            String range = request.headers().get(HttpHeaderNames.RANGE);
             if (range != null) {
                 partialContentResponse(range, request, index, digest);
             } else {
