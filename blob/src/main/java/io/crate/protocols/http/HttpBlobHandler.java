@@ -71,6 +71,11 @@ import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import io.netty.handler.codec.http.QueryStringDecoder;
+
+import java.util.List;
+import java.util.Map;
+
 import static io.netty.handler.codec.http.HttpResponseStatus.CONTINUE;
 import static io.netty.handler.codec.http.HttpResponseStatus.PARTIAL_CONTENT;
 import static io.netty.handler.codec.http.HttpResponseStatus.TEMPORARY_REDIRECT;
@@ -319,28 +324,28 @@ public class HttpBlobHandler extends SimpleChannelInboundHandler<Object> {
             BlobShard blobShard = localBlobShard(index, digest);
             switch (blobShard.blobContainer().virusScan(digest)) {
                 case 0:
-                    simpleResponse(HttpResponseStatus.OK);
+                    simpleResponse(request, HttpResponseStatus.OK);
                     break;
                 case 1:
-                    simpleResponse(HttpResponseStatus.FOUND);
+                    simpleResponse(request, HttpResponseStatus.FOUND);
                     break;
                 default:
-                    simpleResponse(HttpResponseStatus.EXPECTATION_FAILED);
+                    simpleResponse(request, HttpResponseStatus.EXPECTATION_FAILED);
             }
         } else if (parameters.containsKey("asHtml")) {
             try {
                 BlobShard blobShard = localBlobShard(index, digest);
                 String body = blobShard.blobContainer().tikaAsHtml(digest);
                 if (body != null) {
-                    simpleResponse(HttpResponseStatus.OK, body);
+                    simpleResponse(request, HttpResponseStatus.OK, body);
                 } else {
-                    simpleResponse(HttpResponseStatus.EXPECTATION_FAILED);
+                    simpleResponse(request, HttpResponseStatus.EXPECTATION_FAILED);
                 }
             } catch (Exception ex) {
                 if (ex instanceof TikaException) {
-                    simpleResponse(HttpResponseStatus.NOT_FOUND);
+                    simpleResponse(request, HttpResponseStatus.NOT_FOUND);
                 } else {
-                    simpleResponse(HttpResponseStatus.INTERNAL_SERVER_ERROR);
+                    simpleResponse(request, HttpResponseStatus.INTERNAL_SERVER_ERROR);
                 }
             }
         } else {
