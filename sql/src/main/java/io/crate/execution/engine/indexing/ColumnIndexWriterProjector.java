@@ -39,6 +39,7 @@ import io.crate.expression.symbol.Symbol;
 import io.crate.metadata.ColumnIdent;
 import io.crate.metadata.Functions;
 import io.crate.metadata.Reference;
+import io.crate.metadata.TransactionContext;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.settings.Settings;
 
@@ -59,9 +60,11 @@ public class ColumnIndexWriterProjector implements Projector {
                                       NodeJobsCounter nodeJobsCounter,
                                       ScheduledExecutorService scheduler,
                                       Executor executor,
+                                      TransactionContext txnCtx,
                                       Functions functions,
                                       Settings settings,
-                                      Settings tableSettings,
+                                      int targetTableNumShards,
+                                      int targetTableNumReplicas,
                                       Supplier<String> indexNameResolver,
                                       TransportActionProvider transportActionProvider,
                                       List<ColumnIdent> primaryKeyIdents,
@@ -77,7 +80,7 @@ public class ColumnIndexWriterProjector implements Projector {
                                       boolean autoCreateIndices,
                                       UUID jobId) {
         RowShardResolver rowShardResolver = new RowShardResolver(
-            functions, primaryKeyIdents, primaryKeySymbols, clusteredByColumn, routingSymbol);
+            txnCtx, functions, primaryKeyIdents, primaryKeySymbols, clusteredByColumn, routingSymbol);
         assert columnReferences.size() == insertInputs.size()
             : "number of insert inputs must be equal to the number of columns";
 
@@ -92,12 +95,16 @@ public class ColumnIndexWriterProjector implements Projector {
             assignments = convert.sources();
         }
         ShardUpsertRequest.Builder builder = new ShardUpsertRequest.Builder(
+            txnCtx.userName(),
+            txnCtx.currentSchema(),
             ShardingUpsertExecutor.BULK_REQUEST_TIMEOUT_SETTING.setting().get(settings),
             ignoreDuplicateKeys ? DuplicateKeyAction.IGNORE : DuplicateKeyAction.UPDATE_OR_FAIL,
             true, // continueOnErrors
             updateColumnNames,
             columnReferences.toArray(new Reference[columnReferences.size()]),
-            jobId);
+            jobId,
+            true
+        );
 
         InputRow insertValues = new InputRow(insertInputs);
         Function<String, ShardUpsertRequest.Item> itemFactory = id -> new ShardUpsertRequest.Item(
@@ -118,14 +125,15 @@ public class ColumnIndexWriterProjector implements Projector {
             autoCreateIndices,
             transportActionProvider.transportShardUpsertAction()::execute,
             transportActionProvider.transportBulkCreateIndicesAction(),
-            tableSettings,
+            targetTableNumShards,
+            targetTableNumReplicas,
             UpsertResultContext.forRowCount()
         );
     }
 
     @Override
     public BatchIterator<Row> apply(BatchIterator<Row> batchIterator) {
-        return CollectingBatchIterator.newInstance(batchIterator, shardingUpsertExecutor);
+        return CollectingBatchIterator.newInstance(batchIterator, shardingUpsertExecutor, batchIterator.involvesIO());
     }
 
     @Override

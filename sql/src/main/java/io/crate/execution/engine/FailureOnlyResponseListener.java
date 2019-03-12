@@ -22,9 +22,9 @@
 
 package io.crate.execution.engine;
 
-import io.crate.execution.jobs.transport.JobResponse;
 import io.crate.data.RowConsumer;
 import io.crate.execution.dsl.phases.ExecutionPhase;
+import io.crate.execution.jobs.transport.JobResponse;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.common.collect.Tuple;
 
@@ -43,7 +43,7 @@ class FailureOnlyResponseListener implements ActionListener<JobResponse> {
     @Override
     public void onResponse(JobResponse jobResponse) {
         initializationTracker.jobInitialized();
-        if (jobResponse.directResponse().size() > 0) {
+        if (jobResponse.hasDirectResponses()) {
             for (Tuple<ExecutionPhase, RowConsumer> consumer : consumers) {
                 consumer.v2().accept(null, new IllegalStateException("Got a directResponse but didn't expect one"));
             }
@@ -52,7 +52,7 @@ class FailureOnlyResponseListener implements ActionListener<JobResponse> {
 
     @Override
     public void onFailure(Exception e) {
-        initializationTracker.jobInitialized();
+        initializationTracker.jobInitializationFailed(e);
         // could be a preparation failure - in that case the regular error propagation doesn't work as it hasn't been set up yet
         // so fail rowReceivers directly
         for (Tuple<ExecutionPhase, RowConsumer> consumer : consumers) {

@@ -52,7 +52,7 @@ import io.crate.metadata.RelationName;
 import io.crate.metadata.RoutingProvider;
 import io.crate.metadata.Schemas;
 import io.crate.metadata.SearchPath;
-import io.crate.metadata.TransactionContext;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.table.TableInfo;
 import io.crate.planner.DependencyCarrier;
 import io.crate.planner.Plan;
@@ -60,13 +60,13 @@ import io.crate.planner.Planner;
 import io.crate.planner.PlannerContext;
 import io.crate.planner.operators.SubQueryResults;
 import io.crate.plugin.BlobPlugin;
-import io.crate.plugin.CrateCorePlugin;
+import io.crate.plugin.CrateCommonPlugin;
 import io.crate.plugin.HttpTransportPlugin;
+import io.crate.plugin.LicensePlugin;
 import io.crate.plugin.SQLPlugin;
 import io.crate.protocols.postgres.PostgresNetty;
 import io.crate.sql.Identifiers;
 import io.crate.sql.parser.SqlParser;
-import io.crate.test.GroovyTestSanitizer;
 import io.crate.test.integration.SystemPropsTestLoggingListener;
 import io.crate.testing.SQLBulkResponse;
 import io.crate.testing.SQLResponse;
@@ -88,6 +88,7 @@ import org.elasticsearch.cluster.metadata.MappingMetaData;
 import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.Randomness;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.inject.ConfigurationException;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.BoundTransportAddress;
@@ -152,10 +153,6 @@ public abstract class SQLTransportIntegrationTest extends ESIntegTestCase {
     @Rule
     public TestName testName = new TestName();
 
-    static {
-        GroovyTestSanitizer.isGroovySanitized();
-    }
-
     protected final SQLTransportExecutor sqlExecutor;
 
     @Override
@@ -171,8 +168,9 @@ public abstract class SQLTransportIntegrationTest extends ESIntegTestCase {
     protected Collection<Class<? extends Plugin>> nodePlugins() {
         return Arrays.asList(
             SQLPlugin.class,
+            LicensePlugin.class,
             BlobPlugin.class,
-            CrateCorePlugin.class,
+            CrateCommonPlugin.class,
             HttpTransportPlugin.class,
             CommonAnalysisPlugin.class,
             URLRepositoryPlugin.class
@@ -199,8 +197,8 @@ public abstract class SQLTransportIntegrationTest extends ESIntegTestCase {
                     BoundTransportAddress boundTransportAddress = postgresNetty.boundAddress();
                     if (boundTransportAddress != null) {
                         InetSocketAddress address = boundTransportAddress.publishAddress().address();
-                        return String.format(Locale.ENGLISH, "jdbc:crate://%s:%d/?ssl=%s",
-                            address.getHostName(), address.getPort(), useSSL);
+                        return String.format(Locale.ENGLISH, "jdbc:crate://%s:%d/?ssl=%s&sslmode=%s",
+                            address.getHostName(), address.getPort(), useSSL, useSSL ? "require" : "disable");
                     }
                     return null;
                 }
@@ -418,7 +416,7 @@ public abstract class SQLTransportIntegrationTest extends ESIntegTestCase {
     public static class PlanForNode {
         public final Plan plan;
         final String nodeName;
-        final PlannerContext plannerContext;
+        public final PlannerContext plannerContext;
 
         private PlanForNode(Plan plan, String nodeName, PlannerContext plannerContext) {
             this.plan = plan;
@@ -437,19 +435,19 @@ public abstract class SQLTransportIntegrationTest extends ESIntegTestCase {
         ParameterContext parameterContext = new ParameterContext(Row.EMPTY, Collections.<Row>emptyList());
         SessionContext sessionContext = new SessionContext(
             0, Option.NONE, User.CRATE_USER, x -> {}, x -> {}, sqlExecutor.getCurrentSchema());
-        TransactionContext transactionContext = new TransactionContext(sessionContext);
+        CoordinatorTxnCtx coordinatorTxnCtx = new CoordinatorTxnCtx(sessionContext);
         RoutingProvider routingProvider = new RoutingProvider(Randomness.get().nextInt(), planner.getAwarenessAttributes());
         PlannerContext plannerContext = new PlannerContext(
             planner.currentClusterState(),
             routingProvider,
             UUID.randomUUID(),
             planner.functions(),
-            transactionContext,
+            coordinatorTxnCtx,
             0,
             0
         );
         Plan plan = planner.plan(
-            analyzer.boundAnalyze(SqlParser.createStatement(stmt), transactionContext, parameterContext).analyzedStatement(),
+            analyzer.boundAnalyze(SqlParser.createStatement(stmt), coordinatorTxnCtx, parameterContext).analyzedStatement(),
             plannerContext);
         return new PlanForNode(plan, nodeName, plannerContext);
     }
@@ -541,7 +539,7 @@ public abstract class SQLTransportIntegrationTest extends ESIntegTestCase {
         }
         builder.endObject();
 
-        return builder.string();
+        return Strings.toString(builder);
     }
 
     public void waitForMappingUpdateOnAll(final RelationName relationName, final String... fieldNames) throws Exception {
@@ -617,7 +615,7 @@ public abstract class SQLTransportIntegrationTest extends ESIntegTestCase {
 
         builder.endObject();
 
-        return builder.string();
+        return Strings.toString(builder);
     }
 
     /**
@@ -758,9 +756,19 @@ public abstract class SQLTransportIntegrationTest extends ESIntegTestCase {
         while (true) {
             String schemaName = RandomStrings.randomAsciiLettersOfLengthBetween(random, 1, 20).toLowerCase();
             if (!Schemas.READ_ONLY_SCHEMAS.contains(schemaName) &&
-                !Identifiers.isKeyWord(schemaName)) {
+                !Identifiers.isKeyWord(schemaName) &&
+                !containsExtendedAsciiChars(schemaName)) {
                 return schemaName;
             }
         }
+    }
+
+    private boolean containsExtendedAsciiChars(String value) {
+        for (char c : value.toCharArray()) {
+            if ((short) c > 127) {
+                return true;
+            }
+        }
+        return false;
     }
 }

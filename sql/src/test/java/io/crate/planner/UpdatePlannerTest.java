@@ -22,6 +22,7 @@
 
 package io.crate.planner;
 
+import com.carrotsearch.randomizedtesting.RandomizedTest;
 import io.crate.analyze.TableDefinitions;
 import io.crate.data.Row;
 import io.crate.execution.dsl.phases.MergePhase;
@@ -30,6 +31,8 @@ import io.crate.execution.dsl.projection.MergeCountProjection;
 import io.crate.execution.dsl.projection.UpdateProjection;
 import io.crate.expression.symbol.InputColumn;
 import io.crate.expression.symbol.Symbol;
+import io.crate.metadata.CoordinatorTxnCtx;
+import io.crate.metadata.TransactionContext;
 import io.crate.metadata.Reference;
 import io.crate.planner.consumer.UpdatePlanner;
 import io.crate.planner.node.dml.UpdateById;
@@ -42,6 +45,8 @@ import org.hamcrest.Matchers;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.IOException;
+
 import static io.crate.testing.SymbolMatchers.isLiteral;
 import static io.crate.testing.SymbolMatchers.isReference;
 import static io.crate.testing.TestingHelpers.isSQL;
@@ -52,10 +57,11 @@ import static org.hamcrest.core.Is.is;
 public class UpdatePlannerTest extends CrateDummyClusterServiceUnitTest {
 
     private SQLExecutor e;
+    private TransactionContext txnCtx = CoordinatorTxnCtx.systemTransactionContext();
 
     @Before
-    public void prepare() {
-        e = SQLExecutor.builder(clusterService)
+    public void prepare() throws IOException {
+        e = SQLExecutor.builder(clusterService, 2, RandomizedTest.getRandom())
             .enableDefaultTables()
             .addDocTable(TableDefinitions.PARTED_PKS_TI)
             .addDocTable(TableDefinitions.TEST_EMPTY_PARTITIONED_TABLE_INFO)
@@ -71,7 +77,6 @@ public class UpdatePlannerTest extends CrateDummyClusterServiceUnitTest {
         Collect collect = (Collect) merge.subPlan();
 
         RoutedCollectPhase collectPhase = ((RoutedCollectPhase) collect.collectPhase());
-        assertThat(collectPhase.routing(), is(TableDefinitions.SHARD_ROUTING));
         assertThat(collectPhase.where(), isSQL("true"));
         assertThat(collectPhase.projections().size(), is(1));
         assertThat(collectPhase.projections().get(0), instanceOf(UpdateProjection.class));
@@ -101,7 +106,7 @@ public class UpdatePlannerTest extends CrateDummyClusterServiceUnitTest {
         assertThat(updateById.assignmentByTargetCol().values(), contains(isLiteral("Vogon lyric fan")));
         assertThat(updateById.docKeys().size(), is(1));
 
-        assertThat(updateById.docKeys().getOnlyKey().getId(e.functions(), Row.EMPTY, SubQueryResults.EMPTY), is("1"));
+        assertThat(updateById.docKeys().getOnlyKey().getId(txnCtx, e.functions(), Row.EMPTY, SubQueryResults.EMPTY), is("1"));
     }
 
     @Test

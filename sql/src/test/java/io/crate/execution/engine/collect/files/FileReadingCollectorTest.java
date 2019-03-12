@@ -39,9 +39,8 @@ import io.crate.expression.reference.file.FileLineReferenceResolver;
 import io.crate.expression.reference.file.SourceLineExpression;
 import io.crate.expression.reference.file.SourceUriFailureExpression;
 import io.crate.external.S3ClientHelper;
-import io.crate.metadata.FunctionIdent;
-import io.crate.metadata.FunctionImplementation;
-import io.crate.metadata.FunctionResolver;
+import io.crate.metadata.CoordinatorTxnCtx;
+import io.crate.metadata.TransactionContext;
 import io.crate.metadata.Functions;
 import io.crate.metadata.Reference;
 import io.crate.test.integration.CrateUnitTest;
@@ -77,7 +76,6 @@ import static io.crate.testing.TestingHelpers.createReference;
 import static io.crate.testing.TestingHelpers.isRow;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyByte;
 import static org.mockito.Matchers.anyInt;
 import static org.mockito.Matchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -90,6 +88,7 @@ public class FileReadingCollectorTest extends CrateUnitTest {
     private static File tmpFileEmptyLine;
     private InputFactory inputFactory;
     private Input<String> sourceUriFailureInput;
+    private TransactionContext txnCtx = CoordinatorTxnCtx.systemTransactionContext();
 
     @BeforeClass
     public static void setUpClass() throws Exception {
@@ -119,8 +118,8 @@ public class FileReadingCollectorTest extends CrateUnitTest {
     @Before
     public void prepare() throws Exception {
         Functions functions = new Functions(
-            ImmutableMap.<FunctionIdent, FunctionImplementation>of(),
-            ImmutableMap.<String, FunctionResolver>of()
+            ImmutableMap.of(),
+            ImmutableMap.of()
         );
         inputFactory = new InputFactory(functions);
     }
@@ -196,13 +195,12 @@ public class FileReadingCollectorTest extends CrateUnitTest {
     public void testCollectWithOneSocketTimeout() throws Throwable {
         S3ObjectInputStream inputStream = mock(S3ObjectInputStream.class);
 
-        when(inputStream.read(new byte[anyInt()], anyInt(), anyByte()))
+        when(inputStream.read(any(byte[].class), anyInt(), anyInt()))
             .thenAnswer(new WriteBufferAnswer(new byte[]{102, 111, 111, 10}))  // first line: foo
             .thenThrow(new SocketTimeoutException())  // exception causes retry
             .thenAnswer(new WriteBufferAnswer(new byte[]{102, 111, 111, 10}))  // first line again, because of retry
             .thenAnswer(new WriteBufferAnswer(new byte[]{98, 97, 114, 10}))  // second line: bar
             .thenReturn(-1);
-
 
         TestingRowConsumer consumer = getObjects(Collections.singletonList("s3://fakebucket/foo"), null, inputStream, false);
         Bucket rows = consumer.getBucket();
@@ -252,7 +250,7 @@ public class FileReadingCollectorTest extends CrateUnitTest {
                                           String compression,
                                           boolean collectSourceUriFailure) throws Throwable {
         S3ObjectInputStream inputStream = mock(S3ObjectInputStream.class);
-        when(inputStream.read(new byte[anyInt()], anyInt(), anyByte())).thenReturn(-1);
+        when(inputStream.read(any(byte[].class), anyInt(), anyInt())).thenReturn(-1);
         return getObjects(fileUris, compression, inputStream, collectSourceUriFailure);
     }
 
@@ -279,7 +277,7 @@ public class FileReadingCollectorTest extends CrateUnitTest {
                                                    final S3ObjectInputStream s3InputStream,
                                                    boolean collectSourceUriFailure) {
         InputFactory.Context<LineCollectorExpression<?>> ctx =
-            inputFactory.ctxForRefs(FileLineReferenceResolver::getImplementation);
+            inputFactory.ctxForRefs(txnCtx, FileLineReferenceResolver::getImplementation);
         List<Input<?>> inputs = new ArrayList<>(2);
         Reference raw = createReference(SourceLineExpression.COLUMN_NAME, DataTypes.STRING);
         inputs.add(ctx.add(raw));

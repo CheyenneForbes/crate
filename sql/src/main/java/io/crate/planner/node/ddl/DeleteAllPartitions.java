@@ -22,13 +22,18 @@
 
 package io.crate.planner.node.ddl;
 
+import io.crate.data.InMemoryBatchIterator;
 import io.crate.data.Row;
+import io.crate.data.Row1;
 import io.crate.data.RowConsumer;
-import io.crate.execution.dml.delete.DeleteAllPartitionsTask;
+import io.crate.data.SentinelRow;
+import io.crate.execution.support.OneRowActionListener;
 import io.crate.planner.DependencyCarrier;
 import io.crate.planner.Plan;
 import io.crate.planner.PlannerContext;
 import io.crate.planner.operators.SubQueryResults;
+import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest;
+import org.elasticsearch.action.support.IndicesOptions;
 
 import java.util.List;
 
@@ -50,13 +55,25 @@ public final class DeleteAllPartitions implements Plan {
     }
 
     @Override
-    public void execute(DependencyCarrier executor,
-                        PlannerContext plannerContext,
-                        RowConsumer consumer,
-                        Row params,
-                        SubQueryResults subQueryResults) {
-        DeleteAllPartitionsTask task = new DeleteAllPartitionsTask(
-            this, executor.transportActionProvider().transportDeleteIndexAction());
-        task.execute(consumer);
+    public void executeOrFail(DependencyCarrier executor,
+                              PlannerContext plannerContext,
+                              RowConsumer consumer,
+                              Row params,
+                              SubQueryResults subQueryResults) {
+        if (partitions.isEmpty()) {
+            consumer.accept(InMemoryBatchIterator.of(new Row1(0L), SentinelRow.SENTINEL), null);
+        } else {
+            /*
+             * table is partitioned, in case of concurrent "delete from partitions"
+             * it could be that some partitions are already deleted,
+             * so ignore it if some are missing
+             */
+            DeleteIndexRequest deleteIndexRequest = new DeleteIndexRequest(partitions().toArray(new String[0]))
+                .indicesOptions(IndicesOptions.lenientExpandOpen());
+            executor.transportActionProvider().transportDeleteIndexAction().execute(
+                deleteIndexRequest,
+                new OneRowActionListener<>(consumer, r -> Row1.ROW_COUNT_UNKNOWN)
+            );
+        }
     }
 }

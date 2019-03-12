@@ -34,11 +34,10 @@ import io.crate.planner.PositionalOrderBy;
 import io.crate.test.integration.CrateUnitTest;
 import io.crate.testing.TestingHelpers;
 import io.crate.types.DataTypes;
-import org.apache.lucene.util.BytesRef;
+import org.apache.logging.log4j.LogManager;
 import org.elasticsearch.common.breaker.CircuitBreakingException;
 import org.elasticsearch.common.breaker.MemoryCircuitBreaker;
 import org.elasticsearch.common.breaker.NoopCircuitBreaker;
-import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.unit.ByteSizeUnit;
 import org.elasticsearch.common.unit.ByteSizeValue;
 import org.junit.After;
@@ -54,8 +53,8 @@ public class RamAccountingPageIteratorTest extends CrateUnitTest {
 
     private static NoopCircuitBreaker NOOP_CIRCUIT_BREAKER = new NoopCircuitBreaker("dummy");
     private static RowN[] TEST_ROWS = new RowN[]{
-        new RowN(new BytesRef[]{new BytesRef("a"), new BytesRef("b"), new BytesRef("c")}),
-        new RowN(new BytesRef[]{new BytesRef("d"), new BytesRef("e"), new BytesRef("f")})
+        new RowN(new String[]{"a", "b", "c"}),
+        new RowN(new String[]{"d", "e", "f"})
     };
 
     private long originalBufferSize;
@@ -154,7 +153,7 @@ public class RamAccountingPageIteratorTest extends CrateUnitTest {
                                         new MemoryCircuitBreaker(
                                             new ByteSizeValue(197, ByteSizeUnit.BYTES),
                                             1,
-                                            Loggers.getLogger(RowAccountingWithEstimatorsTest.class)))));
+                                            LogManager.getLogger(RowAccountingWithEstimatorsTest.class)))));
 
         expectedException.expect(CircuitBreakingException.class);
         expectedException.expectMessage(

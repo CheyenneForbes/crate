@@ -1,0 +1,9 @@
+dependencies {
+    compile project(':es:es-core')
+
+    //compile "org.yaml:snakeyaml:${versions.snakeyaml}"
+    compile "com.fasterxml.jackson.core:jackson-core:${versions.jackson}"
+    compile "com.fasterxml.jackson.dataformat:jackson-dataformat-smile:${versions.jackson}"
+    compile "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:${versions.jackson}"
+    compile "com.fasterxml.jackson.dataformat:jackson-dataformat-cbor:${versions.jackson}"
+}

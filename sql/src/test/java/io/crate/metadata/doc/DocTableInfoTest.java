@@ -2,7 +2,6 @@ package io.crate.metadata.doc;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import io.crate.Version;
 import io.crate.expression.symbol.DynamicReference;
 import io.crate.metadata.ColumnIdent;
 import io.crate.metadata.Reference;
@@ -14,7 +13,8 @@ import io.crate.metadata.table.ColumnPolicy;
 import io.crate.metadata.table.Operation;
 import io.crate.test.integration.CrateUnitTest;
 import io.crate.types.DataTypes;
-import org.apache.lucene.util.BytesRef;
+import io.crate.types.ObjectType;
+import org.elasticsearch.Version;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.common.settings.Settings;
 import org.junit.Test;
@@ -31,7 +31,7 @@ public class DocTableInfoTest extends CrateUnitTest {
         DocTableInfo info = new DocTableInfo(
             relationName,
             ImmutableList.of(
-                new Reference(new ReferenceIdent(relationName, new ColumnIdent("o", ImmutableList.of())), RowGranularity.DOC, DataTypes.OBJECT)
+                new Reference(new ReferenceIdent(relationName, new ColumnIdent("o", ImmutableList.of())), RowGranularity.DOC, ObjectType.untyped())
             ),
             ImmutableList.of(),
             ImmutableList.of(),
@@ -41,13 +41,12 @@ public class DocTableInfoTest extends CrateUnitTest {
             ImmutableMap.of(),
             ImmutableList.of(),
             null,
-            false,
             true,
             new String[0],
             new String[0],
             new IndexNameExpressionResolver(Settings.EMPTY),
             5,
-            new BytesRef("0"),
+            "0",
             ImmutableMap.of(),
             ImmutableList.of(),
             ImmutableList.of(),
@@ -69,13 +68,12 @@ public class DocTableInfoTest extends CrateUnitTest {
 
     @Test
     public void testGetColumnInfoStrictParent() throws Exception {
-
         RelationName dummy = new RelationName(Schemas.DOC_SCHEMA_NAME, "dummy");
         ReferenceIdent foobarIdent = new ReferenceIdent(dummy, new ColumnIdent("foobar"));
         Reference strictParent = new Reference(
             foobarIdent,
             RowGranularity.DOC,
-            DataTypes.OBJECT,
+            ObjectType.untyped(),
             ColumnPolicy.STRICT,
             Reference.IndexType.NOT_ANALYZED,
             true
@@ -96,13 +94,12 @@ public class DocTableInfoTest extends CrateUnitTest {
             ImmutableMap.of(),
             ImmutableList.of(),
             null,
-            false,
             true,
             new String[0],
             new String[0],
             new IndexNameExpressionResolver(Settings.EMPTY),
             5,
-            new BytesRef("0"),
+            "0",
             ImmutableMap.of(),
             ImmutableList.of(),
             ImmutableList.of(),

@@ -38,7 +38,7 @@ import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.TopFieldCollector;
-import org.elasticsearch.common.logging.Loggers;
+import org.apache.logging.log4j.LogManager;
 import org.elasticsearch.common.lucene.MinimumScoreCollector;
 import org.elasticsearch.index.shard.ShardId;
 
@@ -51,7 +51,7 @@ import java.util.function.Function;
 
 public class LuceneOrderedDocCollector extends OrderedDocCollector {
 
-    private static final Logger LOGGER = Loggers.getLogger(LuceneOrderedDocCollector.class);
+    private static final Logger LOGGER = LogManager.getLogger(LuceneOrderedDocCollector.class);
 
     private final Query query;
     private final Float minScore;
@@ -129,7 +129,14 @@ public class LuceneOrderedDocCollector extends OrderedDocCollector {
             expression.startCollect(collectorContext);
             expression.setScorer(scorer);
         }
-        TopFieldCollector topFieldCollector = TopFieldCollector.create(sort, batchSize, true, doDocsScores, doDocsScores);
+        TopFieldCollector topFieldCollector = TopFieldCollector.create(
+            sort,
+            batchSize,
+            true,
+            doDocsScores,
+            doDocsScores,
+            false           // trackTotalHits - we don't use the number of total hits
+        );
         return doSearch(topFieldCollector, minScore, query);
     }
 
@@ -142,7 +149,14 @@ public class LuceneOrderedDocCollector extends OrderedDocCollector {
             LOGGER.debug("searchMore from [{}]", lastDoc);
         }
         TopFieldCollector topFieldCollector = TopFieldCollector.create(
-            sort, batchSize, lastDoc, true, doDocsScores, doDocsScores);
+            sort,
+            batchSize,
+            lastDoc,
+            true,
+            doDocsScores,
+            doDocsScores,
+            false           // trackTotalHits - we don't use the number of total hits
+        );
         return doSearch(topFieldCollector, minScore, query(lastDoc));
     }
 

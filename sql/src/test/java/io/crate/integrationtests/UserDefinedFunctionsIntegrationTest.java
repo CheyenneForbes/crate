@@ -33,12 +33,10 @@ import io.crate.expression.udf.UserDefinedFunctionMetaData;
 import io.crate.expression.udf.UserDefinedFunctionService;
 import io.crate.metadata.FunctionIdent;
 import io.crate.metadata.FunctionInfo;
+import io.crate.metadata.TransactionContext;
 import io.crate.metadata.Scalar;
-import io.crate.testing.UseJdbc;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
-import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.common.lucene.BytesRefs;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.junit.Before;
 import org.junit.Test;
@@ -56,10 +54,9 @@ import java.util.stream.Collectors;
 import static org.hamcrest.CoreMatchers.is;
 
 @ESIntegTestCase.ClusterScope(numDataNodes = 2, numClientNodes = 0)
-@UseJdbc(0) // create/drop function has no rowcount
 public class UserDefinedFunctionsIntegrationTest extends SQLTransportIntegrationTest {
 
-    public static class DummyFunction<InputType> extends Scalar<BytesRef, InputType>  {
+    public static class DummyFunction<InputType> extends Scalar<String, InputType>  {
 
         private final FunctionInfo info;
         private final UserDefinedFunctionMetaData metaData;
@@ -75,9 +72,9 @@ public class UserDefinedFunctionsIntegrationTest extends SQLTransportIntegration
         }
 
         @Override
-        public BytesRef evaluate(Input<InputType>... args) {
+        public String evaluate(TransactionContext txnCtx, Input<InputType>... args) {
             // dummy-lang functions simple print the type of the only argument
-            return BytesRefs.toBytesRef("DUMMY EATS " + metaData.argumentTypes().get(0).getName());
+            return "DUMMY EATS " + metaData.argumentTypes().get(0).getName();
         }
     }
 
@@ -117,9 +114,9 @@ public class UserDefinedFunctionsIntegrationTest extends SQLTransportIntegration
     @Test
     public void testCreateOverloadedFunction() throws Exception {
         execute("create table test (id long, str string) clustered by(id) into 2 shards");
-        Object[][] rows = new Object[100][];
-        for (int i = 0; i < 100; i++) {
-            rows[i] = new Object[]{Long.valueOf(i), String.valueOf(i)};
+        Object[][] rows = new Object[10][];
+        for (int i = 0; i < 10; i++) {
+            rows[i] = new Object[]{(long) i, String.valueOf(i)};
         }
         execute("insert into test (id, str) values (?, ?)", rows);
         refresh();

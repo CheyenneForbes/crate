@@ -27,6 +27,7 @@ import io.crate.metadata.BaseFunctionResolver;
 import io.crate.metadata.FunctionIdent;
 import io.crate.metadata.FunctionImplementation;
 import io.crate.metadata.FunctionInfo;
+import io.crate.metadata.TransactionContext;
 import io.crate.metadata.functions.params.FuncParams;
 import io.crate.metadata.functions.params.Param;
 import io.crate.types.ArrayType;
@@ -89,7 +90,7 @@ public final class AnyOperator extends Operator<Object> {
     }
 
     @Override
-    public Boolean evaluate(Input<Object>... args) {
+    public Boolean evaluate(TransactionContext txnCtx, Input<Object>... args) {
         assert args != null : "args must not be null";
         assert args.length == 2 : "number of args must be 2";
         assert args[0] != null : "1st argument must not be null";
@@ -124,13 +125,9 @@ public final class AnyOperator extends Operator<Object> {
             DataType<?> innerType = ((CollectionType) dataTypes.get(1)).innerType();
             checkArgument(innerType.equals(dataTypes.get(0)),
                 "The inner type of the array/set passed to ANY must match its left expression");
-            checkArgument(!innerType.equals(DataTypes.OBJECT),
-                "ANY on object arrays is not supported");
 
             return new AnyOperator(
-                new FunctionInfo(new FunctionIdent(name, dataTypes), BooleanType.INSTANCE),
-                cmpIsMatch
-            );
+                new FunctionInfo(new FunctionIdent(name, dataTypes), BooleanType.INSTANCE), cmpIsMatch);
         }
     }
 }

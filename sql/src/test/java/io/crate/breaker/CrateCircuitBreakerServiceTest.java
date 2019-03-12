@@ -39,12 +39,12 @@ import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
 
-import static org.elasticsearch.mock.orig.Mockito.verify;
 import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 public class CrateCircuitBreakerServiceTest extends CrateUnitTest {
 
@@ -173,7 +173,7 @@ public class CrateCircuitBreakerServiceTest extends CrateUnitTest {
             Settings.EMPTY, clusterSettings, esBreakerService);
 
         CircuitBreakerStats[] stats = breakerService.stats().getAllStats();
-        assertThat(stats.length, is(7));
+        assertThat(stats.length, is(8));
 
         CircuitBreakerStats queryBreakerStats = breakerService.stats(CrateCircuitBreakerService.QUERY);
         assertThat(queryBreakerStats.getEstimated(), is(0L));

@@ -27,7 +27,8 @@ import io.crate.expression.reference.sys.job.JobContext;
 import io.crate.expression.reference.sys.job.JobContextLog;
 import io.crate.expression.reference.sys.operation.OperationContext;
 import io.crate.expression.reference.sys.operation.OperationContextLog;
-import io.crate.metadata.sys.ClassifiedHistograms;
+import io.crate.metadata.sys.ClassifiedMetrics;
+import io.crate.metadata.sys.MetricsView;
 import io.crate.planner.operators.StatementClassifier;
 import org.elasticsearch.common.collect.Tuple;
 
@@ -40,6 +41,8 @@ import java.util.concurrent.atomic.LongAdder;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.BooleanSupplier;
+
+import static io.crate.planner.Plan.StatementType.UNDEFINED;
 
 
 /**
@@ -73,7 +76,7 @@ public class JobsLogs {
 
     private final LongAdder activeRequests = new LongAdder();
     private final BooleanSupplier enabled;
-    private final ClassifiedHistograms histograms = new ClassifiedHistograms();
+    private final ClassifiedMetrics classifiedMetrics = new ClassifiedMetrics();
 
     public JobsLogs(BooleanSupplier enabled) {
         this.enabled = enabled;
@@ -120,7 +123,7 @@ public class JobsLogs {
             return;
         }
         JobContextLog jobContextLog = new JobContextLog(jobContext, errorMessage);
-        addToHistogram(jobContextLog);
+        recordMetrics(jobContextLog);
         jobsLogRWLock.readLock().lock();
         try {
             jobsLog.add(jobContextLog);
@@ -129,10 +132,14 @@ public class JobsLogs {
         }
     }
 
-    private void addToHistogram(JobContextLog log) {
+    private void recordMetrics(JobContextLog log) {
         StatementClassifier.Classification classification = log.classification();
         assert classification != null : "A job must have a classification";
-        histograms.recordValue(classification, log.ended() - log.started());
+        if (log.errorMessage() == null) {
+            classifiedMetrics.recordValue(classification, log.ended() - log.started());
+        } else {
+            classifiedMetrics.recordFailedExecution(classification, log.ended() - log.started());
+        }
     }
 
     /**
@@ -144,13 +151,14 @@ public class JobsLogs {
      */
     public void logPreExecutionFailure(UUID jobId, String stmt, String errorMessage, User user) {
         JobContextLog jobContextLog = new JobContextLog(
-            new JobContext(jobId, stmt, System.currentTimeMillis(), user, null), errorMessage);
+            new JobContext(jobId, stmt, System.currentTimeMillis(), user, new StatementClassifier.Classification(UNDEFINED)), errorMessage);
         jobsLogRWLock.readLock().lock();
         try {
             jobsLog.add(jobContextLog);
         } finally {
             jobsLogRWLock.readLock().unlock();
         }
+        recordMetrics(jobContextLog);
     }
 
     public void operationStarted(int operationId, UUID jobId, String name) {
@@ -161,8 +169,8 @@ public class JobsLogs {
         }
     }
 
-    public Iterable<ClassifiedHistograms.ClassifiedHistogram> metrics() {
-        return histograms;
+    public Iterable<MetricsView> metrics() {
+        return classifiedMetrics;
     }
 
     public void operationFinished(int operationId, UUID jobId, @Nullable String errorMessage, long usedBytes) {
@@ -237,8 +245,8 @@ public class JobsLogs {
         }
     }
 
-    void resetMetricHistograms() {
-        histograms.reset();
+    void resetMetrics() {
+        classifiedMetrics.reset();
     }
 
     public void close() {

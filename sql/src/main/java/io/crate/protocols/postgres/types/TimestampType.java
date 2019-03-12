@@ -89,6 +89,11 @@ class TimestampType extends PGType {
     }
 
     @Override
+    public int typArray() {
+        return PGArray.TIMESTAMPZ_ARRAY.oid();
+    }
+
+    @Override
     public int writeAsBinary(ByteBuf buffer, @Nonnull Object value) {
         buffer.writeInt(TYPE_LEN);
         buffer.writeLong(toPgTimestamp((long) value));
@@ -134,7 +139,7 @@ class TimestampType extends PGType {
         // Other PostgreSQL clients send the parameter as Bigint or Varchar
         String s = new String(bytes, StandardCharsets.UTF_8);
 
-        int endOfSeconds  = s.indexOf(".");
+        int endOfSeconds = s.indexOf(".");
         int idx = endOfSeconds;
         if (endOfSeconds > 0) {
             idx++;

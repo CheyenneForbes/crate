@@ -26,12 +26,14 @@ import io.crate.breaker.RowAccounting;
 import io.crate.concurrent.CompletionListenable;
 import io.crate.data.BatchIterator;
 import io.crate.data.ListenableBatchIterator;
+import io.crate.data.Paging;
 import io.crate.data.Row;
 import io.crate.data.RowConsumer;
 import io.crate.data.join.CombinedRow;
 import io.crate.execution.engine.collect.CollectExpression;
 import io.crate.expression.InputFactory;
 import io.crate.expression.symbol.Symbol;
+import io.crate.metadata.TransactionContext;
 import org.elasticsearch.common.breaker.CircuitBreaker;
 
 import java.util.List;
@@ -53,6 +55,7 @@ public class HashJoinOperation implements CompletionListenable {
                              List<Symbol> joinLeftInputs,
                              List<Symbol> joinRightInputs,
                              RowAccounting rowAccounting,
+                             TransactionContext txnCtx,
                              InputFactory inputFactory,
                              CircuitBreaker circuitBreaker,
                              long estimatedRowSizeForLeft,
@@ -69,10 +72,10 @@ public class HashJoinOperation implements CompletionListenable {
                             rightBatchIterator.join(),
                             numRightCols,
                             joinPredicate,
-                            getHashBuilderFromSymbols(inputFactory, joinLeftInputs),
-                            getHashBuilderFromSymbols(inputFactory, joinRightInputs),
+                            getHashBuilderFromSymbols(txnCtx, inputFactory, joinLeftInputs),
+                            getHashBuilderFromSymbols(txnCtx, inputFactory, joinRightInputs),
                             rowAccounting,
-                            new RamBlockSizeCalculator(circuitBreaker, estimatedRowSizeForLeft, numberOfRowsForLeft)
+                            new RamBlockSizeCalculator(Paging.PAGE_SIZE, circuitBreaker, estimatedRowSizeForLeft, numberOfRowsForLeft)
                         ), completionFuture);
                         nlResultConsumer.accept(joinIterator, null);
                     } catch (Exception e) {
@@ -97,8 +100,10 @@ public class HashJoinOperation implements CompletionListenable {
         return JoinOperations.getBatchConsumer(rightBatchIterator, true);
     }
 
-    private static Function<Row, Integer> getHashBuilderFromSymbols(InputFactory inputFactory, List<Symbol> inputs) {
-        InputFactory.Context<? extends CollectExpression<Row, ?>> ctx = inputFactory.ctxForInputColumns(inputs);
+    private static Function<Row, Integer> getHashBuilderFromSymbols(TransactionContext txnCtx,
+                                                                    InputFactory inputFactory,
+                                                                    List<Symbol> inputs) {
+        InputFactory.Context<? extends CollectExpression<Row, ?>> ctx = inputFactory.ctxForInputColumns(txnCtx, inputs);
         Object[] values = new Object[ctx.topLevelInputs().size()];
 
         return row -> {
@@ -122,7 +127,7 @@ public class HashJoinOperation implements CompletionListenable {
                                                              RowAccounting rowAccounting,
                                                              RamBlockSizeCalculator blockSizeCalculator) {
         CombinedRow combiner = new CombinedRow(leftNumCols, rightNumCols);
-        return new HashInnerJoinBatchIterator<>(
+        return new HashInnerJoinBatchIterator(
             new RamAccountingBatchIterator<>(left, rowAccounting),
             right,
             combiner,

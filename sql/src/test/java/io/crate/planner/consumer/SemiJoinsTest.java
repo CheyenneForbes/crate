@@ -25,13 +25,11 @@ package io.crate.planner.consumer;
 import io.crate.action.sql.SessionContext;
 import io.crate.analyze.MultiSourceSelect;
 import io.crate.analyze.QueriedTable;
-import io.crate.analyze.SQLPrinter;
 import io.crate.analyze.relations.QueriedRelation;
 import io.crate.expression.symbol.Function;
 import io.crate.expression.symbol.SelectSymbol;
 import io.crate.expression.symbol.Symbol;
-import io.crate.expression.symbol.format.SymbolPrinter;
-import io.crate.metadata.TransactionContext;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.planner.node.dql.join.JoinType;
 import io.crate.planner.operators.LogicalPlan;
 import io.crate.sql.tree.QualifiedName;
@@ -106,16 +104,15 @@ public class SemiJoinsTest extends CrateDummyClusterServiceUnitTest {
     public void testSemiJoinRewriteOfWhereClause() throws Exception {
         QueriedRelation rel = executor.analyze("select * from t1 where a in (select 'foo') and x = 10");
         MultiSourceSelect semiJoin = (MultiSourceSelect) semiJoins.tryRewrite(
-            rel, new TransactionContext(SessionContext.systemSessionContext()));
+            rel, new CoordinatorTxnCtx(SessionContext.systemSessionContext()));
 
         assertThat(semiJoin.querySpec().where(), isSQL("true"));
-        System.out.println(new SQLPrinter(new SymbolPrinter(getFunctions())).format(semiJoin));
         assertThat(((QueriedRelation) semiJoin.sources().get(QualifiedName.of(T1.toString()))).querySpec(),
             isSQL("SELECT doc.t1.a, doc.t1.x, doc.t1.i WHERE (doc.t1.x = 10)"));
         assertThat(((QueriedRelation) semiJoin.sources().get(new QualifiedName(Arrays.asList("S0", "", "empty_row"))))
             .querySpec(), isSQL("SELECT 'foo'"));
 
-        assertThat(semiJoin.joinPairs().get(0).condition(), isSQL("(\"doc.t1\".a = S0..empty_row.'foo')"));
+        assertThat(semiJoin.joinPairs().get(0).condition(), isSQL("(doc.t1.a = S0..empty_row.'foo')"));
         assertThat(semiJoin.joinPairs().get(0).joinType(), is(JoinType.SEMI));
     }
 
@@ -123,7 +120,7 @@ public class SemiJoinsTest extends CrateDummyClusterServiceUnitTest {
     public void testAntiJoinRewriteOfWhereClause() throws Exception {
         QueriedRelation rel = executor.analyze("select * from t1 where a not in (select 'foo') and x = 10");
         MultiSourceSelect antiJoin = (MultiSourceSelect) semiJoins.tryRewrite(
-            rel, new TransactionContext(SessionContext.systemSessionContext()));
+            rel, new CoordinatorTxnCtx(SessionContext.systemSessionContext()));
 
         assertThat(antiJoin.querySpec().where(), isSQL("true"));
         assertThat(((QueriedRelation) antiJoin.sources().get(QualifiedName.of(T1.toString()))).querySpec(),
@@ -131,14 +128,14 @@ public class SemiJoinsTest extends CrateDummyClusterServiceUnitTest {
         assertThat(((QueriedRelation) antiJoin.sources().get(new QualifiedName(Arrays.asList("S0", "", "empty_row"))))
             .querySpec(), isSQL("SELECT 'foo'"));
 
-        assertThat(antiJoin.joinPairs().get(0).condition(), isSQL("(\"doc.t1\".a = S0..empty_row.'foo')"));
+        assertThat(antiJoin.joinPairs().get(0).condition(), isSQL("(doc.t1.a = S0..empty_row.'foo')"));
         assertThat(antiJoin.joinPairs().get(0).joinType(), is(JoinType.ANTI));
     }
 
     @Test
     public void testQueryWithOrIsNotRewritten() throws Exception {
         QueriedRelation relation = executor.analyze("select * from t1 where a in (select 'foo') or a = '10'");
-        QueriedRelation semiJoin = semiJoins.tryRewrite(relation, new TransactionContext(SessionContext.systemSessionContext()));
+        QueriedRelation semiJoin = semiJoins.tryRewrite(relation, new CoordinatorTxnCtx(SessionContext.systemSessionContext()));
 
         assertThat(semiJoin, nullValue());
     }
@@ -151,7 +148,7 @@ public class SemiJoinsTest extends CrateDummyClusterServiceUnitTest {
             "MultiPhase[\n" +
             "    subQueries[\n" +
             "        RootBoundary['foo']\n" +
-            "        OrderBy[''foo'' ASC NULLS LAST]\n" +
+            "        OrderBy['foo' ASC NULLS LAST]\n" +
             "        Collect[.empty_row | ['foo'] | All]\n" +
             "    ]\n" +
             "    FetchOrEval[a, x, i]\n" +
@@ -165,7 +162,7 @@ public class SemiJoinsTest extends CrateDummyClusterServiceUnitTest {
                                                         "where " +
                                                         "   x in (select * from unnest([1, 2])) " +
                                                         "   and x not in (select 1)");
-        QueriedRelation semiJoins = this.semiJoins.tryRewrite(relation, new TransactionContext(SessionContext.systemSessionContext()));
+        QueriedRelation semiJoins = this.semiJoins.tryRewrite(relation, new CoordinatorTxnCtx(SessionContext.systemSessionContext()));
 
         assertThat(semiJoins, instanceOf(MultiSourceSelect.class));
         MultiSourceSelect mss = (MultiSourceSelect) semiJoins;

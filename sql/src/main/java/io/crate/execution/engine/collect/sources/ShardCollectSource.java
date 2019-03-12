@@ -52,7 +52,6 @@ import io.crate.execution.engine.sort.OrderingByPosition;
 import io.crate.execution.jobs.NodeJobsCounter;
 import io.crate.execution.jobs.SharedShardContext;
 import io.crate.execution.jobs.SharedShardContexts;
-import io.crate.execution.support.ThreadPools;
 import io.crate.expression.InputFactory;
 import io.crate.expression.eval.EvaluatingNormalizer;
 import io.crate.expression.reference.StaticTableReferenceResolver;
@@ -64,6 +63,7 @@ import io.crate.metadata.IndexParts;
 import io.crate.metadata.MapBackedRefResolver;
 import io.crate.metadata.RowGranularity;
 import io.crate.metadata.Schemas;
+import io.crate.metadata.TransactionContext;
 import io.crate.metadata.doc.DocSysColumns;
 import io.crate.metadata.shard.unassigned.UnassignedShard;
 import io.crate.metadata.sys.SysShardsTableInfo;
@@ -176,7 +176,7 @@ public class ShardCollectSource extends AbstractComponent implements CollectSour
         this.remoteCollectorFactory = remoteCollectorFactory;
         ThreadPoolExecutor executor = (ThreadPoolExecutor) threadPool.executor(ThreadPool.Names.SEARCH);
         this.availableThreads = numIdleThreads(executor, EsExecutors.numberOfProcessors(settings));
-        this.executor = ThreadPools.fallbackOnRejection(executor);
+        this.executor = executor;
         this.inputFactory = new InputFactory(functions);
         this.shardCollectorProviderFactory = new ShardCollectorProviderFactory(
             clusterService,
@@ -256,13 +256,17 @@ public class ShardCollectSource extends AbstractComponent implements CollectSour
 
 
     @Override
-    public BatchIterator<Row> getIterator(CollectPhase phase, CollectTask collectTask, boolean supportMoveToStart) {
+    public BatchIterator<Row> getIterator(TransactionContext txnCtx,
+                                          CollectPhase phase,
+                                          CollectTask collectTask,
+                                          boolean supportMoveToStart) {
         RoutedCollectPhase collectPhase = (RoutedCollectPhase) phase;
         String localNodeId = clusterService.localNode().getId();
 
         Projectors projectors = new Projectors(
             collectPhase.projections(),
             collectPhase.jobId(),
+            collectTask.txnCtx(),
             collectTask.queryPhaseRamAccountingContext(),
             sharedProjectorFactory
         );
@@ -270,7 +274,7 @@ public class ShardCollectSource extends AbstractComponent implements CollectSour
 
         if (collectPhase.maxRowGranularity() == RowGranularity.SHARD) {
             return projectors.wrap(InMemoryBatchIterator.of(
-                getShardsIterator(collectPhase, localNodeId), SentinelRow.SENTINEL));
+                getShardsIterator(collectTask.txnCtx(), collectPhase, localNodeId), SentinelRow.SENTINEL));
         }
         OrderBy orderBy = collectPhase.orderBy();
         if (collectPhase.maxRowGranularity() == RowGranularity.DOC && orderBy != null) {
@@ -348,7 +352,9 @@ public class ShardCollectSource extends AbstractComponent implements CollectSour
                     }
                     throw e;
                 } catch (Throwable t) {
-                    throw new UnhandledServerException(t);
+                    UnhandledServerException unhandledServerException = new UnhandledServerException(t);
+                    unhandledServerException.setStackTrace(t.getStackTrace());
+                    throw unhandledServerException;
                 }
             }
         }
@@ -431,14 +437,16 @@ public class ShardCollectSource extends AbstractComponent implements CollectSour
                     // Prevent wrapping this to not break retry-detection
                     throw e;
                 } catch (Exception e) {
-                    throw new UnhandledServerException(e);
+                    UnhandledServerException unhandledServerException = new UnhandledServerException(e);
+                    unhandledServerException.setStackTrace(e.getStackTrace());
+                    throw unhandledServerException;
                 }
             }
         }
         return iterators;
     }
 
-    private Iterable<Row> getShardsIterator(RoutedCollectPhase collectPhase, String localNodeId) {
+    private Iterable<Row> getShardsIterator(TransactionContext txnCtx, RoutedCollectPhase collectPhase, String localNodeId) {
         Map<String, Map<String, IntIndexedContainer>> locations = collectPhase.routing().locations();
         List<UnassignedShard> unassignedShards = new ArrayList<>();
         List<ShardRowContext> shardRowContexts = new ArrayList<>();
@@ -479,11 +487,11 @@ public class ShardCollectSource extends AbstractComponent implements CollectSour
         }
 
         Iterable<Row> assignedShardRows = RowsTransformer.toRowsIterable(
-            inputFactory, shardReferenceResolver, collectPhase, shardRowContexts, false);
+            txnCtx, inputFactory, shardReferenceResolver, collectPhase, shardRowContexts, false);
         Iterable<Row> rows;
         if (unassignedShards.size() > 0) {
             Iterable<Row> unassignedShardRows = RowsTransformer.toRowsIterable(
-                inputFactory, unassignedShardReferenceResolver, collectPhase, unassignedShards, false);
+                txnCtx, inputFactory, unassignedShardReferenceResolver, collectPhase, unassignedShards, false);
             rows = Iterables.concat(assignedShardRows, unassignedShardRows);
         } else {
             rows = assignedShardRows;

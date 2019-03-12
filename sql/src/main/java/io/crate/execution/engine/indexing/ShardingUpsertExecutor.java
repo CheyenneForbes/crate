@@ -35,8 +35,8 @@ import io.crate.execution.jobs.NodeJobsCounter;
 import io.crate.execution.support.RetryListener;
 import io.crate.settings.CrateSetting;
 import io.crate.types.DataTypes;
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.indices.create.CreatePartitionsRequest;
 import org.elasticsearch.action.admin.indices.create.CreatePartitionsResponse;
@@ -44,9 +44,7 @@ import org.elasticsearch.action.admin.indices.create.TransportCreatePartitionsAc
 import org.elasticsearch.action.bulk.BackoffPolicy;
 import org.elasticsearch.action.bulk.BulkRequestExecutor;
 import org.elasticsearch.cluster.service.ClusterService;
-import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Setting;
-import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.index.shard.ShardId;
 
@@ -62,6 +60,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 import static io.crate.execution.jobs.NodeJobsCounter.MAX_NODE_CONCURRENT_OPERATIONS;
@@ -74,7 +73,7 @@ public class ShardingUpsertExecutor
         Setting.Property.NodeScope, Setting.Property.Dynamic), DataTypes.STRING);
 
     private static final BackoffPolicy BACKOFF_POLICY = LimitedExponentialBackoff.limitedExponential(1000);
-    private static final Logger LOGGER = Loggers.getLogger(ShardingUpsertExecutor.class);
+    private static final Logger LOGGER = LogManager.getLogger(ShardingUpsertExecutor.class);
 
     private final GroupRowsByShard<ShardUpsertRequest, ShardUpsertRequest.Item> grouper;
     private final NodeJobsCounter nodeJobsCounter;
@@ -85,8 +84,9 @@ public class ShardingUpsertExecutor
     private final Function<ShardId, ShardUpsertRequest> requestFactory;
     private final BulkRequestExecutor<ShardUpsertRequest> requestExecutor;
     private final TransportCreatePartitionsAction createPartitionsAction;
-    private final BulkShardCreationLimiter<ShardUpsertRequest, ShardUpsertRequest.Item> bulkShardCreationLimiter;
+    private final BulkShardCreationLimiter bulkShardCreationLimiter;
     private final UpsertResultCollector resultCollector;
+    private final boolean isDebugEnabled;
     private volatile boolean createPartitionsRequestOngoing = false;
 
     ShardingUpsertExecutor(ClusterService clusterService,
@@ -103,7 +103,8 @@ public class ShardingUpsertExecutor
                            boolean autoCreateIndices,
                            BulkRequestExecutor<ShardUpsertRequest> requestExecutor,
                            TransportCreatePartitionsAction createPartitionsAction,
-                           Settings tableSettings,
+                           int targetTableNumShards,
+                           int targetTableNumReplicas,
                            UpsertResultContext upsertResultContext) {
         this.nodeJobsCounter = nodeJobsCounter;
         this.scheduler = scheduler;
@@ -126,9 +127,12 @@ public class ShardingUpsertExecutor
             upsertResultContext.getLineNumberInput(),
             autoCreateIndices
         );
-        bulkShardCreationLimiter = new BulkShardCreationLimiter<>(tableSettings,
+        bulkShardCreationLimiter = new BulkShardCreationLimiter(
+            targetTableNumShards,
+            targetTableNumReplicas,
             clusterService.state().nodes().getDataNodes().size());
         this.resultCollector = upsertResultContext.getResultCollector();
+        isDebugEnabled = LOGGER.isDebugEnabled();
     }
 
     public CompletableFuture<UpsertResults> execute(ShardedRequests<ShardUpsertRequest, ShardUpsertRequest.Item> requests) {
@@ -150,15 +154,15 @@ public class ShardingUpsertExecutor
 
     private static void collectFailingSourceUris(ShardedRequests<ShardUpsertRequest, ShardUpsertRequest.Item> requests,
                                                  final UpsertResults upsertResults) {
-        for (Map.Entry<BytesRef, String> entry : requests.sourceUrisWithFailure.entrySet()) {
+        for (Map.Entry<String, String> entry : requests.sourceUrisWithFailure.entrySet()) {
             upsertResults.addUriFailure(entry.getKey(), entry.getValue());
         }
     }
 
     private static void collectFailingItems(ShardedRequests<ShardUpsertRequest, ShardUpsertRequest.Item> requests,
                                             final UpsertResults upsertResults) {
-        for (Map.Entry<BytesRef, List<ShardedRequests.ReadFailureAndLineNumber>> entry : requests.itemsWithFailureBySourceUri.entrySet()) {
-            BytesRef sourceUri = entry.getKey();
+        for (Map.Entry<String, List<ShardedRequests.ReadFailureAndLineNumber>> entry : requests.itemsWithFailureBySourceUri.entrySet()) {
+            String sourceUri = entry.getKey();
             for (ShardedRequests.ReadFailureAndLineNumber readFailureAndLineNumber : entry.getValue()) {
                 upsertResults.addResult(sourceUri, readFailureAndLineNumber.readFailure, readFailureAndLineNumber.lineNumber);
             }
@@ -196,7 +200,9 @@ public class ShardingUpsertExecutor
             listener = new RetryListener<>(
                 scheduler,
                 l -> {
-                    LOGGER.debug("Executing retry Listener for nodeId: {} request: {}", nodeId, request);
+                    if (isDebugEnabled) {
+                        LOGGER.debug("Executing retry Listener for nodeId: {} request: {}", nodeId, request);
+                    }
                     requestExecutor.execute(request, l);
                 },
                 listener,
@@ -216,18 +222,26 @@ public class ShardingUpsertExecutor
         return listener;
     }
 
-    private boolean shouldPause(ShardedRequests<ShardUpsertRequest, ShardUpsertRequest.Item> requests) {
-        if (createPartitionsRequestOngoing) {
-            LOGGER.debug("partition creation in progress, will pause");
-            return true;
-        }
-
+    private boolean shouldPauseOnTargetNodeJobsCounter(ShardedRequests<ShardUpsertRequest, ShardUpsertRequest.Item> requests) {
         for (ShardLocation shardLocation : requests.itemsByShard.keySet()) {
             String requestNodeId = shardLocation.nodeId;
             if (nodeJobsCounter.getInProgressJobsForNode(requestNodeId) >= MAX_NODE_CONCURRENT_OPERATIONS) {
-                LOGGER.debug("reached maximum concurrent operations for node {}", requestNodeId);
+                if (isDebugEnabled) {
+                    LOGGER.debug("reached maximum concurrent operations for node {}", requestNodeId);
+                }
                 return true;
             }
+        }
+        return false;
+    }
+
+    /** @noinspection unused*/
+    private boolean shouldPauseOnPartitionCreation(ShardedRequests<ShardUpsertRequest, ShardUpsertRequest.Item> ignore) {
+        if (createPartitionsRequestOngoing) {
+            if (isDebugEnabled) {
+                LOGGER.debug("partition creation in progress, will pause");
+            }
+            return true;
         }
         return false;
     }
@@ -238,6 +252,15 @@ public class ShardingUpsertExecutor
             BatchIterators.partition(batchIterator, bulkSize, () -> new ShardedRequests<>(requestFactory), grouper,
                 bulkShardCreationLimiter);
 
+        // If IO is involved the source iterator should pause when the target node reaches a concurrent job counter limit.
+        // Without IO, we assume that the source iterates over in-memory structures which should be processed as
+        // fast as possible to free resources.
+        Predicate<ShardedRequests<ShardUpsertRequest, ShardUpsertRequest.Item>> shouldPause =
+            this::shouldPauseOnPartitionCreation;
+        if (batchIterator.involvesIO()) {
+            shouldPause = shouldPause.or(this::shouldPauseOnTargetNodeJobsCounter);
+        }
+
         BatchIteratorBackpressureExecutor<ShardedRequests<ShardUpsertRequest, ShardUpsertRequest.Item>, UpsertResults> executor =
             new BatchIteratorBackpressureExecutor<>(
                 scheduler,
@@ -246,7 +269,7 @@ public class ShardingUpsertExecutor
                 this::execute,
                 resultCollector.combiner(),
                 resultCollector.supplier().get(),
-                this::shouldPause,
+                shouldPause,
                 BACKOFF_POLICY
             );
         return executor.consumeIteratorAndExecute()

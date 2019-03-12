@@ -10,7 +10,7 @@ task writePropertiesFile {
             into "${buildDir}/tmp"
             include "plugin-descriptor.properties"
             expand(version: project.version,
-                    esVersion: versions.elasticsearch,
+                    esVersion: versions.internalES,
                     jmvCompatibility: project.targetCompatibility,
                     name: project.name)
         }
@@ -20,7 +20,7 @@ task writePropertiesFile {
 jar.dependsOn('writePropertiesFile')
 
 dependencies {
-    compileOnly project(':core')
+    compileOnly project(':common')
     compileOnly('com.microsoft.azure:azure-mgmt-utility:0.9.8') {
         exclude group: 'stax', module: 'stax-api'
         exclude group: 'javax.mail', module: 'mail'
@@ -31,6 +31,7 @@ dependencies {
         exclude group: 'org.apache.httpcomponents', module: 'httpclient'
     }
     testCompile project(':integration-testing')
+    testCompile project(':http')
     testCompile('com.microsoft.azure:azure-mgmt-utility:0.9.8') {
         exclude group: 'stax', module: 'stax-api'
         exclude group: 'javax.mail', module: 'mail'

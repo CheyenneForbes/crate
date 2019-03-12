@@ -23,57 +23,69 @@
 package io.crate.metadata.settings.session;
 
 import com.google.common.collect.ImmutableMap;
-import io.crate.analyze.expressions.ExpressionToObjectVisitor;
-import io.crate.analyze.expressions.ExpressionToStringVisitor;
-import io.crate.sql.tree.Expression;
-import io.crate.types.BooleanType;
+import io.crate.action.sql.SessionContext;
+import io.crate.types.DataTypes;
 
+import java.util.Iterator;
 import java.util.Map;
+
+import static io.crate.metadata.SearchPath.createSearchPathFrom;
 
 public class SessionSettingRegistry {
 
-    public static final String SEARCH_PATH_KEY = "search_path";
-    public static final String SEMI_JOIN_KEY = "enable_semijoin";
+    private static final String SEARCH_PATH_KEY = "search_path";
+    static final String SEMI_JOIN_KEY = "enable_semijoin";
     public static final String HASH_JOIN_KEY = "enable_hashjoin";
 
-    private static final Map<String, SessionSettingApplier> SESSION_SETTINGS =
-        ImmutableMap.<String, SessionSettingApplier>builder()
-            .put(SEARCH_PATH_KEY, (parameters, expressions, context) -> {
-                if (expressions.size() > 0) {
-                    // Resetting the search path with `set search_path to default` results
-                    // in the empty list of expressions.
-                    String[] schemas = new String[expressions.size()];
-                    for (int i = 0; i < expressions.size(); i++) {
-                        Expression expression = expressions.get(i);
-                        schemas[i] = ExpressionToStringVisitor.convert(expression, parameters).trim();
-                    }
-                    context.setSearchPath(schemas);
-                } else {
-                    context.resetSchema();
-                }
-            })
-            .put(SEMI_JOIN_KEY, (parameters, expressions, context) -> {
-                if (expressions.size() == 1) {
-                    Object value = ExpressionToObjectVisitor.convert(expressions.get(0), parameters);
-                    boolean booleanValue = BooleanType.INSTANCE.value(value);
-                    context.setSemiJoinsRewriteEnabled(booleanValue);
-                } else {
-                    throw new IllegalArgumentException(SEMI_JOIN_KEY + " should have only one argument.");
-                }
-            })
-            .put(HASH_JOIN_KEY, (parameters, expressions, context) -> {
-                if (expressions.size() == 1) {
-                    Object value = ExpressionToObjectVisitor.convert(expressions.get(0), parameters);
-                    boolean booleanValue = BooleanType.INSTANCE.value(value);
-                    context.setHashJoinEnabled(booleanValue);
-                } else {
-                    throw new IllegalArgumentException(HASH_JOIN_KEY + " should have only one argument.");
-                }
-            })
+    public static final Map<String, SessionSetting<?>> SETTINGS = ImmutableMap.<String, SessionSetting<?>>builder()
+            .put(SEARCH_PATH_KEY,
+                new SessionSetting<>(
+                    objects -> {}, // everything allowed, empty list (resulting by ``SET .. TO DEFAULT`` results in defaults
+                    objects -> createSearchPathFrom(objectsToStringArray(objects)),
+                    SessionContext::setSearchPath,
+                    s -> iterableToString(s.searchPath())
+                ))
+            .put(SEMI_JOIN_KEY,
+                new SessionSetting<>(
+                    objects -> {
+                        if (objects.length != 1) {
+                            throw new IllegalArgumentException(SEMI_JOIN_KEY + " should have only one argument.");
+                        }
+                    },
+                    objects -> DataTypes.BOOLEAN.value(objects[0]),
+                    SessionContext::setSemiJoinsRewriteEnabled,
+                    s -> Boolean.toString(s.getSemiJoinsRewriteEnabled())
+                ))
+            .put(HASH_JOIN_KEY,
+                new SessionSetting<>(
+                    objects -> {
+                        if (objects.length != 1) {
+                            throw new IllegalArgumentException(HASH_JOIN_KEY + " should have only one argument.");
+                        }
+                    },
+                    objects -> DataTypes.BOOLEAN.value(objects[0]),
+                    SessionContext::setHashJoinEnabled,
+                    s -> Boolean.toString(s.isHashJoinEnabled())
+                ))
             .build();
 
+    private static String[] objectsToStringArray(Object[] objects) {
+        String[] strings = new String[objects.length];
+        for (int i = 0; i < objects.length; i++) {
+            strings[i] = DataTypes.STRING.value(objects[i]);
+        }
+        return strings;
+    }
 
-    public static SessionSettingApplier getApplier(String setting) {
-        return SESSION_SETTINGS.get(setting);
+    private static String iterableToString(Iterable<String> iterable) {
+        Iterator<String> it = iterable.iterator();
+        StringBuilder sb = new StringBuilder();
+        while (it.hasNext()) {
+            sb.append(it.next());
+            if (it.hasNext()) {
+                sb.append(", ");
+            }
+        }
+        return sb.toString();
     }
 }

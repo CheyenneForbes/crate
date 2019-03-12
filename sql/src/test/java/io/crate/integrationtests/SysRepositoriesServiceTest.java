@@ -25,8 +25,7 @@ import io.crate.testing.UseJdbc;
 import io.crate.types.DataType;
 import io.crate.types.ObjectType;
 import io.crate.types.StringType;
-import org.elasticsearch.action.admin.cluster.repositories.delete.DeleteRepositoryResponse;
-import org.elasticsearch.action.admin.cluster.repositories.put.PutRepositoryResponse;
+import org.elasticsearch.action.support.master.AcknowledgedResponse;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.junit.After;
@@ -44,7 +43,7 @@ import java.util.Map;
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.Matchers.is;
 
-@ESIntegTestCase.ClusterScope(transportClientRatio = 0)
+@ESIntegTestCase.ClusterScope()
 @UseJdbc(0) // missing column types
 public class SysRepositoriesServiceTest extends SQLTransportIntegrationTest {
 
@@ -76,7 +75,7 @@ public class SysRepositoriesServiceTest extends SQLTransportIntegrationTest {
     }
 
     private void createRepository(String name) {
-        PutRepositoryResponse putRepositoryResponse = client().admin().cluster().preparePutRepository(name)
+        AcknowledgedResponse putRepositoryResponse = client().admin().cluster().preparePutRepository(name)
             .setType("fs")
             .setSettings(Settings.builder()
                 .put("location", new File(TEMP_FOLDER.getRoot(), "backup").getAbsolutePath())
@@ -88,7 +87,7 @@ public class SysRepositoriesServiceTest extends SQLTransportIntegrationTest {
     }
 
     private void deleteRepository(String name) {
-        DeleteRepositoryResponse deleteRepositoryResponse = client().admin().cluster().prepareDeleteRepository(name).get();
+        AcknowledgedResponse deleteRepositoryResponse = client().admin().cluster().prepareDeleteRepository(name).get();
         assertThat(deleteRepositoryResponse.isAcknowledged(), equalTo(true));
     }
 
@@ -98,7 +97,7 @@ public class SysRepositoriesServiceTest extends SQLTransportIntegrationTest {
         assertThat(response.rowCount(), is(1L));
         assertThat(response.cols().length, is(3));
         assertThat(response.cols(), is(new String[]{"name", "settings", "type"}));
-        assertThat(response.columnTypes(), is(new DataType[]{StringType.INSTANCE, ObjectType.INSTANCE, StringType.INSTANCE}));
+        assertThat(response.columnTypes(), is(new DataType[]{StringType.INSTANCE, ObjectType.untyped(), StringType.INSTANCE}));
         assertThat((String) response.rows()[0][0], is("test-repo"));
 
         Map<String, Object> settings = (Map<String, Object>) response.rows()[0][1];

@@ -23,19 +23,20 @@
 package io.crate.execution.ddl;
 
 import com.carrotsearch.hppc.cursors.ObjectObjectCursor;
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ImmutableList;
 import io.crate.Constants;
 import io.crate.action.FutureActionListener;
-import io.crate.execution.ddl.SchemaUpdateRequest;
-import io.crate.execution.ddl.SchemaUpdateResponse;
+import io.crate.collections.Lists2;
 import io.crate.execution.support.ActionListeners;
+import io.crate.metadata.IndexMappings;
 import io.crate.metadata.IndexParts;
 import io.crate.metadata.PartitionName;
 import org.elasticsearch.ResourceNotFoundException;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.indices.mapping.put.PutMappingAction;
 import org.elasticsearch.action.admin.indices.mapping.put.PutMappingRequest;
-import org.elasticsearch.action.admin.indices.mapping.put.PutMappingResponse;
-import org.elasticsearch.action.support.ActionFilters;
+import org.elasticsearch.action.support.master.AcknowledgedResponse;
 import org.elasticsearch.action.support.master.TransportMasterNodeAction;
 import org.elasticsearch.client.node.NodeClient;
 import org.elasticsearch.cluster.ClusterState;
@@ -47,12 +48,14 @@ import org.elasticsearch.cluster.metadata.IndexTemplateMetaData;
 import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.Priority;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.compress.CompressedXContent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Singleton;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.common.xcontent.DeprecationHandler;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentHelper;
@@ -63,6 +66,8 @@ import org.elasticsearch.index.Index;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
@@ -80,16 +85,14 @@ public class TransportSchemaUpdateAction extends TransportMasterNodeAction<Schem
                                        TransportService transportService,
                                        ClusterService clusterService,
                                        ThreadPool threadPool,
-                                       ActionFilters actionFilters,
                                        IndexNameExpressionResolver indexNameExpressionResolver,
                                        NodeClient nodeClient,
                                        NamedXContentRegistry xContentRegistry) {
         super(settings,
-            "crate/sql/ddl/schema_update",
+            "internal:crate:sql/ddl/schema_update",
             transportService,
             clusterService,
             threadPool,
-            actionFilters,
             indexNameExpressionResolver,
             SchemaUpdateRequest::new);
         this.nodeClient = nodeClient;
@@ -112,12 +115,13 @@ public class TransportSchemaUpdateAction extends TransportMasterNodeAction<Schem
         // ideally we'd handle the index mapping update together with the template update in a single clusterStateUpdateTask
         // but the index mapping-update logic is difficult to re-use
         if (IndexParts.isPartitioned(request.index().getName())) {
-            updateMapping(request.index(), request.masterNodeTimeout(), request.mappingSource())
-                .thenCompose(r -> updateTemplate(
-                    state.getMetaData().getTemplates(),
-                    request.index().getName(),
-                    request.mappingSource(),
-                    request.masterNodeTimeout()))
+            updateTemplate(
+                state.getMetaData().getTemplates(),
+                request.index().getName(),
+                request.mappingSource(),
+                request.masterNodeTimeout()
+            ).thenCompose(r -> updateMapping(request.index(), request.masterNodeTimeout(), request.mappingSource()))
+                .thenApply(r -> new SchemaUpdateResponse(r.isAcknowledged()))
                 .whenComplete(ActionListeners.asBiConsumer(listener));
         } else {
             updateMapping(request.index(), request.masterNodeTimeout(), request.mappingSource())
@@ -126,10 +130,10 @@ public class TransportSchemaUpdateAction extends TransportMasterNodeAction<Schem
         }
     }
 
-    private CompletableFuture<PutMappingResponse> updateMapping(Index index,
-                                                                TimeValue timeout,
-                                                                String mappingSource) {
-        FutureActionListener<PutMappingResponse, PutMappingResponse> putMappingListener = FutureActionListener.newInstance();
+    private CompletableFuture<AcknowledgedResponse> updateMapping(Index index,
+                                                                  TimeValue timeout,
+                                                                  String mappingSource) {
+        FutureActionListener<AcknowledgedResponse, AcknowledgedResponse> putMappingListener = FutureActionListener.newInstance();
         PutMappingRequest putMappingRequest = new PutMappingRequest()
             .indices(new String[0])
             .setConcreteIndex(index)
@@ -137,7 +141,7 @@ public class TransportSchemaUpdateAction extends TransportMasterNodeAction<Schem
             .source(mappingSource, XContentType.JSON)
             .timeout(timeout)
             .masterNodeTimeout(timeout);
-        nodeClient.executeLocally(PutMappingAction.INSTANCE, putMappingRequest, putMappingListener);
+        nodeClient.execute(PutMappingAction.INSTANCE, putMappingRequest, putMappingListener);
         return putMappingListener;
     }
 
@@ -149,7 +153,8 @@ public class TransportSchemaUpdateAction extends TransportMasterNodeAction<Schem
         String templateName = PartitionName.templateName(indexName);
         Map<String, Object> newMapping;
         try {
-            XContentParser parser = JsonXContent.jsonXContent.createParser(NamedXContentRegistry.EMPTY, mappingSource);
+            XContentParser parser = JsonXContent.jsonXContent.createParser(
+                NamedXContentRegistry.EMPTY, DeprecationHandler.THROW_UNSUPPORTED_OPERATION, mappingSource);
             newMapping = parser.map();
             if (newMappingAlreadyApplied(templates.get(templateName), newMapping)) {
                 return CompletableFuture.completedFuture(new SchemaUpdateResponse(true));
@@ -187,10 +192,11 @@ public class TransportSchemaUpdateAction extends TransportMasterNodeAction<Schem
         return !XContentHelper.update(currentMapping, newMapping, true);
     }
 
-    private static ClusterState updateTemplate(NamedXContentRegistry xContentRegistry,
-                                               ClusterState currentState,
-                                               String templateName,
-                                               Map<String, Object> newMapping) throws Exception {
+    @VisibleForTesting
+    static ClusterState updateTemplate(NamedXContentRegistry xContentRegistry,
+                                       ClusterState currentState,
+                                       String templateName,
+                                       Map<String, Object> newMapping) throws Exception {
         IndexTemplateMetaData template = currentState.metaData().templates().get(templateName);
         if (template == null) {
             throw new ResourceNotFoundException("Template \"" + templateName + "\" for partitioned table is missing");
@@ -199,18 +205,57 @@ public class TransportSchemaUpdateAction extends TransportMasterNodeAction<Schem
         IndexTemplateMetaData.Builder templateBuilder = new IndexTemplateMetaData.Builder(template);
         for (ObjectObjectCursor<String, CompressedXContent> cursor : template.mappings()) {
             Map<String, Object> source = parseMapping(xContentRegistry, cursor.value.toString());
-            XContentHelper.update(source, newMapping, true);
+            mergeIntoSource(source, newMapping);
             try (XContentBuilder xContentBuilder = JsonXContent.contentBuilder()) {
-                templateBuilder.putMapping(cursor.key, xContentBuilder.map(source).string());
+                templateBuilder.putMapping(cursor.key, Strings.toString(xContentBuilder.map(source)));
             }
         }
-
         MetaData.Builder builder = MetaData.builder(currentState.metaData()).put(templateBuilder);
         return ClusterState.builder(currentState).metaData(builder).build();
     }
 
+    static void mergeIntoSource(Map<String, Object> source, Map<String, Object> mappingUpdate) {
+        mergeIntoSource(source, mappingUpdate, Collections.emptyList());
+    }
+
+    static void mergeIntoSource(Map<String, Object> source, Map<String, Object> mappingUpdate, List<String> path) {
+        for (Map.Entry<String, Object> updateEntry : mappingUpdate.entrySet()) {
+            String key = updateEntry.getKey();
+            Object updateValue = updateEntry.getValue();
+            if (source.containsKey(key)) {
+                Object sourceValue = source.get(key);
+                if (sourceValue instanceof Map && updateValue instanceof Map) {
+                    //noinspection unchecked
+                    mergeIntoSource((Map) sourceValue, (Map) updateValue, Lists2.concat(path, key));
+                } else {
+                    if (updateAllowed(key, sourceValue, updateValue)) {
+                        source.put(key, updateValue);
+                    } else if (!isUpdateIgnored(path) && !sourceValue.equals(updateValue)) {
+                        String fqKey = String.join(".", path) + '.' + key;
+                        throw new IllegalArgumentException(
+                            "Can't overwrite " + fqKey + "=" + sourceValue + " with " + updateValue);
+                    }
+                }
+            } else {
+                source.put(key, updateValue);
+            }
+        }
+    }
+
+    private static boolean isUpdateIgnored(List<String> path) {
+        List<String> versionMeta = ImmutableList.of("default", "_meta", IndexMappings.VERSION_STRING);
+        return path.size() > 3 && path.subList(0, 3).equals(versionMeta);
+    }
+
+    private static boolean updateAllowed(String key, Object sourceValue, Object updateValue) {
+        if (sourceValue instanceof Boolean && updateValue instanceof String && key.equals("dynamic")) {
+            return sourceValue.toString().equals(updateValue);
+        }
+        return false;
+    }
+
     @Override
     protected ClusterBlockException checkBlock(SchemaUpdateRequest request, ClusterState state) {
-        return state.blocks().indexBlockedException(ClusterBlockLevel.METADATA_WRITE, "");
+        return state.blocks().globalBlockedException(ClusterBlockLevel.METADATA_WRITE);
     }
 }

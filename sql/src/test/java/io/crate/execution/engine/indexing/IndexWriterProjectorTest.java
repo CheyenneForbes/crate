@@ -22,6 +22,7 @@
 
 package io.crate.execution.engine.indexing;
 
+import io.crate.analyze.NumberOfReplicas;
 import io.crate.data.BatchIterator;
 import io.crate.data.Bucket;
 import io.crate.data.InMemoryBatchIterator;
@@ -36,6 +37,7 @@ import io.crate.expression.symbol.InputColumn;
 import io.crate.expression.symbol.Symbol;
 import io.crate.integrationtests.SQLTransportIntegrationTest;
 import io.crate.metadata.ColumnIdent;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.Functions;
 import io.crate.metadata.Reference;
 import io.crate.metadata.ReferenceIdent;
@@ -44,8 +46,9 @@ import io.crate.metadata.RowGranularity;
 import io.crate.metadata.doc.DocSysColumns;
 import io.crate.testing.TestingRowConsumer;
 import io.crate.types.DataTypes;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.action.admin.indices.create.TransportCreatePartitionsAction;
+import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.junit.Test;
@@ -75,16 +78,19 @@ public class IndexWriterProjectorTest extends SQLTransportIntegrationTest {
         List<CollectExpression<Row, ?>> collectExpressions = Collections.<CollectExpression<Row, ?>>singletonList(sourceInput);
 
         RelationName bulkImportIdent = new RelationName(sqlExecutor.getCurrentSchema(), "bulk_import");
-        Settings tableSettings = TableSettingsResolver.get(clusterService().state().getMetaData(), bulkImportIdent, false);
+        ClusterState state = clusterService().state();
+        Settings tableSettings = TableSettingsResolver.get(state.getMetaData(), bulkImportIdent, false);
         ThreadPool threadPool = internalCluster().getInstance(ThreadPool.class);
         IndexWriterProjector writerProjector = new IndexWriterProjector(
             clusterService(),
             new NodeJobsCounter(),
             threadPool.scheduler(),
             threadPool.executor(ThreadPool.Names.SEARCH),
+            CoordinatorTxnCtx.systemTransactionContext(),
             internalCluster().getInstance(Functions.class),
             Settings.EMPTY,
-            tableSettings,
+            IndexMetaData.INDEX_NUMBER_OF_SHARDS_SETTING.get(tableSettings),
+            NumberOfReplicas.fromSettings(tableSettings, state.getNodes().getSize()),
             internalCluster().getInstance(TransportCreatePartitionsAction.class),
             internalCluster().getInstance(TransportShardUpsertAction.class)::execute,
             IndexNameResolver.forTable(bulkImportIdent),
@@ -105,7 +111,7 @@ public class IndexWriterProjectorTest extends SQLTransportIntegrationTest {
         );
 
         BatchIterator rowsIterator = InMemoryBatchIterator.of(IntStream.range(0, 100)
-            .mapToObj(i -> new RowN(new Object[]{i, new BytesRef("{\"id\": " + i + ", \"name\": \"Arthur\"}")}))
+            .mapToObj(i -> new RowN(new Object[]{i, "{\"id\": " + i + ", \"name\": \"Arthur\"}"}))
             .collect(Collectors.toList()), SENTINEL);
 
         TestingRowConsumer consumer = new TestingRowConsumer();

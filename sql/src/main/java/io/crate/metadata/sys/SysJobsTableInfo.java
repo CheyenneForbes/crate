@@ -36,7 +36,7 @@ import io.crate.metadata.expressions.RowCollectExpressionFactory;
 import io.crate.metadata.table.ColumnRegistrar;
 import io.crate.metadata.table.StaticTableInfo;
 import io.crate.types.DataTypes;
-import org.apache.lucene.util.BytesRef;
+import io.crate.types.ObjectType;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 
@@ -60,19 +60,19 @@ public class SysJobsTableInfo extends StaticTableInfo {
     public static ImmutableMap<ColumnIdent, RowCollectExpressionFactory<JobContext>> expressions(Supplier<DiscoveryNode> localNode) {
         return ImmutableMap.<ColumnIdent, RowCollectExpressionFactory<JobContext>>builder()
             .put(SysJobsTableInfo.Columns.ID,
-                () -> NestableCollectExpression.objToBytesRef(JobContext::id))
+                () -> NestableCollectExpression.forFunction(c -> c.id().toString()))
             .put(SysJobsTableInfo.Columns.USERNAME,
-                () -> NestableCollectExpression.objToBytesRef(JobContext::username))
+                () -> NestableCollectExpression.forFunction(JobContext::username))
             .put(SysJobsTableInfo.Columns.STMT,
-                () -> NestableCollectExpression.objToBytesRef(JobContext::stmt))
+                () -> NestableCollectExpression.forFunction(JobContext::stmt))
             .put(SysJobsTableInfo.Columns.STARTED,
                 () -> NestableCollectExpression.forFunction(JobContext::started))
             .put(Columns.NODE, () -> NestableCollectExpression.forFunction(ignored -> ImmutableMap.of(
-                "id", new BytesRef(localNode.get().getId()),
-                "name", new BytesRef(localNode.get().getName())
+                "id", localNode.get().getId(),
+                "name", localNode.get().getName()
             )))
-            .put(Columns.NODE_ID, () -> NestableCollectExpression.forFunction(ignored -> new BytesRef(localNode.get().getId())))
-            .put(Columns.NODE_NAME, () -> NestableCollectExpression.forFunction(ignored -> new BytesRef(localNode.get().getName())))
+            .put(Columns.NODE_ID, () -> NestableCollectExpression.forFunction(ignored -> localNode.get().getId()))
+            .put(Columns.NODE_NAME, () -> NestableCollectExpression.forFunction(ignored -> localNode.get().getName()))
             .build();
     }
 
@@ -80,9 +80,10 @@ public class SysJobsTableInfo extends StaticTableInfo {
         super(IDENT, new ColumnRegistrar(IDENT, RowGranularity.DOC)
                 .register(Columns.ID, DataTypes.STRING)
                 .register(Columns.USERNAME, DataTypes.STRING)
-                .register(Columns.NODE, DataTypes.OBJECT)
-                .register(Columns.NODE_ID, DataTypes.STRING)
-                .register(Columns.NODE_NAME, DataTypes.STRING)
+                .register(Columns.NODE, ObjectType.builder()
+                    .setInnerType("id", DataTypes.STRING)
+                    .setInnerType("name", DataTypes.STRING)
+                    .build())
                 .register(Columns.STMT, DataTypes.STRING)
                 .register(Columns.STARTED, DataTypes.TIMESTAMP),
             PRIMARY_KEY);

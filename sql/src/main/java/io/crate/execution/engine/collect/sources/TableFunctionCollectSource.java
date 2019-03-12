@@ -25,6 +25,7 @@ package io.crate.execution.engine.collect.sources;
 import com.google.common.collect.Iterables;
 import io.crate.analyze.OrderBy;
 import io.crate.data.BatchIterator;
+import io.crate.data.Bucket;
 import io.crate.data.InMemoryBatchIterator;
 import io.crate.data.Input;
 import io.crate.data.Row;
@@ -38,6 +39,7 @@ import io.crate.execution.engine.collect.ValueAndInputRow;
 import io.crate.expression.InputCondition;
 import io.crate.expression.InputFactory;
 import io.crate.expression.symbol.Symbol;
+import io.crate.metadata.TransactionContext;
 import io.crate.metadata.Functions;
 import io.crate.metadata.Reference;
 import io.crate.metadata.table.TableInfo;
@@ -59,9 +61,12 @@ public class TableFunctionCollectSource implements CollectSource {
     }
 
     @Override
-    public BatchIterator<Row> getIterator(CollectPhase collectPhase, CollectTask collectTask, boolean supportMoveToStart) {
+    public BatchIterator<Row> getIterator(TransactionContext txnCtx,
+                                          CollectPhase collectPhase,
+                                          CollectTask collectTask,
+                                          boolean supportMoveToStart) {
         TableFunctionCollectPhase phase = (TableFunctionCollectPhase) collectPhase;
-        TableFunctionImplementation functionImplementation = phase.functionImplementation();
+        TableFunctionImplementation<?> functionImplementation = phase.functionImplementation();
         TableInfo tableInfo = functionImplementation.createTableInfo();
 
         //noinspection unchecked  Only literals can be passed to table functions. Anything else is invalid SQL
@@ -70,13 +75,14 @@ public class TableFunctionCollectSource implements CollectSource {
 
         List<Input<?>> topLevelInputs = new ArrayList<>(phase.toCollect().size());
         InputFactory.Context<InputCollectExpression> ctx =
-            inputFactory.ctxForRefs(i -> new InputCollectExpression(columns.indexOf(i)));
+            inputFactory.ctxForRefs(txnCtx, i -> new InputCollectExpression(columns.indexOf(i)));
         for (Symbol symbol : phase.toCollect()) {
             topLevelInputs.add(ctx.add(symbol));
         }
 
+        Bucket buckets = functionImplementation.evaluate(txnCtx, inputs.toArray(new Input[0]));
         Iterable<Row> rows = Iterables.transform(
-            functionImplementation.execute(inputs),
+            buckets,
             new ValueAndInputRow<>(topLevelInputs, ctx.expressions()));
         Input<Boolean> condition = (Input<Boolean>) ctx.add(phase.where());
         rows = Iterables.filter(rows, InputCondition.asPredicate(condition));

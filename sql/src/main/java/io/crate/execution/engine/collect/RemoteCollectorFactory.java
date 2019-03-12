@@ -24,7 +24,7 @@ package io.crate.execution.engine.collect;
 
 import com.carrotsearch.hppc.IntArrayList;
 import com.carrotsearch.hppc.IntIndexedContainer;
-import io.crate.core.collections.TreeMapBuilder;
+import io.crate.common.collections.TreeMapBuilder;
 import io.crate.data.BatchIterator;
 import io.crate.data.Buckets;
 import io.crate.data.CollectingBatchIterator;
@@ -119,7 +119,8 @@ public class RemoteCollectorFactory {
             () -> {
                 shardStateAwareRemoteCollector.doCollect();
                 return consumer.resultFuture().thenApply(results -> results.stream().map(Buckets.arrayToSharedRow())::iterator);
-            }
+            },
+            true
         );
     }
 
@@ -147,6 +148,8 @@ public class RemoteCollectorFactory {
         String localNode = clusterService.localNode().getId();
         return remoteNode -> new RemoteCollector(
             jobId,
+            collectTask.txnCtx().userName(),
+            collectTask.txnCtx().currentSchema(),
             localNode,
             remoteNode,
             transportActionProvider.transportJobInitAction(),
@@ -176,8 +179,7 @@ public class RemoteCollectorFactory {
             collectPhase.toCollect(),
             new ArrayList<>(Projections.shardProjections(collectPhase.projections())),
             collectPhase.where(),
-            DistributionInfo.DEFAULT_BROADCAST,
-            null
+            DistributionInfo.DEFAULT_BROADCAST
         );
     }
 }

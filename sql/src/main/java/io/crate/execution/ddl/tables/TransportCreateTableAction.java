@@ -30,9 +30,8 @@ import org.elasticsearch.action.admin.indices.create.CreateIndexRequest;
 import org.elasticsearch.action.admin.indices.create.CreateIndexResponse;
 import org.elasticsearch.action.admin.indices.create.TransportCreateIndexAction;
 import org.elasticsearch.action.admin.indices.template.put.PutIndexTemplateRequest;
-import org.elasticsearch.action.admin.indices.template.put.PutIndexTemplateResponse;
 import org.elasticsearch.action.admin.indices.template.put.TransportPutIndexTemplateAction;
-import org.elasticsearch.action.support.ActionFilters;
+import org.elasticsearch.action.support.master.AcknowledgedResponse;
 import org.elasticsearch.action.support.master.TransportMasterNodeAction;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.block.ClusterBlockException;
@@ -56,7 +55,7 @@ import org.elasticsearch.transport.TransportService;
  */
 public class TransportCreateTableAction extends TransportMasterNodeAction<CreateTableRequest, CreateTableResponse> {
 
-    public static final String NAME = "tables:admin/create";
+    public static final String NAME = "internal:crate:sql/tables/admin/create";
 
     private final TransportCreateIndexAction transportCreateIndexAction;
     private final TransportPutIndexTemplateAction transportPutIndexTemplateAction;
@@ -66,7 +65,6 @@ public class TransportCreateTableAction extends TransportMasterNodeAction<Create
                                       TransportService transportService,
                                       ClusterService clusterService,
                                       ThreadPool threadPool,
-                                      ActionFilters actionFilters,
                                       IndexNameExpressionResolver indexNameExpressionResolver,
                                       TransportCreateIndexAction transportCreateIndexAction,
                                       TransportPutIndexTemplateAction transportPutIndexTemplateAction) {
@@ -74,7 +72,6 @@ public class TransportCreateTableAction extends TransportMasterNodeAction<Create
             NAME,
             transportService,
             clusterService, threadPool,
-            actionFilters,
             indexNameExpressionResolver,
             CreateTableRequest::new);
         this.transportCreateIndexAction = transportCreateIndexAction;
@@ -114,13 +111,13 @@ public class TransportCreateTableAction extends TransportMasterNodeAction<Create
         if (request.getCreateIndexRequest() != null) {
             CreateIndexRequest createIndexRequest = request.getCreateIndexRequest();
             ActionListener<CreateIndexResponse> wrappedListener = ActionListener.wrap(
-                response -> listener.onResponse(new CreateTableResponse(response.isShardsAcked())),
+                response -> listener.onResponse(new CreateTableResponse(response.isShardsAcknowledged())),
                 listener::onFailure
             );
             transportCreateIndexAction.masterOperation(createIndexRequest, state, wrappedListener);
         } else if (request.getPutIndexTemplateRequest() != null) {
             PutIndexTemplateRequest putIndexTemplateRequest = request.getPutIndexTemplateRequest();
-            ActionListener<PutIndexTemplateResponse> wrappedListener = ActionListener.wrap(
+            ActionListener<AcknowledgedResponse> wrappedListener = ActionListener.wrap(
                 response -> listener.onResponse(new CreateTableResponse(response.isAcknowledged())),
                 listener::onFailure
             );

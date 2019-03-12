@@ -25,7 +25,7 @@ package io.crate.analyze;
 import io.crate.action.sql.SessionContext;
 import io.crate.analyze.relations.QueriedRelation;
 import io.crate.analyze.relations.RelationAnalyzer;
-import io.crate.metadata.TransactionContext;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.sql.tree.AstVisitor;
 import io.crate.sql.tree.Delete;
 import io.crate.sql.tree.Explain;
@@ -35,6 +35,7 @@ import io.crate.sql.tree.Query;
 import io.crate.sql.tree.ShowColumns;
 import io.crate.sql.tree.ShowCreateTable;
 import io.crate.sql.tree.ShowSchemas;
+import io.crate.sql.tree.ShowSessionParameter;
 import io.crate.sql.tree.ShowTables;
 import io.crate.sql.tree.ShowTransaction;
 import io.crate.sql.tree.Statement;
@@ -72,8 +73,8 @@ class UnboundAnalyzer {
     }
 
     public AnalyzedStatement analyze(Statement statement, SessionContext sessionContext, ParamTypeHints paramTypeHints) {
-        TransactionContext transactionContext = new TransactionContext(sessionContext);
-        return dispatcher.process(statement, new Analysis(transactionContext, ParameterContext.EMPTY, paramTypeHints));
+        CoordinatorTxnCtx coordinatorTxnCtx = new CoordinatorTxnCtx(sessionContext);
+        return dispatcher.process(statement, new Analysis(coordinatorTxnCtx, ParameterContext.EMPTY, paramTypeHints));
     }
 
     private static class UnboundDispatcher extends AstVisitor<AnalyzedStatement, Analysis> {
@@ -146,16 +147,21 @@ class UnboundAnalyzer {
 
         @Override
         protected AnalyzedStatement visitShowColumns(ShowColumns node, Analysis context) {
-            TransactionContext transactionContext = context.transactionContext();
+            CoordinatorTxnCtx coordinatorTxnCtx = context.transactionContext();
             Query query = showStatementAnalyzer.rewriteShowColumns(node,
-                transactionContext.sessionContext().searchPath().currentSchema());
+                coordinatorTxnCtx.sessionContext().searchPath().currentSchema());
             return (QueriedRelation) relationAnalyzer.analyzeUnbound(
-                query, transactionContext, context.parameterContext().typeHints());
+                query, coordinatorTxnCtx, context.parameterContext().typeHints());
         }
 
         @Override
         public AnalyzedStatement visitShowCreateTable(ShowCreateTable node, Analysis context) {
             return showCreateTableAnalyzer.analyze(node.table(), context.sessionContext());
+        }
+
+        @Override
+        public AnalyzedStatement visitShowSessionParameter(ShowSessionParameter node, Analysis context) {
+            return new ShowSessionParameterAnalyzedStatement(node.parameter());
         }
 
         @Override

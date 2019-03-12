@@ -23,12 +23,12 @@
 package io.crate.execution.jobs.transport;
 
 import io.crate.concurrent.CompletableFutures;
-import io.crate.data.Bucket;
-import io.crate.execution.jobs.JobSetup;
+import io.crate.execution.engine.distribution.StreamBucket;
 import io.crate.execution.jobs.InstrumentedIndexSearcher;
+import io.crate.execution.jobs.JobSetup;
 import io.crate.execution.jobs.RootTask;
-import io.crate.execution.jobs.TasksService;
 import io.crate.execution.jobs.SharedShardContexts;
+import io.crate.execution.jobs.TasksService;
 import io.crate.execution.support.NodeAction;
 import io.crate.execution.support.NodeActionRequestHandler;
 import io.crate.execution.support.Transports;
@@ -50,7 +50,7 @@ import java.util.function.UnaryOperator;
 @Singleton
 public class TransportJobAction implements NodeAction<JobRequest, JobResponse> {
 
-    private static final String ACTION_NAME = "crate/sql/job";
+    private static final String ACTION_NAME = "internal:crate:sql/job";
     private static final String EXECUTOR = ThreadPool.Names.SEARCH;
 
     private final IndicesService indicesService;
@@ -87,8 +87,13 @@ public class TransportJobAction implements NodeAction<JobRequest, JobResponse> {
 
         SharedShardContexts sharedShardContexts = maybeInstrumentProfiler(request.enableProfiling(), contextBuilder);
 
-        List<CompletableFuture<Bucket>> directResponseFutures = jobSetup.prepareOnRemote(
-            request.nodeOperations(), contextBuilder, sharedShardContexts);
+        List<CompletableFuture<StreamBucket>> directResponseFutures = jobSetup.prepareOnRemote(
+            request.userName(),
+            request.currentSchema(),
+            request.nodeOperations(),
+            contextBuilder,
+            sharedShardContexts
+        );
 
         try {
             RootTask context = tasksService.createTask(contextBuilder);

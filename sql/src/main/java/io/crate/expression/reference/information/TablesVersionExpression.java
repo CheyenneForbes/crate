@@ -22,13 +22,10 @@
 
 package io.crate.expression.reference.information;
 
-import io.crate.Version;
-import io.crate.core.collections.Maps;
+import io.crate.common.collections.Maps;
 import io.crate.expression.reference.ObjectCollectExpression;
 import io.crate.metadata.RelationInfo;
-import io.crate.execution.engine.collect.NestableCollectExpression;
-import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.common.lucene.BytesRefs;
+import org.elasticsearch.Version;
 
 import java.util.Map;
 
@@ -39,75 +36,17 @@ public class TablesVersionExpression extends ObjectCollectExpression<RelationInf
     }
 
     private void addChildImplementations() {
-        childImplementations.put(Version.Property.CREATED.toString(),
-            new TableDetailedVersionExpression(Version.Property.CREATED));
-        childImplementations.put(Version.Property.UPGRADED.toString(),
-            new TableDetailedVersionExpression(Version.Property.UPGRADED));
+        childImplementations.put(
+            Version.Property.CREATED.toString(),
+            withNullableProperty(TableExpressions::getVersionCreated, Version::externalNumber));
+        childImplementations.put(
+            Version.Property.UPGRADED.toString(),
+            withNullableProperty(TableExpressions::getVersionUpgraded, Version::externalNumber));
     }
 
     @Override
     public Map<String, Object> value() {
         Map<String, Object> map = super.value();
         return Maps.mapOrNullIfNullValues(map);
-    }
-
-    static class TableDetailedVersionExpression extends ObjectCollectExpression<RelationInfo> {
-
-        TableDetailedVersionExpression(Version.Property property) {
-            addChildImplementations(property);
-        }
-
-        private void addChildImplementations(Version.Property property) {
-            childImplementations.put(Version.CRATEDB_VERSION_KEY, new TableCrateVersionExpression(property));
-            childImplementations.put(Version.ES_VERSION_KEY, new TableESVersionExpression(property));
-        }
-
-        @Override
-        public Map<String, Object> value() {
-            Map<String, Object> map = super.value();
-            return Maps.mapOrNullIfNullValues(map);
-        }
-    }
-
-    static class TableCrateVersionExpression extends NestableCollectExpression<RelationInfo, BytesRef> {
-
-        private final Version.Property property;
-        private BytesRef value;
-
-        TableCrateVersionExpression(Version.Property property) {
-            this.property = property;
-        }
-
-        @Override
-        public void setNextRow(RelationInfo references) {
-            Version version = TableExpressions.getVersion(references, property);
-            value = version == null ? null : BytesRefs.toBytesRef(version.number());
-        }
-
-        @Override
-        public BytesRef value() {
-            return value;
-        }
-    }
-
-    static class TableESVersionExpression extends NestableCollectExpression<RelationInfo, BytesRef> {
-
-        private final Version.Property property;
-        private BytesRef value;
-
-        TableESVersionExpression(Version.Property property) {
-            this.property = property;
-        }
-
-        @Override
-        public void setNextRow(RelationInfo references) {
-            Version version = TableExpressions.getVersion(references, property);
-            value = version == null ? null : BytesRefs.toBytesRef(version.esVersion.toString());
-        }
-
-        @Override
-        public BytesRef value() {
-            return value;
-        }
     }
 }

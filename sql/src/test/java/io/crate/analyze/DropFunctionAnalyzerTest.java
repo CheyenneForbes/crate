@@ -30,11 +30,12 @@ import io.crate.action.sql.Option;
 import io.crate.action.sql.SessionContext;
 import io.crate.auth.user.User;
 import io.crate.data.Row;
-import io.crate.metadata.TransactionContext;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.sql.parser.SqlParser;
 import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
 import io.crate.testing.SQLExecutor;
 import io.crate.types.DataTypes;
+import io.crate.types.ObjectType;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -62,14 +63,14 @@ public class DropFunctionAnalyzerTest extends CrateDummyClusterServiceUnitTest {
         assertThat(analysis.name(), is("bar"));
         assertThat(analysis.ifExists(), is(false));
         assertThat(analysis.argumentTypes().get(0), is(DataTypes.LONG));
-        assertThat(analysis.argumentTypes().get(1), is(DataTypes.OBJECT));
+        assertThat(analysis.argumentTypes().get(1).id(), is(ObjectType.ID));
     }
 
     @Test
     public void testDropFunctionWithSessionSetSchema() throws Exception {
         DropFunctionAnalyzedStatement analysis = (DropFunctionAnalyzedStatement) e.analyzer.boundAnalyze(
             SqlParser.createStatement("DROP FUNCTION bar(long, object)"),
-            new TransactionContext(new SessionContext(0, Option.NONE, User.CRATE_USER,s -> {}, t -> {}, "my_schema")),
+            new CoordinatorTxnCtx(new SessionContext(0, Option.NONE, User.CRATE_USER, s -> {}, t -> {}, "my_schema")),
             new ParameterContext(Row.EMPTY, Collections.emptyList())).analyzedStatement();
 
         assertThat(analysis.schema(), is("my_schema"));
@@ -80,7 +81,7 @@ public class DropFunctionAnalyzerTest extends CrateDummyClusterServiceUnitTest {
     public void testDropFunctionExplicitSchemaSupersedesSessionSchema() throws Exception {
         DropFunctionAnalyzedStatement analysis = (DropFunctionAnalyzedStatement) e.analyzer.boundAnalyze(
             SqlParser.createStatement("DROP FUNCTION my_other_schema.bar(long, object)"),
-            new TransactionContext(new SessionContext(0, Option.NONE, User.CRATE_USER, s -> {}, t -> {}, "my_schema")),
+            new CoordinatorTxnCtx(new SessionContext(0, Option.NONE, User.CRATE_USER, s -> {}, t -> {}, "my_schema")),
             new ParameterContext(Row.EMPTY, Collections.emptyList())).analyzedStatement();
 
         assertThat(analysis.schema(), is("my_other_schema"));
@@ -96,6 +97,6 @@ public class DropFunctionAnalyzerTest extends CrateDummyClusterServiceUnitTest {
         assertThat(analysis.name(), is("bar"));
         assertThat(analysis.ifExists(), is(true));
         assertThat(analysis.argumentTypes().get(0), is(DataTypes.LONG));
-        assertThat(analysis.argumentTypes().get(1), is(DataTypes.OBJECT));
+        assertThat(analysis.argumentTypes().get(1).id(), is(ObjectType.ID));
     }
 }

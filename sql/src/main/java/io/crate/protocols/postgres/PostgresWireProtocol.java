@@ -23,7 +23,6 @@
 package io.crate.protocols.postgres;
 
 import com.google.common.annotations.VisibleForTesting;
-import io.crate.Version;
 import io.crate.action.sql.ResultReceiver;
 import io.crate.action.sql.SQLOperations;
 import io.crate.action.sql.Session;
@@ -44,8 +43,9 @@ import io.netty.channel.ChannelPipeline;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.ssl.SslContext;
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.elasticsearch.common.logging.Loggers;
+import org.elasticsearch.Version;
 
 import javax.annotation.Nullable;
 import javax.net.ssl.SSLSession;
@@ -177,7 +177,7 @@ import static io.crate.protocols.postgres.PostgresWireProtocol.State.STARTUP_HEA
 
 class PostgresWireProtocol {
 
-    private static final Logger LOGGER = Loggers.getLogger(PostgresWireProtocol.class);
+    private static final Logger LOGGER = LogManager.getLogger(PostgresWireProtocol.class);
     private static final String PASSWORD_AUTH_NAME = "password";
 
     final MessageDecoder decoder;
@@ -241,7 +241,7 @@ class PostgresWireProtocol {
 
     private Properties readStartupMessage(ByteBuf buffer) {
         Properties properties = new Properties();
-        ByteBuf byteBuf = buffer.readBytes(msgLength);
+        ByteBuf byteBuf = buffer.readSlice(msgLength);
         while (true) {
             String key = readCString(byteBuf);
             if (key == null) {
@@ -253,7 +253,6 @@ class PostgresWireProtocol {
                 properties.setProperty(key, value);
             }
         }
-        byteBuf.release();
         return properties;
     }
 
@@ -266,11 +265,9 @@ class PostgresWireProtocol {
 
         @Override
         public void accept(Object result, Throwable t) {
-            if (t != null) {
-                if (!(t.getCause() instanceof ClientInterrupted)) {
-                    Messages.sendReadyForQuery(channel);
-                }
-            } else {
+            boolean clientInterrupted = t instanceof ClientInterrupted
+                                        || (t != null && t.getCause() instanceof ClientInterrupted);
+            if (!clientInterrupted) {
                 Messages.sendReadyForQuery(channel);
             }
         }
@@ -425,8 +422,8 @@ class PostgresWireProtocol {
     }
 
     private void sendParamsAndRdyForQuery(Channel channel) {
-        Messages.sendParameterStatus(channel, "crate_version", Version.CURRENT.toString());
-        Messages.sendParameterStatus(channel, "server_version", "9.5.0");
+        Messages.sendParameterStatus(channel, "crate_version", Version.CURRENT.externalNumber());
+        Messages.sendParameterStatus(channel, "server_version", "10.5");
         Messages.sendParameterStatus(channel, "server_encoding", "UTF8");
         Messages.sendParameterStatus(channel, "client_encoding", "UTF8");
         Messages.sendParameterStatus(channel, "datestyle", "ISO");

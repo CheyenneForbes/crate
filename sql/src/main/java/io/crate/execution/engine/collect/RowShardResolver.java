@@ -24,26 +24,26 @@ package io.crate.execution.engine.collect;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import io.crate.analyze.Id;
-import io.crate.expression.symbol.Symbol;
 import io.crate.data.Input;
 import io.crate.data.Row;
-import io.crate.metadata.ColumnIdent;
-import io.crate.metadata.Functions;
 import io.crate.expression.InputFactory;
-import io.crate.expression.Inputs;
-import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.common.Nullable;
-import org.elasticsearch.common.lucene.BytesRefs;
+import io.crate.expression.symbol.Symbol;
+import io.crate.metadata.ColumnIdent;
+import io.crate.metadata.TransactionContext;
+import io.crate.metadata.Functions;
 
+import javax.annotation.Nullable;
 import javax.annotation.concurrent.NotThreadSafe;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
 
+import static io.crate.common.StringUtils.nullOrString;
+
 @NotThreadSafe
 public class RowShardResolver {
 
-    private final Function<List<BytesRef>, String> idFunction;
+    private final Function<List<String>, String> idFunction;
     private final List<Input<?>> primaryKeyInputs;
     private final Input<?> routingInput;
     private final Iterable<CollectExpression<Row, ?>> expressions;
@@ -52,13 +52,14 @@ public class RowShardResolver {
     private String routing;
 
 
-    public RowShardResolver(Functions functions,
+    public RowShardResolver(TransactionContext txnCtx,
+                            Functions functions,
                             List<ColumnIdent> pkColumns,
                             List<? extends Symbol> primaryKeySymbols,
                             @Nullable ColumnIdent clusteredByColumn,
                             @Nullable Symbol routingSymbol) {
         InputFactory inputFactory = new InputFactory(functions);
-        InputFactory.Context<CollectExpression<Row, ?>> context = inputFactory.ctxForInputColumns();
+        InputFactory.Context<CollectExpression<Row, ?>> context = inputFactory.ctxForInputColumns(txnCtx);
         idFunction = Id.compileWithNullValidation(pkColumns, clusteredByColumn);
         if (routingSymbol == null) {
             routingInput = null;
@@ -81,15 +82,15 @@ public class RowShardResolver {
         if (routingInput == null) {
             routing = null;
         } else {
-            routing = BytesRefs.toString(routingInput.value());
+            routing = nullOrString(routingInput.value());
         }
     }
 
-    private static List<BytesRef> pkValues(List<Input<?>> primaryKeyInputs) {
+    private static List<String> pkValues(List<Input<?>> primaryKeyInputs) {
         if (primaryKeyInputs.isEmpty()) {
             return ImmutableList.of(); // avoid object creation in Lists.transform if the list is empty
         }
-        return Lists.transform(primaryKeyInputs, Inputs.TO_BYTES_REF::apply);
+        return Lists.transform(primaryKeyInputs, input -> nullOrString(input.value()));
     }
 
     /**

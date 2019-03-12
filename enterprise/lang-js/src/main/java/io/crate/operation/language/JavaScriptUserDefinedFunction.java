@@ -18,23 +18,19 @@
 
 package io.crate.operation.language;
 
-import io.crate.expression.symbol.Symbol;
 import io.crate.data.Input;
+import io.crate.expression.symbol.Symbol;
 import io.crate.metadata.FunctionInfo;
 import io.crate.metadata.Scalar;
+import io.crate.metadata.TransactionContext;
 import io.crate.types.ArrayType;
 import io.crate.types.GeoPointType;
 import io.crate.types.ObjectType;
 import io.crate.types.SetType;
 import jdk.nashorn.api.scripting.ScriptObjectMirror;
-import jdk.nashorn.internal.runtime.ECMAException;
-import jdk.nashorn.internal.runtime.Undefined;
-import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.common.lucene.BytesRefs;
 
 import javax.script.Bindings;
 import javax.script.ScriptException;
-import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -71,7 +67,7 @@ public class JavaScriptUserDefinedFunction extends Scalar<Object, Object> {
     }
 
     @Override
-    public Object evaluate(Input<Object>[] values) {
+    public Object evaluate(TransactionContext txnCtx, Input<Object>[] values) {
         try {
             return evaluateScriptWithBindings(JavaScriptLanguage.bindScript(script), values);
         } catch (ScriptException e) {
@@ -100,7 +96,7 @@ public class JavaScriptUserDefinedFunction extends Scalar<Object, Object> {
         }
 
         @Override
-        public final Object evaluate(Input<Object>[] values) {
+        public final Object evaluate(TransactionContext txnCtx, Input<Object>[] values) {
             return evaluateScriptWithBindings(bindings, values);
         }
 
@@ -109,7 +105,7 @@ public class JavaScriptUserDefinedFunction extends Scalar<Object, Object> {
     private Object evaluateScriptWithBindings(Bindings bindings, Input<Object>[] values) {
         Object[] args = new Object[values.length];
         for (int i = 0; i < values.length; i++) {
-            args[i] = processBytesRefInputIfNeeded(values[i].value());
+            args[i] = values[i].value();
         }
 
         Object result;
@@ -120,7 +116,7 @@ public class JavaScriptUserDefinedFunction extends Scalar<Object, Object> {
                 "The name of the function signature doesn't match the function name in the function definition.",
                 JavaScriptLanguage.NAME
             );
-        } catch (ECMAException e) {
+        } catch (Exception e) {
             throw new io.crate.exceptions.ScriptException(
                 e.getMessage(),
                 e,
@@ -130,48 +126,11 @@ public class JavaScriptUserDefinedFunction extends Scalar<Object, Object> {
 
         if (result instanceof ScriptObjectMirror) {
             return info.returnType().value(convertScriptResult((ScriptObjectMirror) result));
-        } else if (result instanceof Undefined) {
+        } else if (result != null && "Undefined".equals(result.getClass().getSimpleName())) {
             return null;
         } else {
             return info.returnType().value(result);
         }
-    }
-
-    private static Object processBytesRefInputIfNeeded(Object value) {
-        if (value instanceof BytesRef) {
-            value = BytesRefs.toString(value);
-        } else if (value instanceof Map) {
-            convertBytesRefToStringInMap((Map<String, Object>) value);
-        } else if (value instanceof Object[]) {
-            value = convertBytesRefToStringInList((Object[]) value);
-        }
-        return value;
-    }
-
-    private static void convertBytesRefToStringInMap(Map<String, Object> value) {
-        for (Map.Entry<String, Object> entry : value.entrySet()) {
-            Object item = entry.getValue();
-            if (item instanceof BytesRef) {
-                entry.setValue(BytesRefs.toString(entry.getValue()));
-            } else if (item instanceof Object[]) {
-                entry.setValue(convertBytesRefToStringInList((Object[]) item));
-            } else if (item instanceof Map) {
-                convertBytesRefToStringInMap((Map<String, Object>) entry.getValue());
-            }
-        }
-    }
-
-    private static Object[] convertBytesRefToStringInList(Object[] value) {
-        Object[] converted = Arrays.copyOf(value, value.length, Object[].class);
-        for (int i = 0; i < converted.length; i++) {
-            Object item = converted[i];
-            if (item instanceof BytesRef) {
-                converted[i] = BytesRefs.toString(item);
-            } else if (item instanceof Object[]) {
-                converted[i] = convertBytesRefToStringInList((Object[]) item);
-            }
-        }
-        return converted;
     }
 
     private Object convertScriptResult(ScriptObjectMirror scriptObject) {

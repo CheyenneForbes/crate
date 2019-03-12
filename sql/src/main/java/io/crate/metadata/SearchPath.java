@@ -23,6 +23,7 @@
 package io.crate.metadata;
 
 import com.google.common.collect.ImmutableList;
+import io.crate.metadata.pgcatalog.PgCatalogSchemaInfo;
 
 import java.util.ArrayList;
 import java.util.Iterator;
@@ -37,7 +38,6 @@ import java.util.function.Consumer;
 public final class SearchPath implements Iterable<String> {
 
     private static final SearchPath PG_CATALOG_AND_DOC_PATH = new SearchPath();
-    public static final String PG_CATALOG_SCHEMA = "pg_catalog";
     private final boolean pgCatalogIsSetExplicitly;
     private final List<String> searchPath;
 
@@ -55,17 +55,17 @@ public final class SearchPath implements Iterable<String> {
 
     private SearchPath() {
         pgCatalogIsSetExplicitly = false;
-        searchPath = ImmutableList.of(PG_CATALOG_SCHEMA, Schemas.DOC_SCHEMA_NAME);
+        searchPath = ImmutableList.of(PgCatalogSchemaInfo.NAME, Schemas.DOC_SCHEMA_NAME);
     }
 
     private SearchPath(ImmutableList<String> schemas) {
         assert schemas.size() > 0 : "Expecting at least one schema in the search path";
-        pgCatalogIsSetExplicitly = schemas.contains(PG_CATALOG_SCHEMA);
+        pgCatalogIsSetExplicitly = schemas.contains(PgCatalogSchemaInfo.NAME);
         if (pgCatalogIsSetExplicitly) {
             this.searchPath = schemas;
         } else {
             ArrayList<String> completeSearchPath = new ArrayList<>(1 + schemas.size());
-            completeSearchPath.add(PG_CATALOG_SCHEMA);
+            completeSearchPath.add(PgCatalogSchemaInfo.NAME);
             completeSearchPath.addAll(schemas);
             this.searchPath = ImmutableList.copyOf(completeSearchPath);
         }
@@ -93,5 +93,4 @@ public final class SearchPath implements Iterable<String> {
     public Spliterator<String> spliterator() {
         return searchPath.spliterator();
     }
-
 }

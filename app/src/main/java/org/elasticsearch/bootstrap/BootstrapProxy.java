@@ -22,7 +22,6 @@
 
 package org.elasticsearch.bootstrap;
 
-import io.crate.Version;
 import io.crate.bootstrap.BootstrapException;
 import io.crate.node.CrateNode;
 import org.apache.logging.log4j.LogManager;
@@ -35,11 +34,12 @@ import org.apache.lucene.util.Constants;
 import org.apache.lucene.util.IOUtils;
 import org.apache.lucene.util.StringHelper;
 import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.Version;
 import org.elasticsearch.cli.UserException;
 import org.elasticsearch.common.PidFile;
 import org.elasticsearch.common.SuppressForbidden;
 import org.elasticsearch.common.inject.CreationException;
-import org.elasticsearch.common.logging.ESLoggerFactory;
+import org.elasticsearch.common.logging.LogConfigurator;
 import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.network.IfConfig;
 import org.elasticsearch.common.settings.Settings;
@@ -54,16 +54,14 @@ import org.elasticsearch.node.NodeValidationException;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
-import java.io.UnsupportedEncodingException;
 import java.net.URISyntaxException;
-import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 
 /**
- * ES_COPY_OF: core/src/main/java/org/elasticsearch/bootstrap/Bootstrap.java
  * <p>
- * This is a copy of {@link Bootstrap}
+ * This is a copy of ES src/main/java/org/elasticsearch/bootstrap/Bootstrap.java.
  * <p>
  * With following patches:
  * - CrateNode instead of Node is build/started in order to load the CrateCorePlugin
@@ -97,17 +95,12 @@ public class BootstrapProxy {
     /**
      * initialize native resources
      */
-    static void initializeNatives(Path tmpFile, boolean mlockAll, boolean systemCallFilter, boolean ctrlHandler) {
-        final Logger logger = Loggers.getLogger(BootstrapProxy.class);
+    static void initializeNatives(boolean mlockAll, boolean ctrlHandler) {
+        final Logger logger = LogManager.getLogger(BootstrapProxy.class);
 
         // check if the user is running as root, and bail
         if (Natives.definitelyRunningAsRoot()) {
             throw new RuntimeException("can not run crate as root");
-        }
-
-        // enable system call filter
-        if (systemCallFilter) {
-            Natives.tryInstallSystemCallFilter(tmpFile);
         }
 
         // mlockall if requested
@@ -160,9 +153,7 @@ public class BootstrapProxy {
     private void setup(boolean addShutdownHook, Environment environment) throws BootstrapException {
         Settings settings = environment.settings();
         initializeNatives(
-            environment.tmpFile(),
             BootstrapSettings.MEMORY_LOCK_SETTING.get(settings),
-            BootstrapSettings.SYSTEM_CALL_FILTER_SETTING.get(settings),
             BootstrapSettings.CTRLHANDLER_SETTING.get(settings));
 
         // initialize probes before the security manager is installed
@@ -182,30 +173,21 @@ public class BootstrapProxy {
 
         try {
             // look for jar hell
-            JarHell.checkJarHell();
+            final Logger logger = LogManager.getLogger(JarHell.class);
+            JarHell.checkJarHell(logger::debug);
         } catch (IOException | URISyntaxException e) {
             throw new BootstrapException(e);
         }
 
         IfConfig.logIfNecessary();
 
-        /*
-         * DISABLED setup of security manager due to policy problems with plugins and dependencies.
-         */
-        // install SM after natives, shutdown hooks, etc.
-        //try {
-        //    Security.configure(environment, BootstrapSettings.SECURITY_FILTER_BAD_DEFAULTS_SETTING.get(settings));
-        //} catch (IOException | NoSuchAlgorithmException e) {
-        //    throw new BootstrapException(e);
-        //}
-
         node = new CrateNode(environment) {
 
             @Override
-            protected void validateNodeBeforeAcceptingRequests(BootstrapContext context,
+            protected void validateNodeBeforeAcceptingRequests(Settings settings,
                                                                BoundTransportAddress boundTransportAddress,
                                                                List<BootstrapCheck> bootstrapChecks) throws NodeValidationException {
-                BootstrapChecks.check(context, boundTransportAddress, bootstrapChecks);
+                BootstrapChecks.check(settings, boundTransportAddress, bootstrapChecks);
             }
         };
 
@@ -235,7 +217,14 @@ public class BootstrapProxy {
         BootstrapInfo.init();
 
         INSTANCE = new BootstrapProxy();
-
+        if (Node.NODE_NAME_SETTING.exists(environment.settings())) {
+            LogConfigurator.setNodeName(Node.NODE_NAME_SETTING.get(environment.settings()));
+        }
+        try {
+            LogConfigurator.configure(environment);
+        } catch (IOException e) {
+            throw new BootstrapException(e);
+        }
         if (environment.pidFile() != null) {
             try {
                 PidFile.create(environment.pidFile(), true);
@@ -247,7 +236,7 @@ public class BootstrapProxy {
         final boolean closeStandardStreams = (foreground == false) || quiet;
         try {
             if (closeStandardStreams) {
-                final Logger rootLogger = ESLoggerFactory.getRootLogger();
+                final Logger rootLogger = LogManager.getRootLogger();
                 final Appender maybeConsoleAppender = Loggers.findAppender(rootLogger, ConsoleAppender.class);
                 if (maybeConsoleAppender != null) {
                     Loggers.removeAppender(rootLogger, maybeConsoleAppender);
@@ -261,8 +250,7 @@ public class BootstrapProxy {
             // install the default uncaught exception handler; must be done before security is
             // initialized as we do not want to grant the runtime permission
             // setDefaultUncaughtExceptionHandler
-            Thread.setDefaultUncaughtExceptionHandler(
-                new ElasticsearchUncaughtExceptionHandler(() -> Node.NODE_NAME_SETTING.get(environment.settings())));
+            Thread.setDefaultUncaughtExceptionHandler(new ElasticsearchUncaughtExceptionHandler());
 
             INSTANCE.setup(true, environment);
 
@@ -273,34 +261,21 @@ public class BootstrapProxy {
             }
         } catch (NodeValidationException | RuntimeException e) {
             // disable console logging, so user does not see the exception twice (jvm will show it already)
-            final Logger rootLogger = ESLoggerFactory.getRootLogger();
+            final Logger rootLogger = LogManager.getRootLogger();
             final Appender maybeConsoleAppender = Loggers.findAppender(rootLogger, ConsoleAppender.class);
             if (foreground && maybeConsoleAppender != null) {
                 Loggers.removeAppender(rootLogger, maybeConsoleAppender);
             }
-            Logger logger = Loggers.getLogger(BootstrapProxy.class);
-            if (INSTANCE.node != null) {
-                logger = Loggers.getLogger(BootstrapProxy.class, Node.NODE_NAME_SETTING.get(INSTANCE.node.settings()));
-            }
+            Logger logger = LogManager.getLogger(BootstrapProxy.class);
             // HACK, it sucks to do this, but we will run users out of disk space otherwise
             if (e instanceof CreationException) {
                 // guice: log the shortened exc to the log file
                 ByteArrayOutputStream os = new ByteArrayOutputStream();
                 PrintStream ps = null;
-                try {
-                    ps = new PrintStream(os, false, "UTF-8");
-                } catch (UnsupportedEncodingException uee) {
-                    assert false : "UnsupportedEncodingException happens!";
-                    e.addSuppressed(uee);
-                }
+                ps = new PrintStream(os, false, StandardCharsets.UTF_8);
                 new StartupException(e).printStackTrace(ps);
                 ps.flush();
-                try {
-                    logger.error("Guice Exception: {}", os.toString("UTF-8"));
-                } catch (UnsupportedEncodingException uee) {
-                    assert false : "UnsupportedEncodingException happens!";
-                    e.addSuppressed(uee);
-                }
+                logger.error("Guice Exception: {}", os.toString(StandardCharsets.UTF_8));
             } else if (e instanceof NodeValidationException) {
                 logger.error("node validation exception\n{}", e.getMessage());
             } else {

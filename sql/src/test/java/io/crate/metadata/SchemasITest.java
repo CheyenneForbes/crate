@@ -28,7 +28,6 @@ import io.crate.analyze.WhereClause;
 import io.crate.integrationtests.SQLTransportIntegrationTest;
 import io.crate.metadata.doc.DocTableInfo;
 import io.crate.metadata.table.TableInfo;
-import org.elasticsearch.action.admin.indices.alias.IndicesAliasesRequest;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.Randomness;
 import org.elasticsearch.test.ESIntegTestCase;
@@ -36,6 +35,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -48,7 +48,7 @@ import static org.hamcrest.core.Is.is;
 public class SchemasITest extends SQLTransportIntegrationTest {
 
     private Schemas schemas;
-    private RoutingProvider routingProvider = new RoutingProvider(Randomness.get().nextInt(), new String[0]);
+    private RoutingProvider routingProvider = new RoutingProvider(Randomness.get().nextInt(), Collections.emptyList());
 
     @Before
     public void setUpService() {
@@ -94,46 +94,6 @@ public class SchemasITest extends SQLTransportIntegrationTest {
         }
         assertThat(numShards, is(10));
     }
-
-    @Test
-    public void testTableAlias() throws Exception {
-        execute("create table terminator (model string, good boolean, actor object)");
-        IndicesAliasesRequest request = new IndicesAliasesRequest();
-        request.addAliasAction(IndicesAliasesRequest.AliasActions.add()
-            .alias(getFqn("entsafter"))
-            .index(getFqn("terminator")));
-        client().admin().indices().aliases(request).actionGet();
-        ensureYellow();
-
-        DocTableInfo terminatorTable = schemas.getTableInfo(new RelationName(sqlExecutor.getCurrentSchema(), "terminator"));
-        DocTableInfo entsafterTable = schemas.getTableInfo(new RelationName(sqlExecutor.getCurrentSchema(), "entsafter"));
-
-        assertNotNull(terminatorTable);
-        assertFalse(terminatorTable.isAlias());
-
-        assertNotNull(entsafterTable);
-        assertTrue(entsafterTable.isAlias());
-    }
-
-    @Test
-    public void testAliasPartitions() throws Exception {
-        execute("create table terminator (model string, good boolean, actor object)");
-        execute("create table transformer (model string, good boolean, actor object)");
-        IndicesAliasesRequest request = new IndicesAliasesRequest();
-        request.addAliasAction(
-            IndicesAliasesRequest.AliasActions.add().alias(getFqn("entsafter")).index(getFqn("terminator")));
-        request.addAliasAction(
-            IndicesAliasesRequest.AliasActions.add().alias(getFqn("entsafter")).index(getFqn("transformer")));
-        client().admin().indices().aliases(request).actionGet();
-        ensureYellow();
-
-        DocTableInfo entsafterTable = schemas.getTableInfo(new RelationName(sqlExecutor.getCurrentSchema(), "entsafter"));
-
-        assertNotNull(entsafterTable);
-        assertThat(entsafterTable.concreteIndices().length, is(2));
-        assertThat(Arrays.asList(entsafterTable.concreteIndices()), containsInAnyOrder(getFqn("terminator"), getFqn("transformer")));
-    }
-
 
     @Test
     public void testNodesTable() throws Exception {

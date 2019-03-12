@@ -44,6 +44,7 @@ import io.crate.types.ShortType;
 import io.crate.types.StringType;
 import io.crate.types.TimestampType;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,11 +53,11 @@ import java.util.function.Supplier;
 
 public class DataTypeTesting {
 
-    static final List<DataType> ALL_TYPES_EXCEPT_ARRAYS = ImmutableList.<DataType>builder()
+    public static final List<DataType> ALL_TYPES_EXCEPT_ARRAYS = ImmutableList.<DataType>builder()
         .addAll(DataTypes.PRIMITIVE_TYPES)
         .add(DataTypes.GEO_POINT)
         .add(DataTypes.GEO_SHAPE)
-        .add(DataTypes.OBJECT)
+        .add(ObjectType.untyped())
         .build();
 
     public static DataType<?> randomType() {
@@ -110,7 +111,7 @@ public class DataTypeTesting {
                 return () -> {
                     // Can't use immutable Collections.singletonMap; insert-analyzer mutates the map
                     Map<String, Object> geoShape = new HashMap<>(2);
-                    geoShape.put("coordinates", new Double[] {10.2d, 32.2d});
+                    geoShape.put("coordinates", Arrays.asList(10.2d, 32.2d));
                     geoShape.put("type", "Point");
                     return (T) geoShape;
                 };

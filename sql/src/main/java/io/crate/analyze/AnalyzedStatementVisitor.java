@@ -87,6 +87,10 @@ public class AnalyzedStatementVisitor<C, R> {
         return visitDDLStatement(analysis, context);
     }
 
+    protected R visitDropAnalyzerStatement(DropAnalyzerStatement analysis, C context) {
+        return visitDDLStatement(analysis, context);
+    }
+
     protected R visitDDLStatement(DDLStatement analysis, C context) {
         return visitAnalyzedStatement(analysis, context);
     }
@@ -131,6 +135,10 @@ public class AnalyzedStatementVisitor<C, R> {
         return visitAnalyzedStatement(analysis, context);
     }
 
+    public R visitSetLicenseStatement(SetLicenseAnalyzedStatement analysis, C context) {
+        return visitAnalyzedStatement(analysis, context);
+    }
+
     public R visitAddColumnStatement(AddColumnAnalyzedStatement analysis, C context) {
         return visitDDLStatement(analysis, context);
     }
@@ -148,6 +156,10 @@ public class AnalyzedStatementVisitor<C, R> {
     }
 
     public R visitShowCreateTableAnalyzedStatement(ShowCreateTableAnalyzedStatement analysis, C context) {
+        return visitAnalyzedStatement(analysis, context);
+    }
+
+    public R visitShowSessionParameterAnalyzedStatement(ShowSessionParameterAnalyzedStatement analysis, C context) {
         return visitAnalyzedStatement(analysis, context);
     }
 
@@ -191,14 +203,6 @@ public class AnalyzedStatementVisitor<C, R> {
         return visitAnalyzedStatement(analysis, context);
     }
 
-    public R visitCreateIngestRuleStatement(CreateIngestionRuleAnalysedStatement analysis, C context) {
-        return visitDCLStatement(analysis, context);
-    }
-
-    public R visitDropIngestRuleStatement(DropIngestionRuleAnalysedStatement analysis, C context) {
-        return visitDCLStatement(analysis, context);
-    }
-
     protected R visitRerouteMoveShard(RerouteMoveShardAnalyzedStatement analysis, C context) {
         return visitDDLStatement(analysis, context);
     }
@@ -229,5 +233,17 @@ public class AnalyzedStatementVisitor<C, R> {
 
     public R visitDropView(DropViewStmt dropViewStmt, C context) {
         return visitAnalyzedStatement(dropViewStmt, context);
+    }
+
+    public R visitSwapTable(AnalyzedSwapTable swapTable, C context) {
+        return visitAnalyzedStatement(swapTable, context);
+    }
+
+    public R visitGCDanglingArtifacts(AnalyzedGCDanglingArtifacts gcDanglingIndices, C context) {
+        return visitAnalyzedStatement(gcDanglingIndices, context);
+    }
+
+    public R visitDecommissionNode(AnalyzedDecommissionNodeStatement decommissionNode, C context) {
+        return visitAnalyzedStatement(decommissionNode, context);
     }
 }

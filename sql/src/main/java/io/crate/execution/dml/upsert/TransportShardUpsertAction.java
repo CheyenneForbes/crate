@@ -23,10 +23,12 @@
 package io.crate.execution.dml.upsert;
 
 import com.google.common.annotations.VisibleForTesting;
+import io.crate.Constants;
 import io.crate.execution.ddl.SchemaUpdateClient;
 import io.crate.execution.dml.ShardResponse;
 import io.crate.execution.dml.TransportShardAction;
 import io.crate.execution.dml.upsert.ShardUpsertRequest.DuplicateKeyAction;
+import io.crate.execution.engine.collect.PKLookupOperation;
 import io.crate.execution.jobs.TasksService;
 import io.crate.expression.reference.Doc;
 import io.crate.expression.symbol.Symbol;
@@ -36,10 +38,12 @@ import io.crate.metadata.GeneratedReference;
 import io.crate.metadata.Reference;
 import io.crate.metadata.RelationName;
 import io.crate.metadata.Schemas;
+import io.crate.metadata.SearchPath;
+import io.crate.metadata.TransactionContext;
 import io.crate.metadata.doc.DocTableInfo;
 import io.crate.metadata.table.Operation;
 import org.elasticsearch.ExceptionsHelper;
-import org.elasticsearch.action.support.ActionFilters;
+import org.elasticsearch.action.support.replication.TransportReplicationAction;
 import org.elasticsearch.cluster.action.shard.ShardStateAction;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.service.ClusterService;
@@ -54,14 +58,10 @@ import org.elasticsearch.index.engine.DocumentMissingException;
 import org.elasticsearch.index.engine.DocumentSourceMissingException;
 import org.elasticsearch.index.engine.Engine;
 import org.elasticsearch.index.engine.VersionConflictEngineException;
-import org.elasticsearch.index.get.GetResult;
-import org.elasticsearch.index.mapper.ParentFieldMapper;
-import org.elasticsearch.index.mapper.RoutingFieldMapper;
 import org.elasticsearch.index.mapper.SourceToParse;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.translog.Translog;
 import org.elasticsearch.indices.IndicesService;
-import org.elasticsearch.search.fetch.subphase.FetchSourceContext;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 
@@ -82,7 +82,7 @@ import static io.crate.exceptions.SQLExceptions.userFriendlyCrateExceptionTopOnl
 @Singleton
 public class TransportShardUpsertAction extends TransportShardAction<ShardUpsertRequest, ShardUpsertRequest.Item> {
 
-    private static final String ACTION_NAME = "indices:crate/data/write/upsert";
+    private static final String ACTION_NAME = "internal:crate:sql/data/write";
     private static final int MAX_RETRY_LIMIT = 100_000; // upper bound to prevent unlimited retries on unexpected states
 
     private final Schemas schemas;
@@ -94,7 +94,6 @@ public class TransportShardUpsertAction extends TransportShardAction<ShardUpsert
                                       ClusterService clusterService,
                                       TransportService transportService,
                                       SchemaUpdateClient schemaUpdateClient,
-                                      ActionFilters actionFilters,
                                       TasksService tasksService,
                                       IndicesService indicesService,
                                       ShardStateAction shardStateAction,
@@ -102,7 +101,7 @@ public class TransportShardUpsertAction extends TransportShardAction<ShardUpsert
                                       Schemas schemas,
                                       IndexNameExpressionResolver indexNameExpressionResolver) {
         super(settings, ACTION_NAME, transportService, indexNameExpressionResolver, clusterService,
-            indicesService, threadPool, shardStateAction, actionFilters, ShardUpsertRequest::new, schemaUpdateClient);
+            indicesService, threadPool, shardStateAction, ShardUpsertRequest::new, schemaUpdateClient);
         this.schemas = schemas;
         this.functions = functions;
         tasksService.addListener(this);
@@ -113,19 +112,21 @@ public class TransportShardUpsertAction extends TransportShardAction<ShardUpsert
                                                                                         ShardUpsertRequest request,
                                                                                         AtomicBoolean killed) {
         ShardResponse shardResponse = new ShardResponse();
-        DocTableInfo tableInfo = schemas.getTableInfo(RelationName.fromIndexName(request.index()), Operation.INSERT);
+        String indexName = request.index();
+        DocTableInfo tableInfo = schemas.getTableInfo(RelationName.fromIndexName(indexName), Operation.INSERT);
         Reference[] insertColumns = request.insertColumns();
         GeneratedColumns.Validation valueValidation = request.validateConstraints()
             ? GeneratedColumns.Validation.VALUE_MATCH
             : GeneratedColumns.Validation.NONE;
 
+        TransactionContext txnCtx = TransactionContext.of(request.userName(), SearchPath.createSearchPathFrom(request.currentSchema()));
         InsertSourceGen insertSourceGen = insertColumns == null
             ? null
-            : InsertSourceGen.of(functions, tableInfo, valueValidation, Arrays.asList(insertColumns));
+            : InsertSourceGen.of(txnCtx, functions, tableInfo, indexName, valueValidation, Arrays.asList(insertColumns));
 
         UpdateSourceGen updateSourceGen = request.updateColumns() == null
             ? null
-            : new UpdateSourceGen(functions, tableInfo, request.updateColumns());
+            : new UpdateSourceGen(functions, txnCtx, tableInfo, request.updateColumns());
 
         Translog.Location translogLocation = null;
         for (ShardUpsertRequest.Item item : request.items()) {
@@ -156,8 +157,9 @@ public class TransportShardUpsertAction extends TransportShardAction<ShardUpsert
                     }
                     throw new RuntimeException(e);
                 }
-                logger.debug("{} failed to execute upsert for [{}]/[{}]",
-                    e, request.shardId(), request.type(), item.id());
+                if (logger.isDebugEnabled()) {
+                    logger.debug("shardId={} failed to execute upsert for id={}", e, request.shardId(), item.id());
+                }
 
                 // *mark* the item as failed by setting the source to null
                 // to prevent the replica operation from processing this concrete item
@@ -174,7 +176,7 @@ public class TransportShardUpsertAction extends TransportShardAction<ShardUpsert
                         (e instanceof VersionConflictEngineException)));
             }
         }
-        return new WritePrimaryResult<>(request, shardResponse, translogLocation, null, indexShard, logger);
+        return new WritePrimaryResult<>(request, shardResponse, translogLocation, null, indexShard);
     }
 
     @Override
@@ -188,18 +190,29 @@ public class TransportShardUpsertAction extends TransportShardAction<ShardUpsert
                 }
                 continue;
             }
-            SourceToParse sourceToParse = SourceToParse.source(request.index(),
-                request.type(), item.id(), item.source(), XContentType.JSON);
+            SourceToParse sourceToParse = SourceToParse.source(
+                Constants.DEFAULT_MAPPING_TYPE, item.id(), item.source(), XContentType.JSON);
 
             Engine.IndexResult indexResult = indexShard.applyIndexOperationOnReplica(
                 item.seqNo(),
                 item.version(),
                 VersionType.EXTERNAL,
-                -1,
+                Translog.UNSET_AUTO_GENERATED_TIMESTAMP,
                 false,
-                sourceToParse,
-                getMappingUpdateConsumer(request)
+                sourceToParse
             );
+            if (indexResult.getResultType() == Engine.Result.Type.MAPPING_UPDATE_REQUIRED) {
+                // Even though the primary waits on all nodes to ack the mapping changes to the master
+                // (see MappingUpdatedAction.updateMappingOnMaster) we still need to protect against missing mappings
+                // and wait for them. The reason is concurrent requests. Request r1 which has new field f triggers a
+                // mapping update. Assume that that update is first applied on the primary, and only later on the replica
+                // (it’s happening concurrently). Request r2, which now arrives on the primary and which also has the new
+                // field f might see the updated mapping (on the primary), and will therefore proceed to be replicated
+                // to the replica. When it arrives on the replica, there’s no guarantee that the replica has already
+                // applied the new mapping, so there is no other option than to wait.
+                throw new TransportReplicationAction.RetryOnReplicaException(indexShard.shardId(),
+                    "Mappings are not available on the replica yet, triggered update: " + indexResult.getRequiredMappingUpdate());
+            }
             location = indexResult.getTranslogLocation();
         }
         return new WriteReplicaResult<>(request, location, null, indexShard, logger);
@@ -277,7 +290,7 @@ public class TransportShardUpsertAction extends TransportShardAction<ShardUpsert
                 version = Versions.MATCH_ANY;
             }
         } else {
-            Doc currentDoc = Doc.fromGetResult(getDocument(indexShard, request, item));
+            Doc currentDoc = getDocument(indexShard, item.id(), item.version());
             BytesReference updatedSource = updateSourceGen.generateSource(
                 currentDoc,
                 item.updateAssignments(),
@@ -287,59 +300,54 @@ public class TransportShardUpsertAction extends TransportShardAction<ShardUpsert
             version = currentDoc.getVersion();
         }
 
+        long finalVersion = version;
         SourceToParse sourceToParse = SourceToParse.source(
-            request.index(), request.type(), item.id(), item.source(), XContentType.JSON);
-
-        Engine.IndexResult indexResult = indexShard.applyIndexOperationOnPrimary(
-            version,
-            VersionType.INTERNAL,
-            sourceToParse,
-            -1,
-            isRetry,
-            getMappingUpdateConsumer(request)
+            Constants.DEFAULT_MAPPING_TYPE, item.id(), item.source(), XContentType.JSON);
+        Engine.IndexResult indexResult = executeOnPrimaryHandlingMappingUpdate(
+            indexShard.shardId(),
+            () -> indexShard.applyIndexOperationOnPrimary(
+                finalVersion,
+                VersionType.INTERNAL,
+                sourceToParse,
+                Translog.UNSET_AUTO_GENERATED_TIMESTAMP,
+                isRetry
+            ),
+            e -> indexShard.getFailedIndexResult(e, finalVersion)
         );
+        switch (indexResult.getResultType()) {
+            case SUCCESS:
+                // update the seqNo and version on request for the replicas
+                item.seqNo(indexResult.getSeqNo());
+                item.version(indexResult.getVersion());
+                return indexResult.getTranslogLocation();
 
-        Exception failure = indexResult.getFailure();
-        if (failure != null) {
-            throw failure;
+            case FAILURE:
+                Exception failure = indexResult.getFailure();
+                assert failure != null : "Failure must not be null if resultType is FAILURE";
+                throw failure;
+
+            case MAPPING_UPDATE_REQUIRED:
+            default:
+                throw new AssertionError("IndexResult must either succeed or fail. Required mapping updates must have been handled.");
         }
-
-        // update the seqNo and version on request for the replicas
-        item.seqNo(indexResult.getSeqNo());
-        item.version(indexResult.getVersion());
-
-        return indexResult.getTranslogLocation();
     }
 
-    private static GetResult getDocument(IndexShard indexShard,
-                                         ShardUpsertRequest request,
-                                         ShardUpsertRequest.Item item) {
-        GetResult getResult = indexShard.getService().get(
-            request.type(),
-            item.id(),
-            new String[]{RoutingFieldMapper.NAME, ParentFieldMapper.NAME},
-            true,
-            Versions.MATCH_ANY,
-            VersionType.INTERNAL,
-            FetchSourceContext.FETCH_SOURCE
-        );
-
-        if (!getResult.isExists()) {
-            throw new DocumentMissingException(request.shardId(), request.type(), item.id());
+    private static Doc getDocument(IndexShard indexShard, String id, long version) {
+        Doc doc = PKLookupOperation.lookupDoc(indexShard, id, Versions.MATCH_ANY, VersionType.INTERNAL);
+        if (doc == null) {
+            throw new DocumentMissingException(indexShard.shardId(), Constants.DEFAULT_MAPPING_TYPE, id);
         }
-
-        if (getResult.internalSourceRef() == null) {
-            // no source, we can't do nothing, through a failure...
-            throw new DocumentSourceMissingException(request.shardId(), request.type(), item.id());
+        if (doc.getSource() == null) {
+            throw new DocumentSourceMissingException(indexShard.shardId(), Constants.DEFAULT_MAPPING_TYPE, id);
         }
-
-        if (item.version() != Versions.MATCH_ANY && item.version() != getResult.getVersion()) {
+        if (version != Versions.MATCH_ANY && version != doc.getVersion()) {
             throw new VersionConflictEngineException(
-                indexShard.shardId(), getResult.getType(), item.id(),
-                "Requested version: " + item.version() + " but got version: " + getResult.getVersion());
+                indexShard.shardId(),
+                Constants.DEFAULT_MAPPING_TYPE,
+                id,
+                "Requested version: " + version + " but got version: " + doc.getVersion());
         }
-
-        return getResult;
+        return doc;
     }
 
     public static Collection<ColumnIdent> getNotUsedNonGeneratedColumns(Reference[] targetColumns,

@@ -27,10 +27,8 @@ import io.crate.types.DataType;
 import io.crate.types.StringType;
 import io.crate.types.TimestampType;
 import org.elasticsearch.Version;
-import org.elasticsearch.action.admin.cluster.repositories.delete.DeleteRepositoryResponse;
-import org.elasticsearch.action.admin.cluster.repositories.put.PutRepositoryResponse;
 import org.elasticsearch.action.admin.cluster.snapshots.create.CreateSnapshotResponse;
-import org.elasticsearch.action.admin.cluster.snapshots.delete.DeleteSnapshotResponse;
+import org.elasticsearch.action.support.master.AcknowledgedResponse;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.snapshots.SnapshotState;
 import org.elasticsearch.test.ESIntegTestCase;
@@ -52,7 +50,7 @@ import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.lessThanOrEqualTo;
 
-@ESIntegTestCase.ClusterScope(transportClientRatio = 0)
+@ESIntegTestCase.ClusterScope()
 @UseJdbc(0) // missing column types
 public class SysSnapshotsTest extends SQLTransportIntegrationTest {
 
@@ -93,7 +91,7 @@ public class SysSnapshotsTest extends SQLTransportIntegrationTest {
     }
 
     private void createRepository(String name) {
-        PutRepositoryResponse putRepositoryResponse = client().admin().cluster().preparePutRepository(name)
+        AcknowledgedResponse putRepositoryResponse = client().admin().cluster().preparePutRepository(name)
             .setType("fs")
             .setSettings(Settings.builder()
                 .put("location", new File(TEMP_FOLDER.getRoot(), "backup").getAbsolutePath())
@@ -104,7 +102,7 @@ public class SysSnapshotsTest extends SQLTransportIntegrationTest {
     }
 
     private void deleteRepository(String name) {
-        DeleteRepositoryResponse deleteRepositoryResponse = client().admin().cluster().prepareDeleteRepository(name).get();
+        AcknowledgedResponse deleteRepositoryResponse = client().admin().cluster().prepareDeleteRepository(name).get();
         assertThat(deleteRepositoryResponse.isAcknowledged(), equalTo(true));
     }
 
@@ -132,7 +130,7 @@ public class SysSnapshotsTest extends SQLTransportIntegrationTest {
     }
 
     private void deleteSnapshot(String name) {
-        DeleteSnapshotResponse deleteSnapshotResponse = client().admin().cluster()
+        AcknowledgedResponse deleteSnapshotResponse = client().admin().cluster()
             .prepareDeleteSnapshot(REPOSITORY_NAME, name).get();
         assertThat(deleteSnapshotResponse.isAcknowledged(), equalTo(true));
     }
@@ -153,7 +151,7 @@ public class SysSnapshotsTest extends SQLTransportIntegrationTest {
                 StringType.INSTANCE,
                 StringType.INSTANCE
             }));
-        assertThat((String[]) response.rows()[0][0], arrayContaining(getFqn("test_table")));
+        assertThat((Object[]) response.rows()[0][0], arrayContaining(getFqn("test_table")));
         assertThat((Long) response.rows()[0][1], lessThanOrEqualTo(finishedTime));
         assertThat((String) response.rows()[0][2], is("test_snap_1"));
         assertThat((String) response.rows()[0][3], is(REPOSITORY_NAME));

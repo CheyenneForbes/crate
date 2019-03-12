@@ -34,7 +34,7 @@ import io.crate.metadata.ColumnIdent;
 import io.crate.test.integration.CrateUnitTest;
 import io.crate.testing.DummyRelation;
 import io.crate.types.DataTypes;
-import org.apache.lucene.util.BytesRef;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.breaker.NoopCircuitBreaker;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.json.JsonXContent;
@@ -47,9 +47,9 @@ import java.util.List;
 public class RestActionReceiversTest extends CrateUnitTest {
 
     private final ImmutableList<RowN> rows = ImmutableList.of(
-        new RowN(new Object[]{new BytesRef("foo"), 1, true}),
-        new RowN(new Object[]{new BytesRef("bar"), 2, false}),
-        new RowN(new Object[]{new BytesRef("foobar"), 3, null})
+        new RowN(new Object[]{"foo", 1, true}),
+        new RowN(new Object[]{"bar", 2, false}),
+        new RowN(new Object[]{"foobar", 3, null})
     );
     private final List<Field> fields = ImmutableList.of(
         new Field(new DummyRelation(), ColumnIdent.fromPath("doc.col_a"), DataTypes.STRING),
@@ -60,8 +60,8 @@ public class RestActionReceiversTest extends CrateUnitTest {
 
     private static void assertXContentBuilder(XContentBuilder expected, XContentBuilder actual) throws IOException {
         assertEquals(
-            stripDuration(expected.string()),
-            stripDuration(actual.string())
+            stripDuration(Strings.toString(expected)),
+            stripDuration(Strings.toString(actual))
         );
     }
 
@@ -122,7 +122,7 @@ public class RestActionReceiversTest extends CrateUnitTest {
         };
         ResultToXContentBuilder builder = ResultToXContentBuilder.builder(JsonXContent.contentBuilder())
             .bulkRows(results);
-        String s = builder.build().string();
+        String s = Strings.toString(builder.build());
         assertEquals(s, "{\"results\":[{\"rowcount\":1},{\"rowcount\":2},{\"rowcount\":3}]}");
     }
 }

@@ -33,6 +33,7 @@ import io.crate.analyze.WhereClause;
 import io.crate.analyze.relations.AnalyzedView;
 import io.crate.analyze.relations.OrderedLimitedRelation;
 import io.crate.analyze.relations.QueriedRelation;
+import io.crate.analyze.relations.RelationNormalizer;
 import io.crate.analyze.relations.UnionSelect;
 import io.crate.analyze.where.DocKeys;
 import io.crate.data.Row;
@@ -40,6 +41,7 @@ import io.crate.data.RowConsumer;
 import io.crate.execution.MultiPhaseExecutor;
 import io.crate.execution.dsl.phases.NodeOperationTree;
 import io.crate.execution.dsl.projection.builder.SplitPoints;
+import io.crate.execution.dsl.projection.builder.SplitPointsBuilder;
 import io.crate.execution.engine.NodeOperationTreeGenerator;
 import io.crate.expression.eval.EvaluatingNormalizer;
 import io.crate.expression.symbol.FieldsVisitor;
@@ -47,9 +49,10 @@ import io.crate.expression.symbol.Function;
 import io.crate.expression.symbol.RefVisitor;
 import io.crate.expression.symbol.SelectSymbol;
 import io.crate.expression.symbol.Symbol;
+import io.crate.metadata.CoordinatorTxnCtx;
+import io.crate.metadata.TransactionContext;
 import io.crate.metadata.Functions;
 import io.crate.metadata.RowGranularity;
-import io.crate.metadata.TransactionContext;
 import io.crate.metadata.doc.DocTableInfo;
 import io.crate.metadata.table.TableInfo;
 import io.crate.planner.DependencyCarrier;
@@ -87,11 +90,13 @@ public class LogicalPlanner {
     private final SelectStatementPlanner selectStatementPlanner;
     private final Visitor statementVisitor = new Visitor();
     private final Functions functions;
+    private final RelationNormalizer relationNormalizer;
 
     public LogicalPlanner(Functions functions, TableStats tableStats) {
         this.optimizingRewriter = new OptimizingRewriter(functions);
         this.tableStats = tableStats;
         this.functions = functions;
+        this.relationNormalizer = new RelationNormalizer(functions);
         selectStatementPlanner = new SelectStatementPlanner(this);
     }
 
@@ -107,7 +112,9 @@ public class LogicalPlanner {
             softLimit = plannerContext.softLimit();
             fetchSize = plannerContext.fetchSize();
         }
-        QueriedRelation relation = selectSymbol.relation();
+        QueriedRelation relation = (QueriedRelation) relationNormalizer.normalize(
+            selectSymbol.relation(), plannerContext.transactionContext());
+
         PlannerContext subSelectPlannerContext = PlannerContext.forSubPlan(plannerContext, softLimit, fetchSize);
         subSelectPlannerContext.applySoftLimit(relation.querySpec());
         SubqueryPlanner subqueryPlanner = new SubqueryPlanner(s -> planSubSelect(s, subSelectPlannerContext));
@@ -142,14 +149,17 @@ public class LogicalPlanner {
         return planBuilder;
     }
 
-    public LogicalPlan plan(QueriedRelation queriedRelation,
-                            PlannerContext plannerContext,
-                            SubqueryPlanner subqueryPlanner,
-                            FetchMode fetchMode) {
-        TransactionContext transactionContext = plannerContext.transactionContext();
-        QueriedRelation relation = optimizingRewriter.optimize(queriedRelation, transactionContext);
 
-        LogicalPlan logicalPlan = plan(relation, fetchMode, subqueryPlanner, true, functions, transactionContext)
+    public LogicalPlan normalizeAndPlan(QueriedRelation queriedRelation,
+                                        PlannerContext plannerContext,
+                                        SubqueryPlanner subqueryPlanner,
+                                        FetchMode fetchMode) {
+        CoordinatorTxnCtx coordinatorTxnCtx = plannerContext.transactionContext();
+        QueriedRelation relation = optimizingRewriter.optimize(
+            (QueriedRelation) relationNormalizer.normalize(queriedRelation, coordinatorTxnCtx),
+            coordinatorTxnCtx
+        );
+        LogicalPlan logicalPlan = plan(relation, fetchMode, subqueryPlanner, true, functions, coordinatorTxnCtx)
             .build(tableStats, new HashSet<>(relation.outputs()));
 
         LogicalPlan optimizedPlan = tryOptimize(logicalPlan);
@@ -175,7 +185,7 @@ public class LogicalPlanner {
                                     SubqueryPlanner subqueryPlanner,
                                     boolean isLastFetch,
                                     Functions functions,
-                                    TransactionContext txnCtx) {
+                                    CoordinatorTxnCtx txnCtx) {
         LogicalPlan.Builder builder = prePlan(relation, fetchMode, subqueryPlanner, isLastFetch, functions, txnCtx);
         if (isLastFetch) {
             return builder;
@@ -188,37 +198,47 @@ public class LogicalPlanner {
                                                SubqueryPlanner subqueryPlanner,
                                                boolean isLastFetch,
                                                Functions functions,
-                                               TransactionContext txnCtx) {
-        SplitPoints splitPoints = SplitPoints.create(relation);
-        return
-            FetchOrEval.create(
-                Limit.create(
-                    Order.create(
-                        Filter.create(
-                            groupByOrAggregate(
-                                collectAndFilter(
-                                    relation,
-                                    splitPoints.toCollect(),
-                                    relation.where(),
-                                    subqueryPlanner,
-                                    fetchMode,
-                                    functions,
-                                    txnCtx
+                                               CoordinatorTxnCtx txnCtx) {
+        SplitPoints splitPoints = SplitPointsBuilder.create(relation);
+        return FetchOrEval.create(
+            Limit.create(
+                Order.create(
+                    Distinct.create(
+                        ProjectSet.create(
+                            WindowAgg.create(
+                                Filter.create(
+                                    groupByOrAggregate(
+                                        collectAndFilter(
+                                            relation,
+                                            splitPoints.toCollect(),
+                                            relation.where(),
+                                            subqueryPlanner,
+                                            fetchMode,
+                                            functions,
+                                            txnCtx
+                                        ),
+                                        relation.groupBy(),
+                                        splitPoints.aggregates()
+                                    ),
+                                    relation.having()
                                 ),
-                                relation.groupBy(),
-                                splitPoints.aggregates()),
-                            relation.having()
+                                splitPoints.windowFunctions()
+                            ),
+                            splitPoints.tableFunctions()
                         ),
-                        relation.orderBy()
+                        relation.isDistinct(),
+                        relation.outputs()
                     ),
-                    relation.limit(),
-                    relation.offset()
+                    relation.orderBy()
                 ),
-                relation.outputs(),
-                fetchMode,
-                isLastFetch,
-                relation.limit() != null
-            );
+                relation.limit(),
+                relation.offset()
+            ),
+            relation.outputs(),
+            fetchMode,
+            isLastFetch,
+            relation.limit() != null
+        );
     }
 
     private static LogicalPlan.Builder groupByOrAggregate(LogicalPlan.Builder source,
@@ -240,7 +260,7 @@ public class LogicalPlanner {
                                                         SubqueryPlanner subqueryPlanner,
                                                         FetchMode fetchMode,
                                                         Functions functions,
-                                                        TransactionContext txnCtx) {
+                                                        CoordinatorTxnCtx txnCtx) {
         if (queriedRelation instanceof AnalyzedView) {
             return plan(((AnalyzedView) queriedRelation).relation(), fetchMode, subqueryPlanner, false, functions, txnCtx);
         }
@@ -259,7 +279,7 @@ public class LogicalPlanner {
                 );
 
                 Optional<DocKeys> docKeys = detailedQuery.docKeys();
-                if (docKeys.isPresent() && !((DocTableInfo) table).isAlias()) {
+                if (docKeys.isPresent()) {
                     return (tableStats, usedBeforeNextFetch) ->
                         new Get(queriedTable, docKeys.get(), toCollect, tableStats);
                 }
@@ -297,7 +317,7 @@ public class LogicalPlanner {
         return columns;
     }
 
-    static Set<Symbol> extractColumns(Collection<? extends Symbol> symbols) {
+    public static Set<Symbol> extractColumns(Collection<? extends Symbol> symbols) {
         LinkedHashSet<Symbol> columns = new LinkedHashSet<>();
         for (Symbol symbol : symbols) {
             RefVisitor.visitRefs(symbol, columns::add);
@@ -328,14 +348,21 @@ public class LogicalPlanner {
     }
 
     private static void doExecute(LogicalPlan logicalPlan,
-                                  DependencyCarrier executor,
+                                  DependencyCarrier dependencies,
                                   PlannerContext plannerContext,
                                   RowConsumer consumer,
                                   Row params,
                                   SubQueryResults subQueryResults,
                                   boolean enableProfiling) {
-        NodeOperationTree nodeOpTree = getNodeOperationTree(logicalPlan, executor, plannerContext, params, subQueryResults);
-        executeNodeOpTree(executor, plannerContext.jobId(), consumer, enableProfiling, nodeOpTree);
+        NodeOperationTree nodeOpTree = getNodeOperationTree(logicalPlan, dependencies, plannerContext, params, subQueryResults);
+        executeNodeOpTree(
+            dependencies,
+            plannerContext.transactionContext(),
+            plannerContext.jobId(),
+            consumer,
+            enableProfiling,
+            nodeOpTree
+        );
     }
 
     public static NodeOperationTree getNodeOperationTree(LogicalPlan logicalPlan,
@@ -348,10 +375,15 @@ public class LogicalPlanner {
         return NodeOperationTreeGenerator.fromPlan(executionPlan, executor.localNodeId());
     }
 
-    public static void executeNodeOpTree(DependencyCarrier executor, UUID jobId, RowConsumer consumer, boolean enableProfiling, NodeOperationTree nodeOpTree) {
-        executor.phasesTaskFactory()
+    public static void executeNodeOpTree(DependencyCarrier dependencies,
+                                         TransactionContext txnCtx,
+                                         UUID jobId,
+                                         RowConsumer consumer,
+                                         boolean enableProfiling,
+                                         NodeOperationTree nodeOpTree) {
+        dependencies.phasesTaskFactory()
             .create(jobId, Collections.singletonList(nodeOpTree), enableProfiling)
-            .execute(consumer);
+            .execute(consumer, txnCtx);
     }
 
     private class Visitor extends AnalyzedStatementVisitor<PlannerContext, LogicalPlan> {
@@ -371,7 +403,8 @@ public class LogicalPlanner {
         @Override
         protected LogicalPlan visitInsertFromSubQueryStatement(InsertFromSubQueryAnalyzedStatement statement, PlannerContext context) {
             SubqueryPlanner subqueryPlanner = new SubqueryPlanner((s) -> planSubSelect(s, context));
-            return InsertFromSubQueryPlanner.plan(statement, context, LogicalPlanner.this, subqueryPlanner);
+            return InsertFromSubQueryPlanner.plan(
+                relationNormalizer, statement, context, LogicalPlanner.this, subqueryPlanner);
         }
     }
 }

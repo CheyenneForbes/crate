@@ -19,19 +19,21 @@
 package io.crate.beans;
 
 import com.google.common.collect.ImmutableList;
-import io.crate.auth.user.User;
-import io.crate.execution.engine.collect.stats.JobsLogs;
-import io.crate.expression.reference.sys.job.JobContext;
-import io.crate.expression.reference.sys.job.JobContextLog;
+import com.google.common.collect.ImmutableSet;
+import io.crate.metadata.sys.ClassifiedMetrics.Metrics;
+import io.crate.metadata.sys.MetricsView;
 import io.crate.planner.Plan.StatementType;
 import io.crate.planner.operators.StatementClassifier.Classification;
 import org.junit.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
+import static io.crate.beans.QueryStats.createMetricsMap;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.notNullValue;
+import static org.hamcrest.Matchers.nullValue;
 import static org.junit.Assert.assertThat;
 
 public class QueryStatsTest {
@@ -41,45 +43,95 @@ public class QueryStatsTest {
     private static final Classification DELETE_CLASSIFICATION = new Classification(StatementType.DELETE);
     private static final Classification INSERT_CLASSIFICATION = new Classification(StatementType.INSERT);
     private static final Classification DDL_CLASSIFICATION = new Classification(StatementType.DDL);
+    private static final Classification COPY_CLASSIFICATION = new Classification(StatementType.COPY);
 
-    private final List<JobContextLog> log = ImmutableList.of(
-        new JobContextLog(new JobContext(UUID.randomUUID(), "select name", 100L, User.CRATE_USER, SELECT_CLASSIFICATION), null, 150L),
-        new JobContextLog(new JobContext(UUID.randomUUID(), "select name", 300L, User.CRATE_USER, SELECT_CLASSIFICATION), null, 320L),
-        new JobContextLog(new JobContext(UUID.randomUUID(), "update t1 set x = 10", 400L, User.CRATE_USER, UPDATE_CLASSIFICATION), null, 420L),
-        new JobContextLog(new JobContext(UUID.randomUUID(), "insert into t1 (x) values (20)", 111L, User.CRATE_USER, INSERT_CLASSIFICATION), null, 130L),
-        new JobContextLog(new JobContext(UUID.randomUUID(), "delete from t1", 410L, User.CRATE_USER, DELETE_CLASSIFICATION), null, 415L),
-        new JobContextLog(new JobContext(UUID.randomUUID(), "delete from t1", 110L, User.CRATE_USER, DELETE_CLASSIFICATION), null, 120L),
-        new JobContextLog(new JobContext(UUID.randomUUID(), "create table t1 (x int)", 105L, User.CRATE_USER, DDL_CLASSIFICATION), null, 106L)
+    private final List<MetricsView> metrics = ImmutableList.of(
+        createMetric(SELECT_CLASSIFICATION, 35),
+        createMetric(SELECT_CLASSIFICATION, 35),
+        createMetric(UPDATE_CLASSIFICATION, 20),
+        createMetric(INSERT_CLASSIFICATION, 19),
+        createMetric(DELETE_CLASSIFICATION, 5),
+        createMetric(DELETE_CLASSIFICATION, 10),
+        createMetric(DDL_CLASSIFICATION, 1),
+        createFailedExecutionMetric(SELECT_CLASSIFICATION, 20),
+        createFailedExecutionMetric(COPY_CLASSIFICATION, 0)
     );
 
-    @Test
-    public void testCreateMetricsMap() {
-        Map<StatementType, QueryStats.Metric> metricsByCommand = QueryStats.createMetricsMap(log, 2000, 0L);
-        assertThat(metricsByCommand.size(), is(6));
+    private MetricsView createMetric(Classification classification, long duration) {
+        Metrics metrics = new Metrics(classification);
+        metrics.recordValue(duration);
+        return metrics.createMetricsView();
+    }
 
-        assertThat(metricsByCommand.get(StatementType.SELECT).avgDurationInMs(), is(35.0));
-        assertThat(metricsByCommand.get(StatementType.SELECT).statementsPerSec(), is(1.0));
-
-        assertThat(metricsByCommand.get(StatementType.INSERT).avgDurationInMs(), is(19.0));
-        assertThat(metricsByCommand.get(StatementType.INSERT).statementsPerSec(), is(0.5));
-
-        assertThat(metricsByCommand.get(StatementType.UPDATE).avgDurationInMs(), is(20.0));
-        assertThat(metricsByCommand.get(StatementType.UPDATE).statementsPerSec(), is(0.5));
-
-        assertThat(metricsByCommand.get(StatementType.DELETE).avgDurationInMs(), is(7.0));
-        assertThat(metricsByCommand.get(StatementType.DELETE).statementsPerSec(), is(1.0));
-
-        assertThat(metricsByCommand.get(StatementType.UNDEFINED).avgDurationInMs(), is(1.0));
-        assertThat(metricsByCommand.get(StatementType.UNDEFINED).statementsPerSec(), is(0.5));
-
-        assertThat(metricsByCommand.get(StatementType.ALL).avgDurationInMs(), is(15.0));
-        assertThat(metricsByCommand.get(StatementType.ALL).statementsPerSec(), is(4.0));
+    private MetricsView createFailedExecutionMetric(Classification classification, long duration) {
+        Metrics metrics = new Metrics(classification);
+        metrics.recordFailedExecution(duration);
+        return metrics.createMetricsView();
     }
 
     @Test
-    public void testDefaultValue() {
-        QueryStats queryStats = new QueryStats(new JobsLogs(() -> true));
-        assertThat(queryStats.getSelectQueryFrequency(), is(0.0));
-        assertThat(queryStats.getSelectQueryAverageDuration(), is(0.0));
+    public void testTrackedStatementTypes() {
+        List<MetricsView> oneMetricForEachStatementType = new ArrayList<>();
+        for (StatementType type : StatementType.values()) {
+            if(type.equals(StatementType.UNDEFINED)) {
+                continue;
+            }
+            oneMetricForEachStatementType.add(createMetric(new Classification(type), 1));
+        }
+        Map<StatementType, QueryStats.Metric> metricsByCommand = createMetricsMap(oneMetricForEachStatementType);
+
+        assertThat(metricsByCommand.size(), is(7));
+        assertThat(metricsByCommand.get(StatementType.SELECT), is(notNullValue()));
+        assertThat(metricsByCommand.get(StatementType.UPDATE), is(notNullValue()));
+        assertThat(metricsByCommand.get(StatementType.INSERT), is(notNullValue()));
+        assertThat(metricsByCommand.get(StatementType.DELETE), is(notNullValue()));
+        assertThat(metricsByCommand.get(StatementType.DDL), is(notNullValue()));
+        assertThat(metricsByCommand.get(StatementType.MANAGEMENT), is(notNullValue()));
+        assertThat(metricsByCommand.get(StatementType.COPY), is(notNullValue()));
+
+        assertThat(metricsByCommand.get(StatementType.UNDEFINED), is(nullValue()));
+    }
+
+    @Test
+    public void testCreateMetricsMap() {
+        Map<StatementType, QueryStats.Metric> metricsByCommand = createMetricsMap(metrics);
+        assertThat(metricsByCommand.size(), is(6));
+
+        assertThat(metricsByCommand.get(StatementType.SELECT).totalCount(), is(3L));
+        assertThat(metricsByCommand.get(StatementType.SELECT).failedCount(), is(1L));
+        assertThat(metricsByCommand.get(StatementType.SELECT).sumOfDurations(), is(90L));
+
+        assertThat(metricsByCommand.get(StatementType.INSERT).totalCount(), is(1L));
+        assertThat(metricsByCommand.get(StatementType.INSERT).failedCount(), is(0L));
+        assertThat(metricsByCommand.get(StatementType.INSERT).sumOfDurations(), is(19L));
+
+        assertThat(metricsByCommand.get(StatementType.UPDATE).totalCount(), is(1L));
+        assertThat(metricsByCommand.get(StatementType.UPDATE).failedCount(), is(0L));
+        assertThat(metricsByCommand.get(StatementType.UPDATE).sumOfDurations(), is(20L));
+
+        assertThat(metricsByCommand.get(StatementType.DELETE).totalCount(), is(2L));
+        assertThat(metricsByCommand.get(StatementType.DELETE).failedCount(), is(0L));
+        assertThat(metricsByCommand.get(StatementType.DELETE).sumOfDurations(), is(15L));
+
+        assertThat(metricsByCommand.get(StatementType.DDL).totalCount(), is(1L));
+        assertThat(metricsByCommand.get(StatementType.DDL).failedCount(), is(0L));
+        assertThat(metricsByCommand.get(StatementType.DDL).sumOfDurations(), is(1L));
+
+        assertThat(metricsByCommand.get(StatementType.COPY).totalCount(), is(1L));
+        assertThat(metricsByCommand.get(StatementType.COPY).failedCount(), is(1L));
+        assertThat(metricsByCommand.get(StatementType.COPY).sumOfDurations(), is(0L));
+    }
+
+    @Test
+    public void testSameTypeWithDifferentLabelsClassificationsAreMerged() {
+        List<MetricsView> selectMetrics = ImmutableList.of(
+            createMetric(SELECT_CLASSIFICATION, 35),
+            createMetric(new Classification(StatementType.SELECT, ImmutableSet.of("lookup")), 55)
+        );
+        Map<StatementType, QueryStats.Metric> metricsByCommand = createMetricsMap(selectMetrics);
+        assertThat(metricsByCommand.size(), is(1));
+
+        assertThat(metricsByCommand.get(StatementType.SELECT).totalCount(), is(2L));
+        assertThat(metricsByCommand.get(StatementType.SELECT).sumOfDurations(), is(90L));
     }
 }

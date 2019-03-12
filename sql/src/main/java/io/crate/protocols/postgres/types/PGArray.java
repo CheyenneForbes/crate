@@ -52,6 +52,11 @@ class PGArray extends PGType {
     }
 
     @Override
+    public int typArray() {
+        return 0;
+    }
+
+    @Override
     public int typElem() {
         return innerType.oid();
     }
@@ -178,6 +183,7 @@ class PGArray extends PGType {
          * text representation:
          *
          * 1-dimension integer array:
+         *      {10,NULL,NULL,20,30}
          *      {"10",NULL,NULL,"20","30"}
          * 2-dimension integer array:
          *      {{"10","20"},{"30",NULL,"40}}
@@ -205,7 +211,7 @@ class PGArray extends PGType {
                             // n-dimensions array -> call recursively
                             List<Object> nestedObjects = new ArrayList<>();
                             i = decodeUTF8Text(bytes, i + 1, endIdx, nestedObjects);
-                            valIdx = i;
+                            valIdx = i + 1;
                             objects.add(nestedObjects.toArray());
                         } else {
                             // 1-dimension array -> call recursively
@@ -246,20 +252,28 @@ class PGArray extends PGType {
 
     // Decode individual inner object
     private void addObject(byte[] bytes, int startIdx, int endIdx, List<Object> objects) {
-        if (endIdx > startIdx) {
+        if (endIdx >= startIdx) {
             byte firstValueByte = bytes[startIdx];
-            if (firstValueByte == '"') {
-                List<Byte> innerBytes = new ArrayList<>(endIdx - (startIdx + 1));
-                for (int i = startIdx + 1; i < endIdx; i++) {
-                    if (i < (endIdx - 1) && (char) bytes[i] == '\\' &&
+            if (firstValueByte == 'N') {
+                objects.add(null);
+            } else {
+                if (firstValueByte == '"') {
+                    // skip any quote character
+                    if (startIdx == endIdx) {
+                        return;
+                    }
+                    startIdx++;
+                    endIdx--;
+                }
+                byte[] innerBytes = new byte[endIdx - startIdx + 1];
+                for (int i = startIdx, innerBytesIdx = 0; i <= endIdx; i++, innerBytesIdx++) {
+                    if (i < endIdx && (char) bytes[i] == '\\' &&
                         ((char) bytes[i + 1] == '\\' || (char) bytes[i + 1] == '\"')) {
                         i++;
                     }
-                    innerBytes.add(bytes[i]);
+                    innerBytes[innerBytesIdx] = bytes[i];
                 }
-                objects.add(innerType.decodeUTF8Text(Bytes.toArray(innerBytes)));
-            } else if (firstValueByte == 'N') {
-                objects.add(null);
+                objects.add(innerType.decodeUTF8Text(innerBytes));
             }
         }
     }

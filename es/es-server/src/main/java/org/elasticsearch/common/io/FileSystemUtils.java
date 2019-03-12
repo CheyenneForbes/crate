@@ -1,0 +1,126 @@
+/*
+ * Licensed to Elasticsearch under one or more contributor
+ * license agreements. See the NOTICE file distributed with
+ * this work for additional information regarding copyright
+ * ownership. Elasticsearch licenses this file to you under
+ * the Apache License, Version 2.0 (the "License"); you may
+ * not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+package org.elasticsearch.common.io;
+
+import org.apache.logging.log4j.Logger;
+import org.apache.lucene.util.Constants;
+import org.elasticsearch.core.internal.io.IOUtils;
+
+import java.io.IOException;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.stream.StreamSupport;
+
+/**
+ * Elasticsearch utils to work with {@link java.nio.file.Path}
+ */
+public final class FileSystemUtils {
+
+    private FileSystemUtils() {} // only static methods
+
+    /**
+     * Returns <code>true</code> iff one of the files exists otherwise <code>false</code>
+     */
+    public static boolean exists(Path... files) {
+        for (Path file : files) {
+            if (Files.exists(file)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Check whether the file denoted by the given path is hidden.
+     * In practice, this will check if the file name starts with a dot.
+     * This should be preferred to {@link Files#isHidden(Path)} as this
+     * does not depend on the operating system.
+     */
+    public static boolean isHidden(Path path) {
+        Path fileName = path.getFileName();
+        if (fileName == null) {
+            return false;
+        }
+        return fileName.toString().startsWith(".");
+    }
+
+    /**
+     * Check whether the file denoted by the given path is a desktop services store created by Finder on macOS.
+     *
+     * @param path the path
+     * @return true if the current system is macOS and the specified file appears to be a desktop services store file
+     */
+    public static boolean isDesktopServicesStore(final Path path) {
+        return Constants.MAC_OS_X && Files.isRegularFile(path) && ".DS_Store".equals(path.getFileName().toString());
+    }
+
+    /**
+     * Deletes all subdirectories in the given path recursively
+     * @throws java.lang.IllegalArgumentException if the given path is not a directory
+     */
+    public static void deleteSubDirectories(Path... paths) throws IOException {
+        for (Path path : paths) {
+            try (DirectoryStream<Path> stream = Files.newDirectoryStream(path)) {
+                for (Path subPath : stream) {
+                    if (Files.isDirectory(subPath)) {
+                        IOUtils.rm(subPath);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Check that a directory exists, is a directory and is readable
+     * by the current user
+     */
+    public static boolean isAccessibleDirectory(Path directory, Logger logger) {
+        assert directory != null && logger != null;
+
+        if (!Files.exists(directory)) {
+            logger.debug("[{}] directory does not exist.", directory.toAbsolutePath());
+            return false;
+        }
+        if (!Files.isDirectory(directory)) {
+            logger.debug("[{}] should be a directory but is not.", directory.toAbsolutePath());
+            return false;
+        }
+        if (!Files.isReadable(directory)) {
+            logger.debug("[{}] directory is not readable.", directory.toAbsolutePath());
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Returns an array of all files in the given directory matching the glob.
+     */
+    public static Path[] files(Path directory, String glob) throws IOException {
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(directory, glob)) {
+            return toArray(stream);
+        }
+    }
+
+    private static Path[] toArray(DirectoryStream<Path> stream) {
+        return StreamSupport.stream(stream.spliterator(), false).toArray(length -> new Path[length]);
+    }
+
+}

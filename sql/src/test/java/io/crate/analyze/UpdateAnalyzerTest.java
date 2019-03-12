@@ -21,7 +21,6 @@
 
 package io.crate.analyze;
 
-import com.google.common.collect.ImmutableMap;
 import io.crate.analyze.relations.DocTableRelation;
 import io.crate.data.Row;
 import io.crate.data.Row1;
@@ -40,10 +39,8 @@ import io.crate.expression.symbol.Symbol;
 import io.crate.metadata.ColumnIdent;
 import io.crate.metadata.Reference;
 import io.crate.metadata.RelationName;
-import io.crate.metadata.Routing;
 import io.crate.metadata.Schemas;
 import io.crate.metadata.doc.DocTableInfo;
-import io.crate.metadata.table.TestingTableInfo;
 import io.crate.planner.DependencyCarrier;
 import io.crate.planner.Plan;
 import io.crate.planner.operators.SubQueryResults;
@@ -54,19 +51,16 @@ import io.crate.types.ArrayType;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
 import io.crate.types.DoubleType;
+import io.crate.types.ObjectType;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static io.crate.analyze.TableDefinitions.SHARD_ROUTING;
-import static io.crate.analyze.TableDefinitions.USER_TABLE_INFO;
 import static io.crate.testing.SymbolMatchers.isFunction;
 import static io.crate.testing.SymbolMatchers.isLiteral;
 import static io.crate.testing.SymbolMatchers.isReference;
@@ -79,54 +73,43 @@ import static org.mockito.Mockito.mock;
 
 public class UpdateAnalyzerTest extends CrateDummyClusterServiceUnitTest {
 
-    private final RelationName nestedClusteredByRelationName = new RelationName("doc", "nestedclustered");
-    private final DocTableInfo nestedClusteredByTableInfo = TestingTableInfo.builder(
-        nestedClusteredByRelationName, SHARD_ROUTING)
-        .add("obj", DataTypes.OBJECT, null)
-        .add("obj", DataTypes.STRING, Collections.singletonList("name"))
-        .add("other_obj", DataTypes.OBJECT, null)
-        .clusteredBy("obj.name").build();
-
-    private final RelationName testAliasRelationName = new RelationName(Schemas.DOC_SCHEMA_NAME, "alias");
-    private final DocTableInfo testAliasTableInfo = new TestingTableInfo.Builder(
-        testAliasRelationName, new Routing(ImmutableMap.of()))
-        .add("bla", DataTypes.STRING, null)
-        .isAlias(true).build();
-
-    private final RelationName nestedPk = new RelationName(Schemas.DOC_SCHEMA_NAME, "t_nested_pk");
-    private final DocTableInfo tiNestedPk = new TestingTableInfo.Builder(
-        nestedPk, SHARD_ROUTING)
-        .add("o", DataTypes.OBJECT)
-        .add("o", DataTypes.INTEGER, Collections.singletonList("x"))
-        .add("o", DataTypes.INTEGER, Collections.singletonList("y"))
-        .addPrimaryKey("o.x")
-        .build();
-
     private SQLExecutor e;
 
     @Before
     public void prepare() throws IOException {
         SQLExecutor.Builder builder = SQLExecutor.builder(clusterService)
             .enableDefaultTables()
-            .addDocTable(nestedClusteredByTableInfo)
-            .addDocTable(testAliasTableInfo)
-            .addDocTable(tiNestedPk)
-            .addTable("create table bag (id short primary key, ob array(object))");
-
-        RelationName partedGeneratedColumnRelationName = new RelationName(Schemas.DOC_SCHEMA_NAME, "parted_generated_column");
-        TestingTableInfo.Builder partedGeneratedColumnTableInfo = new TestingTableInfo.Builder(
-            partedGeneratedColumnRelationName, new Routing(ImmutableMap.of()))
-            .add("ts", DataTypes.TIMESTAMP, null)
-            .addGeneratedColumn("day", DataTypes.TIMESTAMP, "date_trunc('day', ts)", true);
-        builder.addDocTable(partedGeneratedColumnTableInfo);
-
-        RelationName nestedPartedGeneratedColumnRelationName = new RelationName(Schemas.DOC_SCHEMA_NAME, "nested_parted_generated_column");
-        TestingTableInfo.Builder nestedPartedGeneratedColumnTableInfo = new TestingTableInfo.Builder(
-            nestedPartedGeneratedColumnRelationName, new Routing(ImmutableMap.of()))
-            .add("user", DataTypes.OBJECT, null)
-            .add("user", DataTypes.STRING, Arrays.asList("name"))
-            .addGeneratedColumn("name", DataTypes.STRING, "concat(\"user\"['name'], 'bar')", true);
-        builder.addDocTable(nestedPartedGeneratedColumnTableInfo);
+            .addTable(
+                "create table doc.nestedclustered (" +
+                "   obj object as (" +
+                "       name string" +
+                "   )," +
+                "   other_obj object" +
+                ") clustered by (obj['name']) "
+            )
+            .addTable(
+                "create table doc.t_nested_pk (" +
+                "   o object as (" +
+                "       x integer primary key," +
+                "       y integer" +
+                "   )" +
+                ")"
+            )
+            .addTable("create table bag (id short primary key, ob array(object))")
+            .addPartitionedTable(
+                "create table doc.parted_generated_column (" +
+                "   ts timestamp," +
+                "   day as date_trunc('day', ts)" +
+                ") partitioned by (day) "
+            )
+            .addPartitionedTable(
+                "create table doc.nested_parted_generated_column (" +
+                "   \"user\" object as (" +
+                "       name string" +
+                "   )," +
+                "   name as concat(\"user\"['name'], 'bar')" +
+                ") partitioned by (name) "
+            );
 
         e = builder.build();
     }
@@ -291,19 +274,16 @@ public class UpdateAnalyzerTest extends CrateDummyClusterServiceUnitTest {
         };
         AnalyzedUpdateStatement update = analyze("update users set name=?, other_id=?, friends=? where id=?",
             new Object[]{"Jeltz", 0, friends, "9"});
+
+        RelationName usersRelation = new RelationName("doc", "users");
         assertThat(update.assignmentByTargetCol().size(), is(3));
-        assertThat(
-            update.assignmentByTargetCol().get(USER_TABLE_INFO.getReference(new ColumnIdent("name"))),
-            instanceOf(ParameterSymbol.class)
-        );
-        assertThat(
-            update.assignmentByTargetCol().get(USER_TABLE_INFO.getReference(new ColumnIdent("friends"))),
-            instanceOf(ParameterSymbol.class)
-        );
-        assertThat(
-            update.assignmentByTargetCol().get(USER_TABLE_INFO.getReference(new ColumnIdent("other_id"))),
-            instanceOf(ParameterSymbol.class)
-        );
+        DocTableInfo tableInfo = e.schemas().getTableInfo(usersRelation);
+        Reference name = tableInfo.getReference(new ColumnIdent("name"));
+        Reference friendsRef = tableInfo.getReference(new ColumnIdent("friends"));
+        Reference otherId = tableInfo.getReference(new ColumnIdent("other_id"));
+        assertThat(update.assignmentByTargetCol().get(name), instanceOf(ParameterSymbol.class));
+        assertThat(update.assignmentByTargetCol().get(friendsRef), instanceOf(ParameterSymbol.class));
+        assertThat(update.assignmentByTargetCol().get(otherId), instanceOf(ParameterSymbol.class));
 
         assertThat(update.query(), isFunction(EqOperator.NAME, isReference("id"), instanceOf(ParameterSymbol.class)));
     }
@@ -333,7 +313,7 @@ public class UpdateAnalyzerTest extends CrateDummyClusterServiceUnitTest {
 
 
         assertThat(sources[0].valueType().id(), is(ArrayType.ID));
-        assertEquals(DataTypes.OBJECT, ((ArrayType) sources[0].valueType()).innerType());
+        assertThat(((ArrayType) sources[0].valueType()).innerType().id(), is(ObjectType.ID));
         assertThat(((Object[]) ((Literal) sources[0]).value()).length, is(0));
     }
 
@@ -557,10 +537,10 @@ public class UpdateAnalyzerTest extends CrateDummyClusterServiceUnitTest {
         AnalyzedUpdateStatement stmt = e.analyze("UPDATE bag SET ob = [?] WHERE id = ?");
         assertThat(
             stmt.assignmentByTargetCol().keySet(),
-            contains(isReference("ob", new ArrayType(DataTypes.OBJECT))));
+            contains(isReference("ob", new ArrayType(ObjectType.untyped()))));
         assertThat(
             stmt.assignmentByTargetCol().values(),
-            contains(isFunction("_array", singletonList(DataTypes.OBJECT))));
+            contains(isFunction("_array", singletonList(ObjectType.untyped()))));
     }
 
     @Test
@@ -568,22 +548,24 @@ public class UpdateAnalyzerTest extends CrateDummyClusterServiceUnitTest {
         AnalyzedUpdateStatement stmt = e.analyze("UPDATE bag SET ob = array_cat([?], [{obb=1}]) WHERE id = ?");
         assertThat(
             stmt.assignmentByTargetCol().keySet(),
-            contains(isReference("ob", new ArrayType(DataTypes.OBJECT))));
+            contains(isReference("ob", new ArrayType(ObjectType.untyped()))));
         assertThat(
             stmt.assignmentByTargetCol().values(),
             contains(isFunction("array_cat",
-                isFunction("_array", singletonList(DataTypes.OBJECT)),
+                isFunction("_array", singletonList(ObjectType.untyped())),
                 instanceOf(Literal.class)
             )));
     }
 
-    private void execute(Plan plan, Row params) {
+    private List<Object[]> execute(Plan plan, Row params) throws Exception {
+        TestingRowConsumer consumer = new TestingRowConsumer();
         plan.execute(
             mock(DependencyCarrier.class),
             e.getPlannerContext(clusterService.state()),
-            new TestingRowConsumer(),
+            consumer,
             params,
             SubQueryResults.EMPTY
         );
+        return consumer.getResult();
     }
 }

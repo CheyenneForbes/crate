@@ -22,25 +22,22 @@
 
 package io.crate.expression.scalar.string;
 
-import io.crate.metadata.FunctionIdent;
-import io.crate.metadata.FunctionInfo;
+import io.crate.common.Hex;
 import io.crate.expression.scalar.ScalarFunctionModule;
 import io.crate.expression.scalar.UnaryScalar;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.hash.MessageDigests;
 
+import java.nio.charset.StandardCharsets;
 import java.security.DigestException;
 import java.security.MessageDigest;
-import java.util.Collections;
-import java.util.List;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
 public final class HashFunctions {
 
-    private static final List<DataType> SUPPORTED_INPUT_TYPE = Collections.singletonList((DataTypes.STRING));
+    private static final DataType SUPPORTED_INPUT_TYPE = DataTypes.STRING;
 
     private enum HashMethod {
         MD5(MessageDigests::md5),
@@ -57,39 +54,22 @@ public final class HashFunctions {
             this.messageDigestSupplier = digestSupplier;
         }
 
-        public BytesRef digest(BytesRef input) {
+        public String digest(String input) {
             MessageDigest messageDigest = messageDigestSupplier.get();
             byte[] digest = new byte[messageDigest.getDigestLength()];
-            messageDigest.update(input.bytes, input.offset, input.length);
+            messageDigest.update(input.getBytes(StandardCharsets.UTF_8));
             try {
                 messageDigest.digest(digest, 0, digest.length);
             } catch (DigestException e) {
                 throw new RuntimeException("Error computing digest.", e);
             }
-            return new BytesRef(convertToHex(digest));
-        }
-
-        /**
-         * Converts a byte array into an ASCII/UTF-8 hex encoded string.
-         * @param input the input array to transform to a hex string
-         * @return The resulting ASCII/UTF-8 encoded byte array which holds the hex string.
-         */
-        private static byte[] convertToHex(byte[] input) {
-            byte[] hexString = new byte[input.length << 1];
-            for (int temp, i = 0; i < input.length; i++) {
-                temp = (input[i] >> 4) & 0x0F;
-                hexString[2 * i] = (byte) (temp < 10 ? temp + '0' : temp + 'W');
-                temp = input[i] & 0x0F;
-                hexString[2 * i + 1] = (byte) (temp < 10 ? temp + '0' : temp + 'W');
-            }
-            return hexString;
+            return Hex.encodeHexString(digest);
         }
     }
 
 
-    private static void register(ScalarFunctionModule module, String name, Function<BytesRef, BytesRef> func) {
-        FunctionIdent ident = new FunctionIdent(name, SUPPORTED_INPUT_TYPE);
-        module.register(new UnaryScalar<>(new FunctionInfo(ident, DataTypes.STRING), func));
+    private static void register(ScalarFunctionModule module, String name, Function<String, String> func) {
+        module.register(new UnaryScalar<>(name, SUPPORTED_INPUT_TYPE, DataTypes.STRING, func));
     }
 
     public static void register(ScalarFunctionModule module) {

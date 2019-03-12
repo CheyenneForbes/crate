@@ -26,7 +26,7 @@ import io.crate.blob.v2.BlobIndex;
 import io.crate.blob.v2.BlobIndicesService;
 import io.crate.blob.v2.BlobShard;
 import io.crate.plugin.BlobPlugin;
-import io.crate.plugin.CrateCorePlugin;
+import io.crate.plugin.CrateCommonPlugin;
 import io.crate.plugin.HttpTransportPlugin;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.plugins.Plugin;
@@ -45,8 +45,8 @@ import java.util.Map;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
-import static io.crate.rest.CrateRestMainAction.ES_API_ENABLED_SETTING;
-import static org.elasticsearch.common.network.NetworkModule.HTTP_ENABLED;
+import static org.elasticsearch.http.HttpTransportSettings.SETTING_CORS_ALLOW_ORIGIN;
+import static org.elasticsearch.http.HttpTransportSettings.SETTING_CORS_ENABLED;
 import static org.elasticsearch.http.HttpTransportSettings.SETTING_HTTP_COMPRESSION;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.core.Is.is;
@@ -68,8 +68,8 @@ public abstract class BlobIntegrationTestBase extends ESIntegTestCase {
     protected Settings nodeSettings(int nodeOrdinal) {
         return Settings.builder()
             .put(super.nodeSettings(nodeOrdinal))
-            .put(HTTP_ENABLED.getKey(), true)
-            .put(ES_API_ENABLED_SETTING.getKey(), true)
+            .put(SETTING_CORS_ENABLED.getKey(), true)
+            .put(SETTING_CORS_ALLOW_ORIGIN.getKey(), "*")
             .put(SETTING_HTTP_COMPRESSION.getKey(), false)
             .build();
     }
@@ -77,7 +77,7 @@ public abstract class BlobIntegrationTestBase extends ESIntegTestCase {
     @SuppressWarnings("unchecked")
     @Override
     protected Collection<Class<? extends Plugin>> nodePlugins() {
-        return Arrays.asList(Netty4Plugin.class, BlobPlugin.class, CrateCorePlugin.class, HttpTransportPlugin.class);
+        return Arrays.asList(Netty4Plugin.class, BlobPlugin.class, CrateCommonPlugin.class, HttpTransportPlugin.class);
     }
 
     @After

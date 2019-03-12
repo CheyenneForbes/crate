@@ -22,19 +22,21 @@
 
 package io.crate.execution.dml.upsert;
 
-import io.crate.Constants;
 import io.crate.analyze.QueriedTable;
 import io.crate.analyze.relations.DocTableRelation;
 import io.crate.data.Input;
 import io.crate.expression.InputFactory;
 import io.crate.expression.reference.Doc;
 import io.crate.expression.reference.DocRefResolver;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.Reference;
 import io.crate.metadata.doc.DocTableInfo;
 import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
 import io.crate.testing.SQLExecutor;
+import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.xcontent.XContentFactory;
-import org.elasticsearch.index.get.GetResult;
+import org.elasticsearch.common.xcontent.XContentHelper;
+import org.elasticsearch.common.xcontent.XContentType;
 import org.junit.Test;
 
 import java.util.Collections;
@@ -53,29 +55,29 @@ public class GeneratedColumnsTest extends CrateDummyClusterServiceUnitTest {
         DocTableInfo table = query.tableRelation().tableInfo();
         GeneratedColumns<Doc> generatedColumns = new GeneratedColumns<>(
             new InputFactory(e.functions()),
+            CoordinatorTxnCtx.systemTransactionContext(),
             GeneratedColumns.Validation.NONE,
             new DocRefResolver(Collections.emptyList()),
             Collections.emptyList(),
             table.generatedColumns()
         );
 
-        generatedColumns.setNextRow(Doc.fromGetResult(new GetResult(
+        BytesReference bytes = BytesReference.bytes(XContentFactory.jsonBuilder()
+            .startObject()
+            .startObject("obj")
+                .startArray("arr")
+                    .value(10)
+                    .value(20)
+                .endArray()
+            .endObject()
+            .endObject());
+        generatedColumns.setNextRow(new Doc(
             table.concreteIndices()[0],
-            Constants.DEFAULT_MAPPING_TYPE,
             "1",
             1,
-            true,
-            XContentFactory.jsonBuilder()
-                .startObject()
-                .startObject("obj")
-                    .startArray("arr")
-                        .value(10)
-                        .value(20)
-                    .endArray()
-                .endObject()
-                .endObject().bytes(),
-            Collections.emptyMap()
-        )));
+            XContentHelper.convertToMap(bytes, false, XContentType.JSON).v2(),
+            bytes::utf8ToString
+        ));
         Map.Entry<Reference, Input<?>> generatedColumn = generatedColumns.toInject().iterator().next();
         assertThat(generatedColumn.getValue().value(), is(new Object[] { 10, 20 }));
     }

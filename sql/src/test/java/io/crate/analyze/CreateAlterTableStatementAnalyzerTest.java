@@ -21,7 +21,6 @@
 
 package io.crate.analyze;
 
-import io.crate.Version;
 import io.crate.action.sql.Option;
 import io.crate.action.sql.SessionContext;
 import io.crate.auth.user.User;
@@ -33,15 +32,16 @@ import io.crate.exceptions.InvalidSchemaNameException;
 import io.crate.exceptions.OperationOnInaccessibleRelationException;
 import io.crate.exceptions.RelationAlreadyExists;
 import io.crate.metadata.ColumnIdent;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.FulltextAnalyzerResolver;
 import io.crate.metadata.RelationName;
 import io.crate.metadata.Schemas;
-import io.crate.metadata.TransactionContext;
 import io.crate.metadata.table.ColumnPolicy;
 import io.crate.sql.parser.ParsingException;
 import io.crate.sql.parser.SqlParser;
 import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
 import io.crate.testing.SQLExecutor;
+import io.crate.types.DataTypes;
 import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.metadata.AutoExpandReplicas;
@@ -53,13 +53,16 @@ import org.elasticsearch.test.ClusterServiceUtils;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
 import static com.carrotsearch.randomizedtesting.RandomizedTest.$;
+import static io.crate.metadata.FulltextAnalyzerResolver.CustomType.ANALYZER;
 import static io.crate.testing.TestingHelpers.mapToSortedString;
+import static org.elasticsearch.cluster.metadata.IndexMetaData.INDEX_ROUTING_EXCLUDE_GROUP_SETTING;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasItems;
 import static org.hamcrest.Matchers.is;
@@ -72,12 +75,12 @@ public class CreateAlterTableStatementAnalyzerTest extends CrateDummyClusterServ
     private SQLExecutor e;
 
     @Before
-    public void prepare() {
+    public void prepare() throws IOException {
         String analyzerSettings = FulltextAnalyzerResolver.encodeSettings(
             Settings.builder().put("search", "foobar").build()).utf8ToString();
         MetaData metaData = MetaData.builder()
             .persistentSettings(
-                Settings.builder().put("crate.analysis.custom.analyzer.ft_search", analyzerSettings).build())
+                Settings.builder().put(ANALYZER.buildSettingName("ft_search"), analyzerSettings).build())
             .build();
         ClusterState state = ClusterState.builder(ClusterName.DEFAULT)
             .metaData(metaData)
@@ -180,6 +183,14 @@ public class CreateAlterTableStatementAnalyzerTest extends CrateDummyClusterServ
         assertThat(analysis.tableParameter().settings().get(TableParameterInfo.REFRESH_INTERVAL.getKey()), is("5s"));
     }
 
+    @Test
+    public void testCreateTableWithNumberOfShardsOnWithClauseIsInvalid() {
+        expectedException.expect(IllegalArgumentException.class);
+        expectedException.expectMessage("Invalid property \"number_of_shards\" passed to [ALTER | CREATE] TABLE statement");
+        e.analyze("CREATE TABLE foo (id int primary key, content string) " +
+                    "with (number_of_shards=8)");
+    }
+
     @Test(expected = IllegalArgumentException.class)
     public void testCreateTableWithRefreshIntervalWrongNumberFormat() {
         e.analyze("CREATE TABLE foo (id int primary key, content string) " +
@@ -208,7 +219,7 @@ public class CreateAlterTableStatementAnalyzerTest extends CrateDummyClusterServ
             "SET (\"mapping.total_fields.limit\" = '5000')");
         assertEquals("5000", analysisSet.tableParameter().settings().get(TableParameterInfo.MAPPING_TOTAL_FIELDS_LIMIT.getKey()));
 
-        // Check if reseting total_fields results in default value
+        // Check if resetting total_fields results in default value
         AlterTableAnalyzedStatement analysisReset = e.analyze(
             "ALTER TABLE users " +
             "RESET (\"mapping.total_fields.limit\")");
@@ -762,7 +773,7 @@ public class CreateAlterTableStatementAnalyzerTest extends CrateDummyClusterServ
     public void testExplicitSchemaHasPrecedenceOverDefaultSchema() {
         CreateTableAnalyzedStatement statement = (CreateTableAnalyzedStatement) e.analyzer.boundAnalyze(
             SqlParser.createStatement("create table foo.bar (x string)"),
-            new TransactionContext(new SessionContext(0, Option.NONE, User.CRATE_USER, s -> {}, t -> {}, "hoschi")),
+            new CoordinatorTxnCtx(new SessionContext(0, Option.NONE, User.CRATE_USER, s -> {}, t -> {}, "hoschi")),
             new ParameterContext(Row.EMPTY, Collections.emptyList())).analyzedStatement();
 
         // schema from statement must take precedence
@@ -773,7 +784,7 @@ public class CreateAlterTableStatementAnalyzerTest extends CrateDummyClusterServ
     public void testDefaultSchemaIsAddedToTableIdentIfNoEplicitSchemaExistsInTheStatement() {
         CreateTableAnalyzedStatement statement = (CreateTableAnalyzedStatement) e.analyzer.boundAnalyze(
             SqlParser.createStatement("create table bar (x string)"),
-            new TransactionContext(new SessionContext(0, Option.NONE, User.CRATE_USER, s -> {}, t -> {}, "hoschi")),
+            new CoordinatorTxnCtx(new SessionContext(0, Option.NONE, User.CRATE_USER, s -> {}, t -> {}, "hoschi")),
             new ParameterContext(Row.EMPTY, Collections.emptyList())).analyzedStatement();
 
         assertThat(statement.tableIdent().schema(), is("hoschi"));
@@ -846,13 +857,29 @@ public class CreateAlterTableStatementAnalyzerTest extends CrateDummyClusterServ
     public void testRoutingAllocationEnable() {
         AlterTableAnalyzedStatement analysis =
             e.analyze("alter table users set (\"routing.allocation.enable\"=\"none\")");
-        assertThat(analysis.tableParameter().settings().get(TableParameterInfo.ROUTING_ALLOCATION_ENABLE.getKey()), is("NONE"));
+        assertThat(analysis.tableParameter().settings().get(TableParameterInfo.ROUTING_ALLOCATION_ENABLE.getKey()), is("none"));
     }
 
     @Test
     public void testRoutingAllocationValidation() {
         expectedException.expect(IllegalArgumentException.class);
         e.analyze("alter table users set (\"routing.allocation.enable\"=\"foo\")");
+    }
+
+    @Test
+    public void testAlterTableSetShards() {
+        AlterTableAnalyzedStatement analysis =
+            e.analyze("alter table users set (\"number_of_shards\"=1)");
+        assertThat(analysis.table().ident().name(), is("users"));
+        assertThat(analysis.tableParameter().settings().get(TableParameterInfo.NUMBER_OF_SHARDS.getKey()), is("1"));
+    }
+
+    @Test
+    public void testAlterTableResetShards() {
+        AlterTableAnalyzedStatement analysis =
+            e.analyze("alter table users reset (\"number_of_shards\")");
+        assertThat(analysis.table().ident().name(), is("users"));
+        assertThat(analysis.tableParameter().settings().get(TableParameterInfo.NUMBER_OF_SHARDS.getKey()), is("5"));
     }
 
     @Test
@@ -1034,17 +1061,6 @@ public class CreateAlterTableStatementAnalyzerTest extends CrateDummyClusterServ
         e.analyze("create table test (obj object index off)");
     }
 
-    @SuppressWarnings("unchecked")
-    @Test
-    public void testCreateTableCreatedVersionSet() {
-        CreateTableAnalyzedStatement analysis = e.analyze(
-            "create table created_version_table (id int)");
-        Map<String, Object> metaMapping = ((Map) analysis.mapping().get("_meta"));
-        Map<String, Object> versionMap = (Map) metaMapping.get("version");
-        assertThat(versionMap.get(Version.Property.CREATED.toString()), is(Version.toMap(Version.CURRENT)));
-        assertThat(versionMap.get(Version.Property.UPGRADED.toString()), nullValue());
-    }
-
     @Test
     public void testCreateTableWithColumnStoreDisabled() {
         CreateTableAnalyzedStatement analysis = e.analyze(
@@ -1076,10 +1092,37 @@ public class CreateAlterTableStatementAnalyzerTest extends CrateDummyClusterServ
         AnalyzedColumnDefinition obj = stmt.analyzedTableElements().columns().get(0);
         AnalyzedColumnDefinition c = obj.children().get(0);
 
-        assertThat(c.dataType(), is("long"));
+        assertThat(c.dataType(), is(DataTypes.LONG));
         assertThat(c.formattedGeneratedExpression(), is("2"));
         assertThat(stmt.analyzedTableElements().toMapping().toString(),
             is("{_meta={generated_columns={obj.c=2}}, " +
                "properties={obj={dynamic=true, type=object, properties={c={type=long}}}}}"));
+    }
+
+    @Test
+    public void testNumberOfRoutingShardsCanBeSetAtCreateTable() {
+        CreateTableAnalyzedStatement stmt = e.analyze("create table t (x int) with (number_of_routing_shards = 10)");
+        assertThat(stmt.tableParameter().settings().get("index.number_of_routing_shards"), is("10"));
+    }
+
+    @Test
+    public void testNumberOfRoutingShardsCanBeSetAtCreateTableForPartitionedTables() {
+        CreateTableAnalyzedStatement stmt = e.analyze("create table t (p int, x int) partitioned by (p) " +
+                                                      "with (number_of_routing_shards = 10)");
+        assertThat(stmt.tableParameter().settings().get("index.number_of_routing_shards"), is("10"));
+    }
+
+    @Test
+    public void testAlterTableSetDynamicSetting() {
+        AlterTableAnalyzedStatement analysis =
+            e.analyze("alter table users set (\"routing.allocation.exclude.foo\"='bar')");
+        assertThat(analysis.tableParameter().settings().get(INDEX_ROUTING_EXCLUDE_GROUP_SETTING.getKey() + "foo"), is("bar"));
+    }
+
+    @Test
+    public void testAlterTableResetDynamicSetting() {
+        AlterTableAnalyzedStatement analysis =
+            e.analyze("alter table users reset (\"routing.allocation.exclude.foo\")");
+        assertThat(analysis.tableParameter().settings().get(INDEX_ROUTING_EXCLUDE_GROUP_SETTING.getKey() + "foo"), nullValue());
     }
 }

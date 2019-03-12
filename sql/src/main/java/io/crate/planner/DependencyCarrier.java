@@ -25,11 +25,13 @@ package io.crate.planner;
 import io.crate.action.sql.DCLStatementDispatcher;
 import io.crate.execution.TransportActionProvider;
 import io.crate.execution.ddl.DDLStatementDispatcher;
+import io.crate.execution.ddl.TransportSwapRelationsAction;
 import io.crate.execution.ddl.tables.TransportDropTableAction;
 import io.crate.execution.ddl.views.TransportCreateViewAction;
 import io.crate.execution.ddl.views.TransportDropViewAction;
 import io.crate.execution.dsl.projection.builder.ProjectionBuilder;
 import io.crate.execution.engine.PhasesTaskFactory;
+import io.crate.license.LicenseService;
 import io.crate.metadata.Functions;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.inject.Inject;
@@ -57,6 +59,8 @@ public class DependencyCarrier {
     private final ProjectionBuilder projectionBuilder;
     private final TransportCreateViewAction createViewAction;
     private final TransportDropViewAction dropViewAction;
+    private final TransportSwapRelationsAction swapRelationsAction;
+    private final LicenseService licenseService;
 
     @Inject
     public DependencyCarrier(Settings settings,
@@ -66,10 +70,12 @@ public class DependencyCarrier {
                              Functions functions,
                              DDLStatementDispatcher ddlAnalysisDispatcherProvider,
                              ClusterService clusterService,
+                             LicenseService licenseService,
                              DCLStatementDispatcher dclStatementDispatcher,
                              TransportDropTableAction transportDropTableAction,
                              TransportCreateViewAction createViewAction,
-                             TransportDropViewAction dropViewAction) {
+                             TransportDropViewAction dropViewAction,
+                             TransportSwapRelationsAction swapRelationsAction) {
         this.settings = settings;
         this.transportActionProvider = transportActionProvider;
         this.phasesTaskFactory = phasesTaskFactory;
@@ -77,11 +83,17 @@ public class DependencyCarrier {
         this.functions = functions;
         this.ddlAnalysisDispatcherProvider = ddlAnalysisDispatcherProvider;
         this.clusterService = clusterService;
+        this.licenseService = licenseService;
         this.dclStatementDispatcher = dclStatementDispatcher;
         this.transportDropTableAction = transportDropTableAction;
         projectionBuilder = new ProjectionBuilder(functions);
         this.createViewAction = createViewAction;
         this.dropViewAction = dropViewAction;
+        this.swapRelationsAction = swapRelationsAction;
+    }
+
+    public TransportSwapRelationsAction swapRelationsAction() {
+        return swapRelationsAction;
     }
 
     public DDLStatementDispatcher ddlAction() {
@@ -96,12 +108,16 @@ public class DependencyCarrier {
         return functions;
     }
 
-    public TransportActionProvider transportActionProvider()  {
+    public TransportActionProvider transportActionProvider() {
         return transportActionProvider;
     }
 
     public ClusterService clusterService() {
         return clusterService;
+    }
+
+    public LicenseService licenseService() {
+        return licenseService;
     }
 
     public ScheduledExecutorService scheduler() {

@@ -9,11 +9,10 @@ import io.crate.execution.engine.collect.files.LineCollectorExpression;
 import io.crate.execution.engine.collect.files.LocalFsFileInputFactory;
 import io.crate.expression.InputFactory;
 import io.crate.expression.reference.file.FileLineReferenceResolver;
-import io.crate.metadata.FunctionIdent;
-import io.crate.metadata.FunctionImplementation;
-import io.crate.metadata.FunctionResolver;
 import io.crate.metadata.Functions;
 import io.crate.metadata.Reference;
+import io.crate.metadata.SearchPath;
+import io.crate.metadata.TransactionContext;
 import io.crate.types.DataTypes;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -44,13 +43,14 @@ public class CsvReaderBenchmark {
 
     private String fileUri;
     private InputFactory inputFactory;
+    private TransactionContext txnCtx = TransactionContext.of("dummyUser", SearchPath.createSearchPathFrom("dummySchema"));
     File tempFile;
 
     @Setup
     public void create_temp_file_and_uri() throws IOException {
         Functions functions = new Functions(
-            ImmutableMap.<FunctionIdent, FunctionImplementation>of(),
-            ImmutableMap.<String, FunctionResolver>of()
+            ImmutableMap.of(),
+            ImmutableMap.of()
         );
         inputFactory = new InputFactory(functions);
         tempFile = File.createTempFile("temp", null);
@@ -93,7 +93,7 @@ public class CsvReaderBenchmark {
     @Benchmark()
     public void measureFileReadingIteratorForCSV(Blackhole blackhole) {
         Reference raw = createReference("_raw", DataTypes.STRING);
-        InputFactory.Context<LineCollectorExpression<?>> ctx = inputFactory.ctxForRefs(FileLineReferenceResolver::getImplementation);
+        InputFactory.Context<LineCollectorExpression<?>> ctx = inputFactory.ctxForRefs(txnCtx, FileLineReferenceResolver::getImplementation);
 
         List<Input<?>> inputs = Collections.singletonList(ctx.add(raw));
         BatchIterator<Row> batchIterator = FileReadingIterator.newInstance(

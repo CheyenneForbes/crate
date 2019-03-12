@@ -89,5 +89,13 @@ public class ProjectionVisitor<C, R> {
     public R visitEvalProjection(EvalProjection evalProjection, C context) {
         return visitProjection(evalProjection, context);
     }
+
+    public R visitProjectSet(ProjectSetProjection projectSetProjection, C context) {
+        return visitProjection(projectSetProjection, context);
+    }
+
+    public R visitWindowAgg(WindowAggProjection windowAgg, C context) {
+        return visitProjection(windowAgg, context);
+    }
 }
 

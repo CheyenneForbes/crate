@@ -33,6 +33,7 @@ import io.crate.metadata.ColumnIdent;
 import io.crate.metadata.FunctionIdent;
 import io.crate.metadata.FunctionImplementation;
 import io.crate.metadata.FunctionInfo;
+import io.crate.metadata.TransactionContext;
 import io.crate.metadata.Reference;
 import io.crate.metadata.ReferenceIdent;
 import io.crate.metadata.RelationName;
@@ -45,7 +46,7 @@ import io.crate.metadata.table.TableInfo;
 import io.crate.metadata.tablefunctions.TableFunctionImplementation;
 import io.crate.types.CollectionType;
 import io.crate.types.DataType;
-import io.crate.types.DataTypes;
+import io.crate.types.ObjectType;
 import org.elasticsearch.cluster.ClusterState;
 
 import java.util.ArrayList;
@@ -64,7 +65,7 @@ public class UnnestFunction {
     private static final String NAME = "unnest";
     public static final RelationName TABLE_IDENT = new RelationName("", NAME);
 
-    static class UnnestTableFunctionImplementation implements TableFunctionImplementation {
+    static class UnnestTableFunctionImplementation extends TableFunctionImplementation {
 
         private final FunctionInfo info;
 
@@ -78,15 +79,16 @@ public class UnnestFunction {
         }
 
         /**
+         *
          * @param arguments collection of array-literals
          *                  e.g. [ [1, 2], [Marvin, Trillian] ]
          * @return Bucket containing the unnested rows.
          * [ [1, Marvin], [2, Trillian] ]
          */
         @Override
-        public Bucket execute(Collection<? extends Input> arguments) {
+        public Bucket evaluate(TransactionContext txnCtx, Input[] arguments) {
             final List<Object[]> values = extractValues(arguments);
-            final int numCols = arguments.size();
+            final int numCols = arguments.length;
             final int numRows = maxLength(values);
 
             return new Bucket() {
@@ -116,10 +118,10 @@ public class UnnestFunction {
                             }
                             for (int c = 0; c < numCols; c++) {
                                 Object[] columnValues = values.get(c);
-                                if (columnValues.length > currentRow) {
-                                    cells[c] = columnValues[currentRow];
-                                } else {
+                                if (columnValues == null || columnValues.length <= currentRow) {
                                     cells[c] = null;
+                                } else {
+                                    cells[c] = columnValues[currentRow];
                                 }
                             }
                             currentRow++;
@@ -136,13 +138,16 @@ public class UnnestFunction {
             };
         }
 
-        private static List<Object[]> extractValues(Collection<? extends Input> arguments) {
-            List<Object[]> values = new ArrayList<>(arguments.size());
+        private static List<Object[]> extractValues(Input[] arguments) {
+            List<Object[]> values = new ArrayList<>(arguments.length);
             for (Input argument : arguments) {
                 Object value = argument.value();
-                assert value instanceof Object[] : "must be an array because unnest only accepts array arguments";
-                Object[] columnValues = (Object[]) value;
-                values.add(columnValues);
+                if (value == null) {
+                    values.add(null);
+                } else {
+                    assert value instanceof Object[] : "must be an array because unnest only accepts array arguments";
+                    values.add((Object[]) value);
+                }
             }
             return values;
         }
@@ -184,7 +189,7 @@ public class UnnestFunction {
     private static int maxLength(List<Object[]> values) {
         int length = 0;
         for (Object[] value : values) {
-            if (value.length > length) {
+            if (value != null && value.length > length) {
                 length = value.length;
             }
         }
@@ -197,8 +202,9 @@ public class UnnestFunction {
 
             @Override
             public FunctionImplementation getForTypes(List<DataType> dataTypes) throws IllegalArgumentException {
+                DataType returnType = dataTypes.size() == 1 ? CollectionType.unnest(dataTypes.get(0)) : ObjectType.untyped();
                 return new UnnestTableFunctionImplementation(
-                    new FunctionInfo(new FunctionIdent(NAME, dataTypes), DataTypes.OBJECT, FunctionInfo.Type.TABLE));
+                    new FunctionInfo(new FunctionIdent(NAME, dataTypes), returnType, FunctionInfo.Type.TABLE));
             }
         });
     }

@@ -28,11 +28,11 @@ import io.crate.metadata.RelationName;
 import io.crate.metadata.blob.BlobSchemaInfo;
 import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
 import io.crate.testing.SQLExecutor;
-import org.apache.lucene.util.BytesRef;
 import org.hamcrest.Matchers;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.IOException;
 import java.util.Arrays;
 
 import static org.hamcrest.Matchers.contains;
@@ -44,7 +44,7 @@ public class RefreshAnalyzerTest extends CrateDummyClusterServiceUnitTest {
     private SQLExecutor e;
 
     @Before
-    public void prepare() {
+    public void prepare() throws IOException {
         TestingBlobTableInfo myBlobsTableInfo = TableDefinitions.createBlobTable(myBlobsIdent);
         e = SQLExecutor.builder(clusterService).enableDefaultTables().addBlobTable(myBlobsTableInfo).build();
     }
@@ -67,7 +67,7 @@ public class RefreshAnalyzerTest extends CrateDummyClusterServiceUnitTest {
 
     @Test
     public void testRefreshPartition() throws Exception {
-        PartitionName partition = new PartitionName(new RelationName("doc", "parted"), Arrays.asList(new BytesRef("1395874800000")));
+        PartitionName partition = new PartitionName(new RelationName("doc", "parted"), Arrays.asList("1395874800000"));
         RefreshTableAnalyzedStatement analysis = e.analyze("refresh table parted PARTITION (date=1395874800000)");
         assertThat(analysis.indexNames(), contains(".partitioned.parted.04732cpp6ks3ed1o60o30c1g"));
     }

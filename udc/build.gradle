@@ -2,7 +2,8 @@ apply from: "$rootDir/gradle/javaModule.gradle"
 archivesBaseName = 'crate-udc'
 
 dependencies {
-    compile project(':core')
+    compile project(':common')
+    compile project(':licensing')
     testCompile project(':integration-testing')
     testCompile "io.netty:netty-transport:${versions.netty4}"
     testCompile "io.netty:netty-codec-http:${versions.netty4}"

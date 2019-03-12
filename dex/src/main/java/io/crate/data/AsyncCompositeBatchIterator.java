@@ -126,7 +126,7 @@ public class AsyncCompositeBatchIterator<T> implements BatchIterator<T> {
                 }, executor);
                 nestedFutures.add(future);
             }
-        }  else {
+        } else {
             for (BatchIterator<T> iterator: itToLoad) {
                 nestedFutures.add(supplyAsync(() -> iterator.loadNextBatch().toCompletableFuture(), executor));
             }
@@ -160,5 +160,15 @@ public class AsyncCompositeBatchIterator<T> implements BatchIterator<T> {
         for (BatchIterator iterator : iterators) {
             iterator.kill(throwable);
         }
+    }
+
+    @Override
+    public boolean involvesIO() {
+        for (BatchIterator iterator : iterators) {
+            if (iterator.involvesIO()) {
+                return true;
+            }
+        }
+        return false;
     }
 }

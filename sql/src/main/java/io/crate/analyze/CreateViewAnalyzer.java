@@ -24,12 +24,10 @@ package io.crate.analyze;
 
 import io.crate.analyze.relations.QueriedRelation;
 import io.crate.analyze.relations.RelationAnalyzer;
-import io.crate.expression.symbol.Field;
-import io.crate.expression.symbol.format.SymbolPrinter;
-import io.crate.metadata.Functions;
 import io.crate.metadata.RelationName;
-import io.crate.metadata.TransactionContext;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.blob.BlobSchemaInfo;
+import io.crate.sql.SqlFormatter;
 import io.crate.sql.parser.SqlParser;
 import io.crate.sql.tree.CreateView;
 import io.crate.sql.tree.Query;
@@ -37,14 +35,12 @@ import io.crate.sql.tree.Query;
 public final class CreateViewAnalyzer {
 
     private final RelationAnalyzer relationAnalyzer;
-    private final SQLPrinter sqlPrinter;
 
-    CreateViewAnalyzer(Functions functions, RelationAnalyzer relationAnalyzer) {
-        this.sqlPrinter = new SQLPrinter(new SymbolPrinter(functions));
+    CreateViewAnalyzer(RelationAnalyzer relationAnalyzer) {
         this.relationAnalyzer = relationAnalyzer;
     }
 
-    public AnalyzedStatement analyze(CreateView createView, TransactionContext txnCtx) {
+    public AnalyzedStatement analyze(CreateView createView, CoordinatorTxnCtx txnCtx) {
         RelationName name = RelationName.of(createView.name(), txnCtx.sessionContext().searchPath().currentSchema());
         name.ensureValidForRelationCreation();
         if (BlobSchemaInfo.NAME.equals(name.schema())) {
@@ -57,7 +53,7 @@ public final class CreateViewAnalyzer {
         // format->analyze round-trip works.
         String formattedQuery;
         try {
-            formattedQuery = sqlPrinter.format(query);
+            formattedQuery = SqlFormatter.formatSql(createView.query());
             relationAnalyzer.analyzeUnbound((Query) SqlParser.createStatement(formattedQuery), txnCtx, ParamTypeHints.EMPTY);
         } catch (Exception e) {
             throw new UnsupportedOperationException("Query cannot be used in a VIEW: " + createView.query());
@@ -67,7 +63,7 @@ public final class CreateViewAnalyzer {
         // on an outdated cluster check, leading to a potential race condition.
         // The "masterOperation" which will update the clusterState will do a real-time verification
 
-        if (query.fields().stream().map(Field::outputName).distinct().count() != query.fields().size()) {
+        if (query.fields().stream().map(f -> f.path().outputName()).distinct().count() != query.fields().size()) {
             throw new IllegalArgumentException("Query in CREATE VIEW must not have duplicate column names");
         }
         return new CreateViewStmt(name, query, formattedQuery, createView.replaceExisting(), txnCtx.sessionContext().user());

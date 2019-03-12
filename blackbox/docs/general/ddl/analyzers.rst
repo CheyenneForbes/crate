@@ -522,6 +522,22 @@ reverse
 skip
     Controls initial tokens to skip, defaults to 0.
 
+.. _analyzers_char_group:
+
+Char Group Tokenizer
+--------------------
+
+``type=char_group``
+
+Breaks text into terms whenever it encounters a character that is part of a
+predefined set.
+
+.. rubric:: Parameters
+
+tokenize_on_chars
+    A list containing characters to tokenize on.
+
+
 .. _builtin-token-filter:
 
 Built-in Token Filters
@@ -1106,10 +1122,10 @@ scandinavian languages using this folding algorithm.
 
 .. _delimited_payload-tokenfilter:
 
-``delimited_payload_filter``
-----------------------------
+``delimited_payload``
+---------------------
 
-``type='delimited_payload_filter'``
+``type='delimited_payload'``
 
 Split tokens up by delimiter (default ``|``) into the real token being indexed
 and the payload stored additionally into the index. For example
@@ -1222,6 +1238,14 @@ this filter into the ``token_filter`` chain.
 -----------------
 
 A token filter that folds unicode digits to ``0-9``
+
+.. _analyzers_remove_duplicates:
+
+``remove_duplicates``
+---------------------
+
+A token filter that drops identical tokens at the same position.
+
 
 .. _builtin-char-filter:
 

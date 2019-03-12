@@ -22,8 +22,13 @@
 
 package io.crate.expression.eval;
 
+import io.crate.analyze.OrderBy;
+import io.crate.analyze.WindowDefinition;
 import io.crate.analyze.relations.FieldResolver;
+import io.crate.data.Input;
 import io.crate.expression.NestableInput;
+import io.crate.expression.reference.ReferenceResolver;
+import io.crate.expression.scalar.arithmetic.MapFunction;
 import io.crate.expression.symbol.Field;
 import io.crate.expression.symbol.Function;
 import io.crate.expression.symbol.FunctionCopyVisitor;
@@ -31,17 +36,15 @@ import io.crate.expression.symbol.Literal;
 import io.crate.expression.symbol.MatchPredicate;
 import io.crate.expression.symbol.Symbol;
 import io.crate.expression.symbol.Symbols;
+import io.crate.expression.symbol.WindowFunction;
 import io.crate.expression.symbol.format.SymbolFormatter;
-import io.crate.data.Input;
 import io.crate.metadata.FunctionImplementation;
 import io.crate.metadata.Functions;
 import io.crate.metadata.Reference;
 import io.crate.metadata.RowGranularity;
 import io.crate.metadata.TransactionContext;
-import io.crate.expression.reference.ReferenceResolver;
-import io.crate.expression.scalar.arithmetic.MapFunction;
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.elasticsearch.common.logging.Loggers;
 
 import javax.annotation.Nullable;
 import java.util.ArrayList;
@@ -61,7 +64,7 @@ import java.util.Map;
  */
 public class EvaluatingNormalizer {
 
-    private static final Logger logger = Loggers.getLogger(EvaluatingNormalizer.class);
+    private static final Logger logger = LogManager.getLogger(EvaluatingNormalizer.class);
     private final Functions functions;
     private final RowGranularity granularity;
     private final ReferenceResolver<? extends Input<?>> referenceResolver;
@@ -150,16 +153,35 @@ public class EvaluatingNormalizer {
 
         @Override
         public Symbol visitFunction(Function function, TransactionContext context) {
+            return normalizeFunction(function, context);
+        }
+
+        private Symbol normalizeFunction(Function function, TransactionContext context) {
             function = processAndMaybeCopy(function, context);
             FunctionImplementation implementation = functions.getQualified(function.info().ident());
             return implementation.normalizeSymbol(function, context);
         }
+
+        @Override
+        public Symbol visitWindowFunction(WindowFunction function, TransactionContext context) {
+            Function normalizedFunction = (Function) normalizeFunction(function, context);
+            WindowDefinition windowDefinition = function.windowDefinition();
+            OrderBy windowOrderBy = windowDefinition.orderBy();
+            if (windowOrderBy != null) {
+                windowDefinition = new WindowDefinition(
+                    windowDefinition.partitions(),
+                    windowOrderBy.copyAndReplace(s -> process(s, context)),
+                    windowDefinition.windowFrameDefinition()
+                );
+            }
+            return new WindowFunction(normalizedFunction.info(), normalizedFunction.arguments(), windowDefinition);
+        }
     }
 
-    public Symbol normalize(@Nullable Symbol symbol, @Nullable TransactionContext transactionContext) {
+    public Symbol normalize(@Nullable Symbol symbol, @Nullable TransactionContext txnCtx) {
         if (symbol == null) {
             return null;
         }
-        return visitor.process(symbol, transactionContext);
+        return visitor.process(symbol, txnCtx);
     }
 }

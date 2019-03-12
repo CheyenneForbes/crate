@@ -4,14 +4,10 @@
 crash
 crate
 crate-docs-theme
-psycopg2==2.7.5
 tqdm==4.24.0
 sphinx-csv-filter>=0.2.0
 pycodestyle==2.4.0
 zc.customdoctests==1.0.1
-zope.exceptions==4.1.0
-zope.interface==4.4.2
-zope.testrunner==4.7.0
 
 # packages for local dev
 
@@ -22,3 +18,6 @@ sphinx-autobuild==0.6.0
 alabaster>=0.7,<0.8,!=0.7.5
 setuptools<41
 sphinx==1.7.4
+
+# used for dns-discovery tests
+dnslib

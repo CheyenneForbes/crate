@@ -9,7 +9,7 @@ EOF
     exit 1
 fi
 
-CRATE_CLASSPATH=$CRATE_HOME/lib/*:$CRATE_HOME/lib/enterprise/*
+CRATE_CLASSPATH=$CRATE_HOME/lib/*:
 
 if [ "x$CRATE_MIN_MEM" = "x" ]; then
     CRATE_MIN_MEM=256m
@@ -46,8 +46,8 @@ if [ "x$CRATE_USE_IPV4" != "x" ]; then
   JAVA_OPTS="$JAVA_OPTS -Djava.net.preferIPv4Stack=true"
 fi
 
+## GC configuration
 JAVA_OPTS="$JAVA_OPTS -XX:+UseConcMarkSweepGC"
-
 JAVA_OPTS="$JAVA_OPTS -XX:CMSInitiatingOccupancyFraction=75"
 JAVA_OPTS="$JAVA_OPTS -XX:+UseCMSInitiatingOccupancyOnly"
 
@@ -75,6 +75,11 @@ EOF
       JAVA=java
   fi
   JAVA_VERSION=`$JAVA -version 2>&1 | awk '/version/ {gsub(/"/, "", $3); split($3, parts, ".")} END {print (parts[1] == 1 ? parts[2] : parts[1])}'`
+
+  if [ "x$JAVA_VERSION" = "x" ]; then
+    echo 'Java is missing or $JAVA_HOME is not set correctly. Install a JRE or setup $JAVA_HOME'
+    exit 1
+  fi
 
   if [ $JAVA_VERSION -ge 9 ]; then
     JAVA_OPTS="$JAVA_OPTS -Xlog:gc*,gc+age=trace,safepoint:file=${LOGGC}:utctime,pid,tags:filecount=${GC_LOG_FILES},filesize=${GC_LOG_SIZE}"

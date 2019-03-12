@@ -44,6 +44,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
@@ -61,7 +62,7 @@ public class InsertFromSubQueryAnalyzerTest extends CrateDummyClusterServiceUnit
     private SQLExecutor e;
 
     @Before
-    public void prepare() {
+    public void prepare() throws IOException {
         SQLExecutor.Builder builder = SQLExecutor.builder(clusterService).enableDefaultTables();
 
         RelationName usersGeneratedIdent = new RelationName(Schemas.DOC_SCHEMA_NAME, "users_generated");
@@ -124,12 +125,8 @@ public class InsertFromSubQueryAnalyzerTest extends CrateDummyClusterServiceUnit
     @Test
     public void testFromQueryWithSubQueryColumns() throws Exception {
         InsertFromSubQueryAnalyzedStatement analysis =
-            e.analyze("insert into users (" +
-                      "  select id, other_id, name, text, no_index, details, address, " +
-                      "      awesome, counters, friends, tags, bytes, shorts, date, shape, ints, floats " +
-                      "  from users " +
-                      "  where name = 'Trillian'" +
-                      ")");
+            e.analyze("insert into users (id, name) (" +
+                      "  select id, name from users where name = 'Trillian' )");
         assertCompatibleColumns(analysis);
     }
 
@@ -195,67 +192,49 @@ public class InsertFromSubQueryAnalyzerTest extends CrateDummyClusterServiceUnit
 
     @Test
     public void testFromQueryWithOnDuplicateKey() throws Exception {
-        String[] insertStatements = new String[2];
-        insertStatements[0] = "insert into users (id, name) (select id, name from users) " +
-                              "on duplicate key update name = 'Arthur'";
-        insertStatements[1] = "insert into users (id, name) (select id, name from users) " +
-                              "on conflict (id) do update set name = 'Arthur'";
+        var insert = "insert into users (id, name) (select id, name from users) " +
+                     "on conflict (id) do update set name = 'Arthur'";
 
-        for (String insertStatement : insertStatements) {
-            InsertFromSubQueryAnalyzedStatement statement = e.analyze(insertStatement);
+        InsertFromSubQueryAnalyzedStatement statement = e.analyze(insert);
+        Assert.assertThat(statement.onDuplicateKeyAssignments().size(), is(1));
 
-            Assert.assertThat(statement.onDuplicateKeyAssignments().size(), is(1));
-
-            for (Map.Entry<Reference, Symbol> entry : statement.onDuplicateKeyAssignments().entrySet()) {
-                assertThat(entry.getKey(), isReference("name"));
-                assertThat(entry.getValue(), isLiteral("Arthur", StringType.INSTANCE));
-            }
+        for (Map.Entry<Reference, Symbol> entry : statement.onDuplicateKeyAssignments().entrySet()) {
+            assertThat(entry.getKey(), isReference("name"));
+            assertThat(entry.getValue(), isLiteral("Arthur", StringType.INSTANCE));
         }
     }
 
     @Test
     public void testFromQueryWithOnDuplicateKeyParameter() throws Exception {
-        String[] insertStatements = new String[2];
-        insertStatements[0] = "insert into users (id, name) (select id, name from users) " +
-                              "on duplicate key update name = ?";
-        insertStatements[1] = "insert into users (id, name) (select id, name from users) " +
-                              "on conflict (id) do update set name = ?";
+        var insert = "insert into users (id, name) (select id, name from users) " +
+                     "on conflict (id) do update set name = ?";
 
-        for (String insertStatement : insertStatements) {
-            InsertFromSubQueryAnalyzedStatement statement =
-                e.analyze(insertStatement, new Object[]{"Arthur"});
+        InsertFromSubQueryAnalyzedStatement statement = e.analyze(insert, new Object[]{"Arthur"});
 
-            Assert.assertThat(statement.onDuplicateKeyAssignments().size(), is(1));
+        Assert.assertThat(statement.onDuplicateKeyAssignments().size(), is(1));
 
-            for (Map.Entry<Reference, Symbol> entry : statement.onDuplicateKeyAssignments().entrySet()) {
-                assertThat(entry.getKey(), isReference("name"));
-                assertThat(entry.getValue(), isLiteral("Arthur", StringType.INSTANCE));
-            }
+        for (Map.Entry<Reference, Symbol> entry : statement.onDuplicateKeyAssignments().entrySet()) {
+            assertThat(entry.getKey(), isReference("name"));
+            assertThat(entry.getValue(), isLiteral("Arthur", StringType.INSTANCE));
         }
     }
 
     @Test
     public void testFromQueryWithOnDuplicateKeyValues() throws Exception {
-        String[] insertStatements = new String[2];
-        insertStatements[0] = "insert into users (id, name) (select id, name from users) " +
-                              "on duplicate key update name = substr(values (name), 1, 1)";
-        insertStatements[1] = "insert into users (id, name) (select id, name from users) " +
-                              "on conflict (id) do update set name = substr(excluded.name, 1, 1)";
+        var insert = "insert into users (id, name) (select id, name from users) " +
+                     "on conflict (id) do update set name = substr(excluded.name, 1, 1)";
 
-        for (String insertStatement : insertStatements) {
-            InsertFromSubQueryAnalyzedStatement statement = e.analyze(insertStatement);
+        InsertFromSubQueryAnalyzedStatement statement = e.analyze(insert);
+        Assert.assertThat(statement.onDuplicateKeyAssignments().size(), is(1));
 
-            Assert.assertThat(statement.onDuplicateKeyAssignments().size(), is(1));
-
-            for (Map.Entry<Reference, Symbol> entry : statement.onDuplicateKeyAssignments().entrySet()) {
-                assertThat(entry.getKey(), isReference("name"));
-                assertThat(entry.getValue(), isFunction(SubstrFunction.NAME));
-                Function function = (Function) entry.getValue();
-                assertThat(function.arguments().get(0), instanceOf(InputColumn.class));
-                InputColumn inputColumn = (InputColumn) function.arguments().get(0);
-                assertThat(inputColumn.index(), is(1));
-                assertThat(inputColumn.valueType(), instanceOf(StringType.class));
-            }
+        for (Map.Entry<Reference, Symbol> entry : statement.onDuplicateKeyAssignments().entrySet()) {
+            assertThat(entry.getKey(), isReference("name"));
+            assertThat(entry.getValue(), isFunction(SubstrFunction.NAME));
+            Function function = (Function) entry.getValue();
+            assertThat(function.arguments().get(0), instanceOf(InputColumn.class));
+            InputColumn inputColumn = (InputColumn) function.arguments().get(0);
+            assertThat(inputColumn.index(), is(1));
+            assertThat(inputColumn.valueType(), instanceOf(StringType.class));
         }
     }
 
@@ -272,13 +251,6 @@ public class InsertFromSubQueryAnalyzerTest extends CrateDummyClusterServiceUnit
     public void testFromQueryWithUnknownOnDuplicateKeyValues() throws Exception {
         try {
             e.analyze("insert into users (id, name) (select id, name from users) " +
-                      "on duplicate key update name = values (does_not_exist)");
-            fail("Analyze passed without a failure.");
-        } catch (ColumnUnknownException e) {
-            assertThat(e.getMessage(), containsString("Column does_not_exist unknown"));
-        }
-        try {
-            e.analyze("insert into users (id, name) (select id, name from users) " +
                       "on conflict (id) do update set name = excluded.does_not_exist");
             fail("Analyze passed without a failure.");
         } catch (ColumnUnknownException e) {
@@ -288,13 +260,6 @@ public class InsertFromSubQueryAnalyzerTest extends CrateDummyClusterServiceUnit
 
     @Test
     public void testFromQueryWithOnDuplicateKeyPrimaryKeyUpdate() {
-        try {
-            e.analyze("insert into users (id, name) (select 1, 'Arthur') on duplicate key update id = id + 1");
-            fail("Analyze passed without a failure.");
-
-        } catch (ColumnValidationException e) {
-            assertThat(e.getMessage(), containsString("Updating a primary key is not supported"));
-        }
         try {
             e.analyze("insert into users (id, name) (select 1, 'Arthur') on conflict (id) do update set id = id + 1");
             fail("Analyze passed without a failure.");

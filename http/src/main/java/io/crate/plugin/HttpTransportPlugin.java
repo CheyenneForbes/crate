@@ -47,9 +47,7 @@ import org.elasticsearch.plugins.NetworkPlugin;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.rest.RestController;
 import org.elasticsearch.rest.RestHandler;
-import org.elasticsearch.script.ScriptService;
 import org.elasticsearch.threadpool.ThreadPool;
-import org.elasticsearch.watcher.ResourceWatcherService;
 
 import java.nio.file.Path;
 import java.util.Collection;
@@ -59,7 +57,6 @@ import java.util.Map;
 import java.util.function.Supplier;
 import java.util.function.UnaryOperator;
 
-import static io.crate.rest.CrateRestMainAction.ES_API_ENABLED_SETTING;
 import static org.elasticsearch.common.network.NetworkModule.HTTP_TYPE_KEY;
 import static org.elasticsearch.env.Environment.PATH_HOME_SETTING;
 import static org.elasticsearch.http.HttpTransportSettings.SETTING_HTTP_COMPRESSION;
@@ -89,8 +86,6 @@ public class HttpTransportPlugin extends Plugin implements NetworkPlugin, Action
     public Collection<Object> createComponents(Client client,
                                                ClusterService clusterService,
                                                ThreadPool threadPool,
-                                               ResourceWatcherService resourceWatcherService,
-                                               ScriptService scriptService,
                                                NamedXContentRegistry xContentRegistry,
                                                Environment environment,
                                                NodeEnvironment nodeEnvironment,
@@ -101,7 +96,7 @@ public class HttpTransportPlugin extends Plugin implements NetworkPlugin, Action
 
     @Override
     public List<Setting<?>> getSettings() {
-        return Collections.singletonList(ES_API_ENABLED_SETTING);
+        return Collections.emptyList();
     }
 
     @Override

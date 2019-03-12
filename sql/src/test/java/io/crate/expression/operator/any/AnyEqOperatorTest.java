@@ -21,13 +21,15 @@
 
 package io.crate.expression.operator.any;
 
-import com.google.common.collect.ImmutableMap;
 import io.crate.expression.operator.input.ObjectInput;
 import io.crate.expression.scalar.AbstractScalarFunctionsTest;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.FunctionIdent;
 import io.crate.metadata.FunctionInfo;
+import io.crate.metadata.TransactionContext;
 import io.crate.types.ArrayType;
 import io.crate.types.DataTypes;
+import io.crate.types.ObjectType;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -36,14 +38,16 @@ import static io.crate.testing.SymbolMatchers.isLiteral;
 
 public class AnyEqOperatorTest extends AbstractScalarFunctionsTest {
 
+    private TransactionContext txnCtx = CoordinatorTxnCtx.systemTransactionContext();
+
     private Boolean anyEq(Object value, Object arrayExpr) {
         AnyOperator anyOperator = new AnyOperator(
             new FunctionInfo(
-                new FunctionIdent("any_=", Arrays.asList(DataTypes.OBJECT, new ArrayType(DataTypes.OBJECT))),
+                new FunctionIdent("any_=", Arrays.asList(ObjectType.untyped(), new ArrayType(ObjectType.untyped()))),
                 DataTypes.BOOLEAN),
             cmp -> cmp == 0
         );
-        return anyOperator.evaluate(new ObjectInput(value), new ObjectInput(arrayExpr));
+        return anyOperator.evaluate(txnCtx, new ObjectInput(value), new ObjectInput(arrayExpr));
     }
 
     @Test
@@ -51,35 +55,8 @@ public class AnyEqOperatorTest extends AbstractScalarFunctionsTest {
         assertEvaluate("1 = ANY([1])", true);
         assertEvaluate("1 = ANY([2])", false);
 
-        /*
-        below is the same as - but the ExpressionAnalyzer prohibits this currently
         assertEvaluate("{i=1, b=true} = ANY([{i=1, b=true}])", true);
         assertEvaluate("{i=1, b=true} = ANY([{i=2, b=true}])", false);
-        */
-        assertTrue(anyEq(
-            ImmutableMap.<String, Object>builder()
-                .put("int", 1)
-                .put("boolean", true)
-                .build(),
-            new Object[]{
-                ImmutableMap.<String, Object>builder()
-                    .put("int", 1)
-                    .put("boolean", true)
-                    .build()
-            }
-        ));
-        assertFalse(anyEq(
-            ImmutableMap.<String, Object>builder()
-                .put("int", 1)
-                .put("boolean", true)
-                .build(),
-            new Object[]{
-                ImmutableMap.<String, Object>builder()
-                    .put("int", 2)
-                    .put("boolean", false)
-                    .build()
-            }
-        ));
     }
 
     @Test

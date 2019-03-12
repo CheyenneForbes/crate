@@ -26,9 +26,9 @@ import io.crate.data.Input;
 import io.crate.execution.engine.collect.CollectExpression;
 import io.crate.expression.InputFactory;
 import io.crate.metadata.ColumnIdent;
+import io.crate.metadata.TransactionContext;
 import io.crate.metadata.Functions;
 import io.crate.metadata.GeneratedReference;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.xcontent.XContentFactory;
@@ -45,10 +45,10 @@ public final class GeneratedColsFromRawInsertSource implements InsertSourceGen {
     private final Map<ColumnIdent, Input<?>> generatedCols;
     private final List<CollectExpression<Map<String, Object>, ?>> expressions;
 
-    public GeneratedColsFromRawInsertSource(Functions functions, List<GeneratedReference> generatedColumns) {
+    public GeneratedColsFromRawInsertSource(TransactionContext txnCtx, Functions functions, List<GeneratedReference> generatedColumns) {
         InputFactory inputFactory = new InputFactory(functions);
         InputFactory.Context<CollectExpression<Map<String, Object>, ?>> ctx =
-            inputFactory.ctxForRefs(FromSourceRefResolver.INSTANCE);
+            inputFactory.ctxForRefs(txnCtx, FromSourceRefResolver.INSTANCE);
         this.generatedCols = new HashMap<>(generatedColumns.size());
         for (int i = 0; i < generatedColumns.size(); i++) {
             GeneratedReference ref = generatedColumns.get(i);
@@ -63,15 +63,15 @@ public final class GeneratedColsFromRawInsertSource implements InsertSourceGen {
 
     @Override
     public BytesReference generateSource(Object[] values) throws IOException {
-        BytesRef rawSource = (BytesRef) values[0];
-        Map<String, Object>  source = XContentHelper.convertToMap(new BytesArray(rawSource), false, XContentType.JSON).v2();
+        String rawSource = (String) values[0];
+        Map<String, Object> source = XContentHelper.convertToMap(new BytesArray(rawSource), false, XContentType.JSON).v2();
         for (int i = 0; i < expressions.size(); i++) {
             expressions.get(i).setNextRow(source);
         }
         for (Map.Entry<ColumnIdent, Input<?>> entry : generatedCols.entrySet()) {
             source.putIfAbsent(entry.getKey().fqn(), entry.getValue().value());
         }
-        return XContentFactory.jsonBuilder().map(source).bytes();
+        return BytesReference.bytes(XContentFactory.jsonBuilder().map(source));
     }
 
 }

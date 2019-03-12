@@ -27,7 +27,7 @@ import io.crate.data.Row;
 import io.crate.execution.dsl.projection.SourceIndexWriterReturnSummaryProjection;
 import io.crate.execution.engine.collect.CollectExpression;
 import io.crate.expression.InputFactory;
-import org.apache.lucene.util.BytesRef;
+import io.crate.metadata.TransactionContext;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 
 import java.util.Collections;
@@ -53,12 +53,13 @@ public class UpsertResultContext {
         };
     }
 
-    public static UpsertResultContext forReturnSummary(SourceIndexWriterReturnSummaryProjection projection,
+    public static UpsertResultContext forReturnSummary(TransactionContext txnCtx,
+                                                       SourceIndexWriterReturnSummaryProjection projection,
                                                        DiscoveryNode discoveryNode,
                                                        InputFactory inputFactory) {
-        InputFactory.Context<CollectExpression<Row, ?>> ctxSourceInfo = inputFactory.ctxForInputColumns();
+        InputFactory.Context<CollectExpression<Row, ?>> ctxSourceInfo = inputFactory.ctxForInputColumns(txnCtx);
         //noinspection unchecked
-        Input<BytesRef> sourceUriInput = (Input<BytesRef>) ctxSourceInfo.add(projection.sourceUri());
+        Input<String> sourceUriInput = (Input<String>) ctxSourceInfo.add(projection.sourceUri());
         //noinspection unchecked
         Input<String> sourceUriFailureInput = (Input<String>) ctxSourceInfo.add(projection.sourceUriFailure());
         //noinspection unchecked
@@ -73,13 +74,13 @@ public class UpsertResultContext {
     }
 
 
-    private final Input<BytesRef> sourceUriInput;
+    private final Input<String> sourceUriInput;
     private final Input<String> sourceUriFailureInput;
     private final Input<Long> lineNumberInput;
     private final List<? extends CollectExpression<Row, ?>> sourceInfoExpressions;
     private final UpsertResultCollector resultCollector;
 
-    private UpsertResultContext(Input<BytesRef> sourceUriInput,
+    private UpsertResultContext(Input<String> sourceUriInput,
                                 Input<String> sourceUriFailureInput,
                                 Input<Long> lineNumberInput,
                                 List<? extends CollectExpression<Row, ?>> sourceInfoExpressions,
@@ -91,7 +92,7 @@ public class UpsertResultContext {
         this.resultCollector = resultCollector;
     }
 
-    Input<BytesRef> getSourceUriInput() {
+    Input<String> getSourceUriInput() {
         return sourceUriInput;
     }
 

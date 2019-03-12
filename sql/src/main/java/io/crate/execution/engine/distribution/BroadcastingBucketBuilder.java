@@ -23,10 +23,7 @@
 package io.crate.execution.engine.distribution;
 
 import io.crate.Streamer;
-import io.crate.data.Bucket;
 import io.crate.data.Row;
-
-import java.io.IOException;
 
 /**
  * MultiBucketBuilder that returns N buckets where N is the number of buckets specified in the constructor.
@@ -36,7 +33,6 @@ public class BroadcastingBucketBuilder implements MultiBucketBuilder {
 
     private final int numBuckets;
     private final StreamBucket.Builder bucketBuilder;
-    private volatile int size = 0;
 
     public BroadcastingBucketBuilder(Streamer<?>[] streamers, int numBuckets) {
         this.numBuckets = numBuckets;
@@ -45,34 +41,21 @@ public class BroadcastingBucketBuilder implements MultiBucketBuilder {
 
     @Override
     public void add(Row row) {
-        try {
-            synchronized (this) {
-                bucketBuilder.add(row);
-                size++;
-            }
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
+        bucketBuilder.add(row);
     }
 
     @Override
     public int size() {
-        return size;
+        return bucketBuilder.size();
     }
 
     @Override
-    public synchronized void build(Bucket[] buckets) {
+    public void build(StreamBucket[] buckets) {
         assert buckets.length == numBuckets : "length of the provided array must match numBuckets";
-        final Bucket bucket;
-        try {
-            bucket = bucketBuilder.build();
-            bucketBuilder.reset();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
+        StreamBucket bucket = bucketBuilder.build();
+        bucketBuilder.reset();
         for (int i = 0; i < numBuckets; i++) {
             buckets[i] = bucket;
         }
-        size = 0;
     }
 }

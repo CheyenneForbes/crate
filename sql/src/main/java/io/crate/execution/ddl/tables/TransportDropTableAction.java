@@ -25,7 +25,6 @@ package io.crate.execution.ddl.tables;
 import io.crate.execution.ddl.AbstractDDLTransportAction;
 import io.crate.metadata.cluster.DDLClusterStateService;
 import io.crate.metadata.cluster.DropTableClusterStateTaskExecutor;
-import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.ClusterStateTaskExecutor;
@@ -43,7 +42,7 @@ import org.elasticsearch.transport.TransportService;
 @Singleton
 public class TransportDropTableAction extends AbstractDDLTransportAction<DropTableRequest, DropTableResponse> {
 
-    private static final String ACTION_NAME = "crate/sql/table/drop";
+    private static final String ACTION_NAME = "internal:crate:sql/table/drop";
     // Delete index should work by default on both open and closed indices.
     private static IndicesOptions INDICES_OPTIONS = IndicesOptions.fromOptions(false, true, true, true);
 
@@ -54,11 +53,10 @@ public class TransportDropTableAction extends AbstractDDLTransportAction<DropTab
                                     TransportService transportService,
                                     ClusterService clusterService,
                                     ThreadPool threadPool,
-                                    ActionFilters actionFilters,
                                     IndexNameExpressionResolver indexNameExpressionResolver,
                                     MetaDataDeleteIndexService deleteIndexService,
                                     DDLClusterStateService ddlClusterStateService) {
-        super(settings, ACTION_NAME, transportService, clusterService, threadPool, actionFilters,
+        super(settings, ACTION_NAME, transportService, clusterService, threadPool,
             indexNameExpressionResolver, DropTableRequest::new, DropTableResponse::new, DropTableResponse::new, "drop-table");
         executor = new DropTableClusterStateTaskExecutor(indexNameExpressionResolver, deleteIndexService,
             ddlClusterStateService);
@@ -76,6 +74,6 @@ public class TransportDropTableAction extends AbstractDDLTransportAction<DropTab
             indicesOptions = IndicesOptions.lenientExpandOpen();
         }
         return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA_WRITE,
-            indexNameExpressionResolver.concreteIndexNames(state, indicesOptions, request.tableIdent().indexName()));
+            indexNameExpressionResolver.concreteIndexNames(state, indicesOptions, request.tableIdent().indexNameOrAlias()));
     }
 }

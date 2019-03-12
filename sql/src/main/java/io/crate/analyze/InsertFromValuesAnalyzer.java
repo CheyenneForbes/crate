@@ -29,6 +29,10 @@ import io.crate.analyze.relations.DocTableRelation;
 import io.crate.analyze.relations.ExcludedFieldProvider;
 import io.crate.analyze.relations.FieldProvider;
 import io.crate.analyze.relations.NameFieldProvider;
+import io.crate.common.collections.Maps;
+import io.crate.data.Input;
+import io.crate.exceptions.ColumnValidationException;
+import io.crate.execution.dml.upsert.TransportShardUpsertAction;
 import io.crate.expression.eval.EvaluatingNormalizer;
 import io.crate.expression.symbol.Field;
 import io.crate.expression.symbol.Literal;
@@ -36,19 +40,14 @@ import io.crate.expression.symbol.RefReplacer;
 import io.crate.expression.symbol.Symbol;
 import io.crate.expression.symbol.SymbolType;
 import io.crate.expression.symbol.format.SymbolFormatter;
-import io.crate.core.StringUtils;
-import io.crate.core.collections.Maps;
-import io.crate.data.Input;
-import io.crate.exceptions.ColumnValidationException;
-import io.crate.execution.dml.upsert.TransportShardUpsertAction;
 import io.crate.metadata.ColumnIdent;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.Functions;
 import io.crate.metadata.GeneratedReference;
 import io.crate.metadata.Reference;
 import io.crate.metadata.ReferenceToLiteralConverter;
 import io.crate.metadata.RowGranularity;
 import io.crate.metadata.Schemas;
-import io.crate.metadata.TransactionContext;
 import io.crate.metadata.doc.DocTableInfo;
 import io.crate.metadata.table.Operation;
 import io.crate.sql.tree.Assignment;
@@ -79,7 +78,7 @@ import static io.crate.analyze.InsertFromSubQueryAnalyzer.resolveTargetColumns;
 
 class InsertFromValuesAnalyzer extends AbstractInsertAnalyzer {
 
-    private static class ValuesResolver implements io.crate.analyze.ValuesAwareExpressionAnalyzer.ValuesResolver {
+    private static class ValuesResolver implements io.crate.analyze.ValuesResolver {
 
         private final DocTableRelation tableRelation;
         public List<Reference> columns;
@@ -111,7 +110,7 @@ class InsertFromValuesAnalyzer extends AbstractInsertAnalyzer {
     }
 
 
-    public AnalyzedInsertStatement analyze(InsertFromValues insert, ParamTypeHints typeHints, TransactionContext txnCtx) {
+    public AnalyzedInsertStatement analyze(InsertFromValues insert, ParamTypeHints typeHints, CoordinatorTxnCtx txnCtx) {
         if (insert.valuesLists().isEmpty()) {
             throw new IllegalArgumentException("VALUES clause must not be empty");
         }
@@ -182,13 +181,13 @@ class InsertFromValuesAnalyzer extends AbstractInsertAnalyzer {
         }
         Function<ParameterExpression, Symbol> convertParamFunction = analysis.parameterContext();
 
-        ExpressionAnalyzer valuesAwareExpressionAnalyzer = new ValuesAwareExpressionAnalyzer(
+        ExpressionAnalyzer valuesAwareExpressionAnalyzer = new ExpressionAnalyzer(
             functions,
             analysis.transactionContext(),
             convertParamFunction,
             fieldProvider,
-            valuesResolver,
-            duplicateKeyContext.getType());
+            null
+        );
 
         final boolean ignoreDuplicateKeys =
             duplicateKeyContext.getType() == Type.ON_CONFLICT_DO_NOTHING;
@@ -271,7 +270,7 @@ class InsertFromValuesAnalyzer extends AbstractInsertAnalyzer {
                                EvaluatingNormalizer normalizer,
                                ExpressionAnalyzer expressionAnalyzer,
                                ExpressionAnalysisContext expressionAnalysisContext,
-                               TransactionContext transactionContext,
+                               CoordinatorTxnCtx coordinatorTxnCtx,
                                ValuesResolver valuesResolver,
                                ExpressionAnalyzer valuesAwareExpressionAnalyzer,
                                ValuesList node,
@@ -284,7 +283,7 @@ class InsertFromValuesAnalyzer extends AbstractInsertAnalyzer {
         try {
             DocTableInfo tableInfo = statement.tableInfo();
             int numPks = tableInfo.primaryKey().size();
-            Function<List<BytesRef>, String> idFunction =
+            Function<List<String>, String> idFunction =
                 Id.compileWithNullValidation(tableInfo.primaryKey(), tableInfo.clusteredBy());
             if (parameterContext.numBulkParams() > 0) {
                 for (int i = 0; i < parameterContext.numBulkParams(); i++) {
@@ -294,7 +293,7 @@ class InsertFromValuesAnalyzer extends AbstractInsertAnalyzer {
                         normalizer,
                         expressionAnalyzer,
                         expressionAnalysisContext,
-                        transactionContext,
+                        coordinatorTxnCtx,
                         valuesResolver,
                         valuesAwareExpressionAnalyzer,
                         node,
@@ -312,7 +311,7 @@ class InsertFromValuesAnalyzer extends AbstractInsertAnalyzer {
                     normalizer,
                     expressionAnalyzer,
                     expressionAnalysisContext,
-                    transactionContext,
+                    coordinatorTxnCtx,
                     valuesResolver,
                     valuesAwareExpressionAnalyzer,
                     node,
@@ -333,7 +332,7 @@ class InsertFromValuesAnalyzer extends AbstractInsertAnalyzer {
                            EvaluatingNormalizer normalizer,
                            ExpressionAnalyzer expressionAnalyzer,
                            ExpressionAnalysisContext expressionAnalysisContext,
-                           TransactionContext transactionContext,
+                           CoordinatorTxnCtx coordinatorTxnCtx,
                            ValuesResolver valuesResolver,
                            ExpressionAnalyzer valuesAwareExpressionAnalyzer,
                            ValuesList node,
@@ -341,13 +340,13 @@ class InsertFromValuesAnalyzer extends AbstractInsertAnalyzer {
                            InsertFromValuesAnalyzedStatement context,
                            ReferenceToLiteralConverter refToLiteral,
                            int numPrimaryKeys,
-                           Function<List<BytesRef>, String> idFunction,
+                           Function<List<String>, String> idFunction,
                            int bulkIdx) throws IOException {
         DocTableInfo tableInfo = context.tableInfo();
         if (tableInfo.isPartitioned()) {
             context.newPartitionMap();
         }
-        BytesRef[] primaryKeyValues = new BytesRef[numPrimaryKeys];
+        String[] primaryKeyValues = new String[numPrimaryKeys];
         String routingValue = null;
         List<ColumnIdent> primaryKey = tableInfo.primaryKey();
         Object[] insertValues = new Object[node.values().size()];
@@ -358,7 +357,7 @@ class InsertFromValuesAnalyzer extends AbstractInsertAnalyzer {
             Expression expression = node.values().get(i);
             Symbol valuesSymbol = normalizer.normalize(
                 expressionAnalyzer.convert(expression, expressionAnalysisContext),
-                transactionContext);
+                coordinatorTxnCtx);
 
             // implicit type conversion
             Object value;
@@ -419,7 +418,7 @@ class InsertFromValuesAnalyzer extends AbstractInsertAnalyzer {
 
                 Symbol valueSymbol = normalizer.normalize(
                     valuesAwareExpressionAnalyzer.convert(assignment.expression(), expressionAnalysisContext),
-                    transactionContext);
+                    coordinatorTxnCtx);
                 Symbol assignmentExpression = ValueNormalizer.normalizeInputForReference(valueSymbol, columnName,
                     tableRelation.tableInfo());
                 onDupKeyAssignments[i] = assignmentExpression;
@@ -438,7 +437,7 @@ class InsertFromValuesAnalyzer extends AbstractInsertAnalyzer {
             tableRelation,
             context,
             normalizer,
-            transactionContext,
+            coordinatorTxnCtx,
             refToLiteral,
             primaryKeyValues,
             insertValues,
@@ -460,12 +459,12 @@ class InsertFromValuesAnalyzer extends AbstractInsertAnalyzer {
      * Values could be applied in an unordered way, so given the correct column index of the defined primary key
      * definition is very important here.
      */
-    private void addPrimaryKeyValue(int index, Object value, BytesRef[] primaryKeyValues) {
+    private void addPrimaryKeyValue(int index, Object value, String[] primaryKeyValues) {
         if (value == null) {
             throw new IllegalArgumentException("Primary key value must not be NULL");
         }
         assert primaryKeyValues.length > index : "Index of primary key value is greater than the array holding the values";
-        primaryKeyValues[index] = BytesRefs.toBytesRef(value);
+        primaryKeyValues[index] = value.toString();
     }
 
     private String extractRoutingValue(ColumnIdent columnIdent, Object columnValue, InsertFromValuesAnalyzedStatement context) {
@@ -479,7 +478,7 @@ class InsertFromValuesAnalyzer extends AbstractInsertAnalyzer {
         if (columnValue == null) {
             throw new IllegalArgumentException("Clustered by value must not be NULL");
         }
-        return BytesRefs.toString(columnValue);
+        return columnValue.toString();
     }
 
     private Object processPartitionedByValues(final ColumnIdent columnIdent, Object columnValue, InsertFromValuesAnalyzedStatement context) {
@@ -495,7 +494,7 @@ class InsertFromValuesAnalyzer extends AbstractInsertAnalyzer {
 
             for (ColumnIdent partitionIdent : context.tableInfo().partitionedBy()) {
                 if (partitionIdent.getRoot().equals(columnIdent)) {
-                    Object nestedValue = mapValue.remove(StringUtils.PATH_JOINER.join(partitionIdent.path()));
+                    Object nestedValue = mapValue.remove(String.join(".", partitionIdent.path()));
                     if (nestedValue instanceof BytesRef) {
                         nestedValue = ((BytesRef) nestedValue).utf8ToString();
                     }
@@ -519,8 +518,8 @@ class InsertFromValuesAnalyzer extends AbstractInsertAnalyzer {
         private final DocTableRelation tableRelation;
         private final InsertFromValuesAnalyzedStatement analyzedStatement;
         private final ReferenceToLiteralConverter refToLiteral;
-        private final TransactionContext transactionContext;
-        private final BytesRef[] primaryKeyValues;
+        private final CoordinatorTxnCtx coordinatorTxnCtx;
+        private final String[] primaryKeyValues;
         private final EvaluatingNormalizer normalizer;
 
         private Object[] insertValues;
@@ -530,14 +529,14 @@ class InsertFromValuesAnalyzer extends AbstractInsertAnalyzer {
         private GeneratedExpressionContext(DocTableRelation tableRelation,
                                            InsertFromValuesAnalyzedStatement analyzedStatement,
                                            EvaluatingNormalizer normalizer,
-                                           TransactionContext transactionContext,
+                                           CoordinatorTxnCtx coordinatorTxnCtx,
                                            ReferenceToLiteralConverter refToLiteral,
-                                           BytesRef[] primaryKeyValues,
+                                           String[] primaryKeyValues,
                                            Object[] insertValues,
                                            @Nullable String routingValue) {
             this.tableRelation = tableRelation;
             this.analyzedStatement = analyzedStatement;
-            this.transactionContext = transactionContext;
+            this.coordinatorTxnCtx = coordinatorTxnCtx;
             this.primaryKeyValues = primaryKeyValues;
             this.insertValues = insertValues;
             this.routingValue = routingValue;
@@ -551,7 +550,7 @@ class InsertFromValuesAnalyzer extends AbstractInsertAnalyzer {
         List<ColumnIdent> primaryKey = context.analyzedStatement.tableInfo().primaryKey();
         for (GeneratedReference reference : context.tableRelation.tableInfo().generatedColumns()) {
             Symbol valueSymbol = RefReplacer.replaceRefs(reference.generatedExpression(), context.refToLiteral);
-            valueSymbol = context.normalizer.normalize(valueSymbol, context.transactionContext);
+            valueSymbol = context.normalizer.normalize(valueSymbol, context.coordinatorTxnCtx);
             if (valueSymbol.symbolType() == SymbolType.LITERAL) {
                 Object value = ((Input) valueSymbol).value();
                 if (primaryKey.contains(reference.column())) {

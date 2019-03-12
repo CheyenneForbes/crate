@@ -24,18 +24,17 @@ package io.crate.expression.scalar;
 
 import io.crate.data.Input;
 import io.crate.metadata.BaseFunctionResolver;
-import io.crate.metadata.functions.params.FuncParams;
 import io.crate.metadata.FunctionIdent;
 import io.crate.metadata.FunctionImplementation;
 import io.crate.metadata.FunctionInfo;
 import io.crate.metadata.Scalar;
+import io.crate.metadata.TransactionContext;
+import io.crate.metadata.functions.params.FuncParams;
 import io.crate.metadata.functions.params.Param;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
 import io.crate.types.ObjectType;
 import io.crate.types.StringType;
-import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.common.lucene.BytesRefs;
 
 import java.util.List;
 import java.util.Locale;
@@ -49,7 +48,7 @@ public class SubscriptObjectFunction extends Scalar<Object, Map> {
     public static void register(ScalarFunctionModule module) {
         module.register(NAME,
             new BaseFunctionResolver(
-                FuncParams.builder(Param.of(ObjectType.INSTANCE), Param.of(StringType.INSTANCE)).build()
+                FuncParams.builder(Param.of(ObjectType.untyped()), Param.of(StringType.INSTANCE)).build()
             ) {
                 @Override
                 public FunctionImplementation getForTypes(List<DataType> dataTypes) throws IllegalArgumentException {
@@ -70,20 +69,20 @@ public class SubscriptObjectFunction extends Scalar<Object, Map> {
     }
 
     @Override
-    public Object evaluate(Input[] args) {
+    public Object evaluate(TransactionContext txnCtx, Input[] args) {
         assert args.length == 2 : "invalid number of arguments";
         return evaluate(args[0].value(), args[1].value());
     }
 
-    private Object evaluate(Object element, Object key) {
+    private static Object evaluate(Object element, Object key) {
         if (element == null || key == null) {
             return null;
         }
         assert element instanceof Map : "first argument must be of type Map";
-        assert key instanceof BytesRef : "second argument must be of type BytesRef";
+        assert key instanceof String : "second argument must be of type String";
 
         Map m = (Map) element;
-        String k = BytesRefs.toString(key);
+        String k = (String) key;
         if (!m.containsKey(k)) {
             throw new IllegalArgumentException(String.format(Locale.ENGLISH, "The object does not contain [%s] key", k));
         }

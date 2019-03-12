@@ -35,24 +35,20 @@ import io.crate.metadata.doc.DocTableInfo;
 import io.crate.metadata.table.ShardedTable;
 import io.crate.sql.parser.SqlParser;
 import io.crate.sql.tree.Statement;
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Provider;
 import org.elasticsearch.common.inject.Singleton;
-import org.elasticsearch.common.logging.Loggers;
-import org.elasticsearch.common.lucene.BytesRefs;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.rest.RestStatus;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -117,16 +113,16 @@ public class TableHealthService extends AbstractComponent {
                 }
                 RelationName ident = tableInfo.ident();
                 TableHealth tableHealth = new TableHealth(
-                    new BytesRef(ident.name()), new BytesRef(ident.schema()), null, TableHealth.Health.RED, -1, -1);
+                    ident.name(), ident.schema(), null, TableHealth.Health.RED, -1, -1);
                 return Stream.of(tableHealth);
             })::iterator;
     }
 
     private static Stream<TableHealth> healthFromPartitions(RelationName table, Stream<PartitionName> partitions) {
-        BytesRef tableName = new BytesRef(table.name());
-        BytesRef tableSchema = new BytesRef(table.schema());
+        String tableName = table.name();
+        String tableSchema = table.schema();
         return partitions
-            .map(pn -> new TableHealth(tableName, tableSchema, new BytesRef(pn.ident()), TableHealth.Health.RED, -1, -1));
+            .map(pn -> new TableHealth(tableName, tableSchema, pn.ident(), TableHealth.Health.RED, -1, -1));
     }
 
     private Session session() {
@@ -137,23 +133,25 @@ public class TableHealthService extends AbstractComponent {
     }
 
     @VisibleForTesting
-    List<TableHealth> buildTablesHealth(Map<TablePartitionIdent, ShardsInfo> tables) {
-        List<TableHealth> tableHealthList = new ArrayList<>(tables.size());
-        for (Map.Entry<TablePartitionIdent, ShardsInfo> entry : tables.entrySet()) {
-            TablePartitionIdent ident = entry.getKey();
-            ShardsInfo shardsInfo = entry.getValue();
-            RelationName relationName = new RelationName(
-                BytesRefs.toString(ident.tableSchema), BytesRefs.toString(ident.tableName));
-            ShardedTable tableInfo;
-            try {
-                tableInfo = schemas.getTableInfo(relationName);
-            } catch (RelationUnknown e) {
-                continue;
-            }
+    Iterable<TableHealth> buildTablesHealth(Map<TablePartitionIdent, ShardsInfo> tables) {
+        return () -> tables.entrySet().stream()
+            .map(this::tableHealthFromEntry)
+            .filter(Objects::nonNull)
+            .iterator();
+    }
 
-            tableHealthList.add(calculateHealth(ident, shardsInfo, tableInfo.numberOfShards()));
+
+    private TableHealth tableHealthFromEntry(Map.Entry<TablePartitionIdent, ShardsInfo> entry) {
+        TablePartitionIdent ident = entry.getKey();
+        ShardsInfo shardsInfo = entry.getValue();
+        RelationName relationName = new RelationName(ident.tableSchema, ident.tableName);
+        ShardedTable tableInfo;
+        try {
+            tableInfo = schemas.getTableInfo(relationName);
+        } catch (RelationUnknown e) {
+            return null;
         }
-        return tableHealthList;
+        return calculateHealth(ident, shardsInfo, tableInfo.numberOfShards());
     }
 
     @VisibleForTesting
@@ -186,9 +184,6 @@ public class TableHealthService extends AbstractComponent {
                                  boolean primary,
                                  long shardCount,
                                  @Nullable String relocatingNode) {
-        if (primary) {
-            shardsInfo.primaries += shardCount;
-        }
         if (isActiveShard(routingState) && primary) {
             shardsInfo.activePrimaries += shardCount;
         } else if (routingState.equalsIgnoreCase("UNASSIGNED")) {
@@ -200,7 +195,7 @@ public class TableHealthService extends AbstractComponent {
 
     private static class HealthResultReceiver implements ResultReceiver {
 
-        private static final Logger LOGGER = Loggers.getLogger(TableHealthService.HealthResultReceiver.class);
+        private static final Logger LOGGER = LogManager.getLogger(TableHealthService.HealthResultReceiver.class);
 
         private final CompletableFuture<Map<TablePartitionIdent, ShardsInfo>> result;
         private final Map<TablePartitionIdent, ShardsInfo> tables = new HashMap<>();
@@ -212,11 +207,11 @@ public class TableHealthService extends AbstractComponent {
         @Override
         public void setNextRow(Row row) {
             TablePartitionIdent ident = new TablePartitionIdent(
-                BytesRefs.toBytesRef(row.get(0)), BytesRefs.toBytesRef(row.get(1)), BytesRefs.toBytesRef(row.get(2)));
+                (String) row.get(0), (String) row.get(1), (String) row.get(2));
             ShardsInfo shardsInfo = tables.getOrDefault(ident, new ShardsInfo());
-            String routingState = BytesRefs.toString(row.get(3));
+            String routingState = (String) row.get(3);
             boolean primary = (boolean) row.get(4);
-            String relocatingNode = BytesRefs.toString(row.get(5));
+            String relocatingNode = (String) row.get(5);
             long cnt = (long) row.get(6);
 
             collectShardInfo(shardsInfo, routingState, primary, cnt, relocatingNode);
@@ -246,12 +241,12 @@ public class TableHealthService extends AbstractComponent {
 
     @VisibleForTesting
     static class TablePartitionIdent {
-        private final BytesRef tableName;
-        private final BytesRef tableSchema;
+        private final String tableName;
+        private final String tableSchema;
         @Nullable
-        private final BytesRef partitionIdent;
+        private final String partitionIdent;
 
-        TablePartitionIdent(BytesRef tableName, BytesRef tableSchema, @Nullable BytesRef partitionIdent) {
+        TablePartitionIdent(String tableName, String tableSchema, @Nullable String partitionIdent) {
             this.tableName = tableName;
             this.tableSchema = tableSchema;
             this.partitionIdent = partitionIdent;
@@ -276,7 +271,6 @@ public class TableHealthService extends AbstractComponent {
     @VisibleForTesting
     static class ShardsInfo {
         long activePrimaries = 0;
-        long primaries = 0;
         long unassigned = 0;
         long replicating = 0;
     }

@@ -28,23 +28,26 @@ import io.crate.data.RowConsumer;
 import io.crate.exceptions.SQLExceptions;
 import io.crate.execution.jobs.kill.KillJobsRequest;
 import io.crate.execution.jobs.kill.TransportKillJobsNodeAction;
+import io.crate.execution.support.ThreadPools;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.common.logging.Loggers;
+import org.apache.logging.log4j.LogManager;
 
 import javax.annotation.Nullable;
 import java.util.Collections;
 import java.util.UUID;
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 class InterceptingRowConsumer implements RowConsumer {
 
-    private static final Logger LOGGER = Loggers.getLogger(InterceptingRowConsumer.class);
+    private static final Logger LOGGER = LogManager.getLogger(InterceptingRowConsumer.class);
 
     private final AtomicInteger consumerInvokedAndJobInitialized = new AtomicInteger(2);
     private final UUID jobId;
     private final RowConsumer consumer;
+    private final Executor executor;
     private final TransportKillJobsNodeAction transportKillJobsNodeAction;
     private final AtomicBoolean consumerAccepted = new AtomicBoolean(false);
 
@@ -54,9 +57,11 @@ class InterceptingRowConsumer implements RowConsumer {
     InterceptingRowConsumer(UUID jobId,
                             RowConsumer consumer,
                             InitializationTracker jobsInitialized,
+                            Executor executor,
                             TransportKillJobsNodeAction transportKillJobsNodeAction) {
         this.jobId = jobId;
         this.consumer = consumer;
+        this.executor = executor;
         this.transportKillJobsNodeAction = transportKillJobsNodeAction;
         jobsInitialized.future.whenComplete((o, f) -> tryForwardResult(f));
     }
@@ -78,7 +83,7 @@ class InterceptingRowConsumer implements RowConsumer {
         }
         if (failure == null) {
             assert iterator != null : "iterator must be present";
-            consumer.accept(iterator, null);
+            ThreadPools.forceExecute(executor, () -> consumer.accept(iterator, null));
         } else {
             transportKillJobsNodeAction.broadcast(
                 new KillJobsRequest(Collections.singletonList(jobId)), new ActionListener<Long>() {

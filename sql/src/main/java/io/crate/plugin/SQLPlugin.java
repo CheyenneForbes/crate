@@ -22,7 +22,6 @@
 package io.crate.plugin;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Lists;
 import io.crate.action.sql.SQLOperations;
 import io.crate.analyze.repositories.RepositorySettingsModule;
 import io.crate.auth.AuthSettings;
@@ -33,6 +32,7 @@ import io.crate.execution.TransportExecutorModule;
 import io.crate.execution.engine.aggregation.impl.AggregationImplModule;
 import io.crate.execution.engine.collect.CollectOperationModule;
 import io.crate.execution.engine.collect.files.FileCollectModule;
+import io.crate.execution.engine.window.WindowFunctionModule;
 import io.crate.execution.jobs.JobModule;
 import io.crate.execution.jobs.TasksService;
 import io.crate.execution.jobs.transport.NodeDisconnectJobMonitorService;
@@ -44,15 +44,13 @@ import io.crate.expression.reference.sys.cluster.SysClusterExpressionModule;
 import io.crate.expression.scalar.ScalarFunctionModule;
 import io.crate.expression.tablefunctions.TableFunctionModule;
 import io.crate.expression.udf.UserDefinedFunctionsMetaData;
-import io.crate.ingestion.IngestionModules;
-import io.crate.ingestion.IngestionService;
 import io.crate.lucene.ArrayMapperService;
+import io.crate.metadata.DanglingArtifactsService;
 import io.crate.metadata.MetaDataModule;
 import io.crate.metadata.Schemas;
 import io.crate.metadata.blob.MetaDataBlobModule;
 import io.crate.metadata.information.MetaDataInformationModule;
 import io.crate.metadata.pgcatalog.PgCatalogModule;
-import io.crate.metadata.rule.ingest.IngestRulesMetaData;
 import io.crate.metadata.settings.AnalyzerSettings;
 import io.crate.metadata.settings.CrateSettings;
 import io.crate.metadata.sys.MetaDataSysModule;
@@ -97,33 +95,25 @@ import java.util.function.UnaryOperator;
 
 import static com.google.common.collect.Lists.newArrayList;
 import static io.crate.settings.SharedSettings.ENTERPRISE_LICENSE_SETTING;
-import static org.elasticsearch.action.support.AutoCreateIndex.AUTO_CREATE_INDEX_SETTING;
 
 public class SQLPlugin extends Plugin implements ActionPlugin, MapperPlugin, ClusterPlugin {
 
     private final Settings settings;
     private final UserExtension userExtension;
-    private final IngestionModules ingestionModules;
 
     @SuppressWarnings("WeakerAccess") // must be public for pluginLoader
     public SQLPlugin(Settings settings) {
         this.settings = settings;
         if (ENTERPRISE_LICENSE_SETTING.setting().get(settings)) {
             userExtension = EnterpriseLoader.loadSingle(UserExtension.class);
-            ingestionModules = EnterpriseLoader.loadSingle(IngestionModules.class);
         } else {
             userExtension = null;
-            ingestionModules = null;
         }
     }
 
     @Override
     public Settings additionalSettings() {
         Settings.Builder settingsBuilder = Settings.builder();
-
-        // Never allow implicit creation of an index, even on partitioned tables we are creating
-        // partitions explicitly
-        settingsBuilder.put(AUTO_CREATE_INDEX_SETTING.getKey(), false);
 
         // Set maxClauses to 8192 for Boolean queries so that we allow the != ANY()
         // to operate on arrays with more than 1024 elements which is the ES default value for this setting.
@@ -157,11 +147,6 @@ public class SQLPlugin extends Plugin implements ActionPlugin, MapperPlugin, Clu
         settings.add(SslConfigSettings.SSL_KEYSTORE_PASSWORD.setting());
         settings.add(SslConfigSettings.SSL_KEYSTORE_KEY_PASSWORD.setting());
 
-        // Settings for ingestion implementations
-        if (ingestionModules != null) {
-            settings.addAll(ingestionModules.getSettings());
-        }
-
         // also add CrateSettings
         for (CrateSetting crateSetting : CrateSettings.CRATE_CLUSTER_SETTINGS) {
             settings.add(crateSetting.setting());
@@ -172,20 +157,14 @@ public class SQLPlugin extends Plugin implements ActionPlugin, MapperPlugin, Clu
 
     @Override
     public Collection<Class<? extends LifecycleComponent>> getGuiceServiceClasses() {
-        List<Class<? extends LifecycleComponent>> serviceClasses = Lists.newArrayList(
+        return ImmutableList.of(
             DecommissioningService.class,
             NodeDisconnectJobMonitorService.class,
             PostgresNetty.class,
             TasksService.class,
             Schemas.class,
             ArrayMapperService.class,
-            IngestionService.class);
-
-        if (ingestionModules != null) {
-            serviceClasses.addAll(ingestionModules.getServiceClasses());
-        }
-
-        return ImmutableList.copyOf(serviceClasses);
+            DanglingArtifactsService.class);
     }
 
     @Override
@@ -210,6 +189,7 @@ public class SQLPlugin extends Plugin implements ActionPlugin, MapperPlugin, Clu
         modules.add(new AggregationImplModule());
         modules.add(new ScalarFunctionModule());
         modules.add(new TableFunctionModule());
+        modules.add(new WindowFunctionModule());
         modules.add(new BulkModule());
         modules.add(new SysChecksModule());
         modules.add(new SysNodeChecksModule());
@@ -218,10 +198,6 @@ public class SQLPlugin extends Plugin implements ActionPlugin, MapperPlugin, Clu
             modules.addAll(userExtension.getModules(settings));
         } else {
             modules.add(new UserFallbackModule());
-        }
-
-        if (ingestionModules != null) {
-            modules.addAll(ingestionModules.getModules());
         }
         return modules;
     }
@@ -246,11 +222,6 @@ public class SQLPlugin extends Plugin implements ActionPlugin, MapperPlugin, Clu
         ));
         entries.add(new NamedWriteableRegistry.Entry(
             MetaData.Custom.class,
-            IngestRulesMetaData.TYPE,
-            IngestRulesMetaData::new
-        ));
-        entries.add(new NamedWriteableRegistry.Entry(
-            MetaData.Custom.class,
             ViewsMetaData.TYPE,
             ViewsMetaData::new
         ));
@@ -258,11 +229,6 @@ public class SQLPlugin extends Plugin implements ActionPlugin, MapperPlugin, Clu
             NamedDiff.class,
             UserDefinedFunctionsMetaData.TYPE,
             in -> UserDefinedFunctionsMetaData.readDiffFrom(MetaData.Custom.class, UserDefinedFunctionsMetaData.TYPE, in)
-        ));
-        entries.add(new NamedWriteableRegistry.Entry(
-            NamedDiff.class,
-            IngestRulesMetaData.TYPE,
-            in -> IngestRulesMetaData.readDiffFrom(MetaData.Custom.class, IngestRulesMetaData.TYPE, in)
         ));
         entries.add(new NamedWriteableRegistry.Entry(
             NamedDiff.class,
@@ -285,14 +251,10 @@ public class SQLPlugin extends Plugin implements ActionPlugin, MapperPlugin, Clu
         ));
         entries.add(new NamedXContentRegistry.Entry(
             MetaData.Custom.class,
-            new ParseField(IngestRulesMetaData.TYPE),
-            IngestRulesMetaData::fromXContent
-        ));
-        entries.add(new NamedXContentRegistry.Entry(
-            MetaData.Custom.class,
             new ParseField(ViewsMetaData.TYPE),
             ViewsMetaData::fromXContent
         ));
+
         if (userExtension != null) {
             entries.addAll(userExtension.getNamedXContent());
         }
@@ -301,11 +263,11 @@ public class SQLPlugin extends Plugin implements ActionPlugin, MapperPlugin, Clu
 
     @Override
     public UnaryOperator<IndexMetaData> getIndexMetaDataUpgrader() {
-        return new MetaDataIndexUpgrader(settings);
+        return new MetaDataIndexUpgrader();
     }
 
     @Override
     public UnaryOperator<Map<String, IndexTemplateMetaData>> getIndexTemplateMetaDataUpgrader() {
-        return new IndexTemplateUpgrader(settings);
+        return new IndexTemplateUpgrader();
     }
 }

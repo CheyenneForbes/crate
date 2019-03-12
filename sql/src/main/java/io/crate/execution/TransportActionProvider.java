@@ -22,13 +22,14 @@
 
 package io.crate.execution;
 
+import io.crate.cluster.decommission.TransportDecommissionNodeAction;
 import io.crate.execution.dml.delete.TransportShardDeleteAction;
 import io.crate.execution.dml.upsert.TransportShardUpsertAction;
-import io.crate.execution.engine.profile.TransportCollectProfileNodeAction;
-import io.crate.execution.jobs.transport.TransportJobAction;
 import io.crate.execution.engine.fetch.TransportFetchNodeAction;
+import io.crate.execution.engine.profile.TransportCollectProfileNodeAction;
 import io.crate.execution.jobs.kill.TransportKillAllNodeAction;
 import io.crate.execution.jobs.kill.TransportKillJobsNodeAction;
+import io.crate.execution.jobs.transport.TransportJobAction;
 import org.elasticsearch.action.admin.cluster.settings.TransportClusterUpdateSettingsAction;
 import org.elasticsearch.action.admin.cluster.snapshots.create.TransportCreateSnapshotAction;
 import org.elasticsearch.action.admin.cluster.snapshots.delete.TransportDeleteSnapshotAction;
@@ -60,6 +61,8 @@ public class TransportActionProvider {
     private final Provider<TransportRestoreSnapshotAction> transportRestoreSnapshotActionProvider;
     private final Provider<TransportGetSnapshotsAction> transportGetSnapshotsActionProvider;
 
+    private final Provider<TransportDecommissionNodeAction> transportDecommissionNodeActionProvider;
+
     @Inject
     public TransportActionProvider(Provider<TransportFetchNodeAction> transportFetchNodeActionProvider,
                                    Provider<TransportCollectProfileNodeAction> transportCollectProfileNodeActionProvider,
@@ -74,7 +77,8 @@ public class TransportActionProvider {
                                    Provider<TransportDeleteSnapshotAction> transportDeleteSnapshotActionProvider,
                                    Provider<TransportCreateSnapshotAction> transportCreateSnapshotActionProvider,
                                    Provider<TransportRestoreSnapshotAction> transportRestoreSnapshotActionProvider,
-                                   Provider<TransportGetSnapshotsAction> transportGetSnapshotsActionPovider) {
+                                   Provider<TransportGetSnapshotsAction> transportGetSnapshotsActionPovider,
+                                   Provider<TransportDecommissionNodeAction> transportDecommissionNodeActionProvider) {
         this.transportDeleteIndexActionProvider = transportDeleteIndexActionProvider;
         this.transportClusterUpdateSettingsActionProvider = transportClusterUpdateSettingsActionProvider;
         this.transportShardDeleteActionProvider = transportShardDeleteActionProvider;
@@ -89,6 +93,7 @@ public class TransportActionProvider {
         this.transportCreateSnapshotActionProvider = transportCreateSnapshotActionProvider;
         this.transportRestoreSnapshotActionProvider = transportRestoreSnapshotActionProvider;
         this.transportGetSnapshotsActionProvider = transportGetSnapshotsActionPovider;
+        this.transportDecommissionNodeActionProvider = transportDecommissionNodeActionProvider;
     }
 
     public TransportCreatePartitionsAction transportBulkCreateIndicesAction() {
@@ -147,4 +152,7 @@ public class TransportActionProvider {
         return transportGetSnapshotsActionProvider.get();
     }
 
+    public TransportDecommissionNodeAction transportDecommissionNodeAction() {
+        return transportDecommissionNodeActionProvider.get();
+    }
 }

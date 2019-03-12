@@ -41,6 +41,7 @@ import io.crate.types.GeoPointType;
 import io.crate.types.IntegerType;
 import io.crate.types.IpType;
 import io.crate.types.LongType;
+import io.crate.types.ObjectType;
 import io.crate.types.SetType;
 import io.crate.types.ShortType;
 import io.crate.types.StringType;
@@ -55,7 +56,7 @@ import static io.crate.types.CollectionType.unnest;
 
 public class LuceneReferenceResolver implements ReferenceResolver<LuceneCollectorExpression<?>> {
 
-    private static final Set<DataType<?>> NO_FIELD_TYPES = ImmutableSet.of(DataTypes.OBJECT, DataTypes.GEO_SHAPE);
+    private static final Set<DataType<?>> NO_FIELD_TYPES = ImmutableSet.of(ObjectType.untyped(), DataTypes.GEO_SHAPE);
     private final FieldTypeLookup fieldTypeLookup;
     private final IndexSettings indexSettings;
 
@@ -77,16 +78,8 @@ public class LuceneReferenceResolver implements ReferenceResolver<LuceneCollecto
                 throw new UnsupportedFeatureException("_raw expression does not support subscripts: " + column);
 
             case DocSysColumns.Names.UID:
-                if (indexSettings.isSingleType()) {
-                    return new IdCollectorExpression(); // _uid == _id
-                }
-                return new UidCollectorExpression();
-
             case DocSysColumns.Names.ID:
-                if (indexSettings.isSingleType()) {
-                    return new IdCollectorExpression();
-                }
-                return new IdFromUidCollectorExpression();
+                return new IdCollectorExpression();
 
             case DocSysColumns.Names.DOC:
                 return DocCollectorExpression.create(ref);

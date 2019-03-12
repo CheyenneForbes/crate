@@ -29,12 +29,12 @@ import io.crate.metadata.FunctionIdent;
 import io.crate.metadata.FunctionImplementation;
 import io.crate.metadata.FunctionInfo;
 import io.crate.metadata.FunctionResolver;
+import io.crate.metadata.TransactionContext;
 import io.crate.metadata.Scalar;
 import io.crate.metadata.functions.params.FuncParams;
 import io.crate.metadata.functions.params.Param;
 import io.crate.types.DataType;
-import io.crate.types.DataTypes;
-import org.elasticsearch.common.lucene.BytesRefs;
+import io.crate.types.ObjectType;
 
 import java.util.HashMap;
 import java.util.List;
@@ -72,7 +72,7 @@ public class MapFunction extends Scalar<Object, Object> {
     }
 
     public static FunctionInfo createInfo(List<DataType> dataTypes) {
-        return new FunctionInfo(new FunctionIdent(NAME, dataTypes), DataTypes.OBJECT);
+        return new FunctionInfo(new FunctionIdent(NAME, dataTypes), ObjectType.untyped());
     }
 
     @Override
@@ -82,10 +82,10 @@ public class MapFunction extends Scalar<Object, Object> {
 
     @SafeVarargs
     @Override
-    public final Object evaluate(Input<Object>... args) {
+    public final Object evaluate(TransactionContext txnCtx, Input<Object>... args) {
         Map<String, Object> m = new HashMap<>(args.length / 2, 1.0f);
         for (int i = 0; i < args.length - 1; i += 2) {
-            m.put(BytesRefs.toBytesRef(args[i].value()).utf8ToString(), args[i + 1].value());
+            m.put((String) args[i].value(), args[i + 1].value());
         }
         return m;
     }

@@ -53,7 +53,7 @@ public class AlterTableAnalyzer {
         DocTableInfo docTableInfo = (DocTableInfo) schemas.resolveTableInfo(table.getName(), Operation.ALTER_BLOCKS,
             sessionContext.searchPath());
         PartitionName partitionName = createPartitionName(table.partitionProperties(), docTableInfo, parameters);
-        TableParameterInfo tableParameterInfo = getTableParameterInfo(table, docTableInfo, partitionName);
+        TableParameterInfo tableParameterInfo = getTableParameterInfo(table, partitionName);
         TableParameter tableParameter = getTableParameter(node, parameters, tableParameterInfo);
         maybeRaiseBlockedException(docTableInfo, tableParameter.settings());
         return new AlterTableAnalyzedStatement(docTableInfo, partitionName, tableParameter, table.excludePartitions());
@@ -85,16 +85,12 @@ public class AlterTableAnalyzer {
     }
 
     private static TableParameterInfo getTableParameterInfo(Table table,
-                                                            DocTableInfo tableInfo,
                                                             @Nullable PartitionName partitionName) {
-        TableParameterInfo tableParameterInfo = tableInfo.tableParameterInfo();
         if (partitionName == null) {
-            return tableParameterInfo;
+            return TableParameterInfo.TABLE_ALTER_PARAMETER_INFO;
         }
-        assert tableParameterInfo instanceof PartitionedTableParameterInfo :
-            "tableParameterInfo must be " + PartitionedTableParameterInfo.class.getSimpleName();
         assert !table.excludePartitions() : "Alter table ONLY not supported when using a partition";
-        return ((PartitionedTableParameterInfo) tableParameterInfo).partitionTableSettingsInfo();
+        return TableParameterInfo.PARTITION_PARAMETER_INFO;
     }
 
     private static TableParameter getTableParameter(AlterTable node, Row parameters, TableParameterInfo tableParameterInfo) {

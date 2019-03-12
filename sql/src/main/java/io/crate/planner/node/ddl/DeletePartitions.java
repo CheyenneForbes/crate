@@ -29,6 +29,7 @@ import io.crate.data.Row1;
 import io.crate.data.RowConsumer;
 import io.crate.execution.support.OneRowActionListener;
 import io.crate.expression.symbol.Symbol;
+import io.crate.metadata.TransactionContext;
 import io.crate.metadata.Functions;
 import io.crate.metadata.IndexParts;
 import io.crate.metadata.PartitionName;
@@ -38,7 +39,6 @@ import io.crate.planner.Plan;
 import io.crate.planner.PlannerContext;
 import io.crate.planner.operators.SubQueryResults;
 import io.crate.types.DataTypes;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest;
 import org.elasticsearch.action.support.IndicesOptions;
 
@@ -66,26 +66,26 @@ public class DeletePartitions implements Plan {
     }
 
     @Override
-    public void execute(DependencyCarrier executor,
-                        PlannerContext plannerContext,
-                        RowConsumer consumer,
-                        Row params,
-                        SubQueryResults subQueryResults) {
-
-        ArrayList<String> indexNames = getIndices(executor.functions(), params, subQueryResults);
+    public void executeOrFail(DependencyCarrier dependencies,
+                              PlannerContext plannerContext,
+                              RowConsumer consumer,
+                              Row params,
+                              SubQueryResults subQueryResults) {
+        ArrayList<String> indexNames = getIndices(
+            plannerContext.transactionContext(), dependencies.functions(), params, subQueryResults);
         DeleteIndexRequest request = new DeleteIndexRequest(indexNames.toArray(new String[0]));
         request.indicesOptions(IndicesOptions.lenientExpandOpen());
-        executor.transportActionProvider().transportDeleteIndexAction()
+        dependencies.transportActionProvider().transportDeleteIndexAction()
             .execute(request, new OneRowActionListener<>(consumer, r -> Row1.ROW_COUNT_UNKNOWN));
     }
 
     @VisibleForTesting
-    ArrayList<String> getIndices(Functions functions, Row parameters, SubQueryResults subQueryResults) {
+    ArrayList<String> getIndices(TransactionContext txnCtx, Functions functions, Row parameters, SubQueryResults subQueryResults) {
         ArrayList<String> indexNames = new ArrayList<>();
-        Function<Symbol, BytesRef> symbolToBytesRef =
-            s -> DataTypes.STRING.value(SymbolEvaluator.evaluate(functions, s, parameters, subQueryResults));
+        Function<Symbol, String> symbolToString =
+            s -> DataTypes.STRING.value(SymbolEvaluator.evaluate(txnCtx, functions, s, parameters, subQueryResults));
         for (List<Symbol> partitionValues : partitions) {
-            List<BytesRef> values = Lists2.map(partitionValues, symbolToBytesRef);
+            List<String> values = Lists2.map(partitionValues, symbolToString);
             String indexName = IndexParts.toIndexName(relationName, PartitionName.encodeIdent(values));
             indexNames.add(indexName);
         }

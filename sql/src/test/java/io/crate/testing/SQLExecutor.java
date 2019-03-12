@@ -34,13 +34,13 @@ import io.crate.analyze.CreateTableStatementAnalyzer;
 import io.crate.analyze.NumberOfShards;
 import io.crate.analyze.ParamTypeHints;
 import io.crate.analyze.ParameterContext;
-import io.crate.analyze.SQLPrinter;
 import io.crate.analyze.expressions.ExpressionAnalysisContext;
 import io.crate.analyze.expressions.ExpressionAnalyzer;
 import io.crate.analyze.expressions.SubqueryAnalyzer;
 import io.crate.analyze.relations.AnalyzedRelation;
 import io.crate.analyze.relations.FullQualifiedNameFieldProvider;
 import io.crate.analyze.relations.ParentRelations;
+import io.crate.analyze.relations.QueriedRelation;
 import io.crate.analyze.relations.RelationAnalyzer;
 import io.crate.analyze.relations.RelationNormalizer;
 import io.crate.analyze.relations.StatementAnalysisContext;
@@ -56,19 +56,21 @@ import io.crate.execution.engine.pipeline.TopN;
 import io.crate.expression.symbol.Literal;
 import io.crate.expression.symbol.SelectSymbol;
 import io.crate.expression.symbol.Symbol;
-import io.crate.expression.symbol.format.SymbolPrinter;
 import io.crate.expression.udf.UserDefinedFunctionService;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.FulltextAnalyzerResolver;
 import io.crate.metadata.Functions;
+import io.crate.metadata.IndexParts;
+import io.crate.metadata.PartitionName;
 import io.crate.metadata.RelationName;
 import io.crate.metadata.RoutingProvider;
 import io.crate.metadata.Schemas;
-import io.crate.metadata.TransactionContext;
 import io.crate.metadata.blob.BlobSchemaInfo;
 import io.crate.metadata.blob.BlobTableInfo;
 import io.crate.metadata.doc.DocSchemaInfo;
 import io.crate.metadata.doc.DocSchemaInfoFactory;
 import io.crate.metadata.doc.DocTableInfo;
+import io.crate.metadata.doc.DocTableInfoFactory;
 import io.crate.metadata.doc.TestingDocTableInfoFactory;
 import io.crate.metadata.information.InformationSchemaInfo;
 import io.crate.metadata.sys.SysSchemaInfo;
@@ -86,6 +88,7 @@ import io.crate.planner.operators.SubQueryResults;
 import io.crate.sql.parser.SqlParser;
 import io.crate.sql.tree.CreateTable;
 import io.crate.sql.tree.QualifiedName;
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.Version;
 import org.elasticsearch.action.admin.cluster.repositories.delete.TransportDeleteRepositoryAction;
@@ -106,12 +109,14 @@ import org.elasticsearch.cluster.routing.RoutingTable;
 import org.elasticsearch.cluster.routing.allocation.AllocationService;
 import org.elasticsearch.cluster.routing.allocation.allocator.BalancedShardsAllocator;
 import org.elasticsearch.cluster.routing.allocation.decider.AllocationDeciders;
+import org.elasticsearch.cluster.routing.allocation.decider.ReplicaAfterPrimaryActiveAllocationDecider;
 import org.elasticsearch.cluster.routing.allocation.decider.SameShardAllocationDecider;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.Randomness;
+import org.elasticsearch.common.UUIDs;
+import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.compress.CompressedXContent;
 import org.elasticsearch.common.inject.ModulesBuilder;
-import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
@@ -123,6 +128,8 @@ import org.elasticsearch.test.gateway.TestGatewayAllocator;
 
 import java.io.File;
 import java.io.IOException;
+import java.time.Instant;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -135,21 +142,20 @@ import static io.crate.analyze.TableDefinitions.NESTED_PK_TABLE_INFO;
 import static io.crate.analyze.TableDefinitions.TEST_CLUSTER_BY_STRING_TABLE_INFO;
 import static io.crate.analyze.TableDefinitions.TEST_DOC_LOCATIONS_TABLE_INFO;
 import static io.crate.analyze.TableDefinitions.TEST_DOC_TRANSACTIONS_TABLE_INFO;
-import static io.crate.analyze.TableDefinitions.TEST_MULTIPLE_PARTITIONED_TABLE_INFO;
-import static io.crate.analyze.TableDefinitions.TEST_NESTED_PARTITIONED_TABLE_INFO;
 import static io.crate.analyze.TableDefinitions.TEST_PARTITIONED_TABLE_INFO;
-import static io.crate.analyze.TableDefinitions.USER_TABLE_INFO;
+import static io.crate.analyze.TableDefinitions.USER_TABLE_DEFINITION;
 import static io.crate.analyze.TableDefinitions.USER_TABLE_INFO_CLUSTERED_BY_ONLY;
 import static io.crate.analyze.TableDefinitions.USER_TABLE_INFO_MULTI_PK;
 import static io.crate.analyze.TableDefinitions.USER_TABLE_INFO_REFRESH_INTERVAL_BY_ONLY;
 import static io.crate.testing.DiscoveryNodes.newFakeAddress;
 import static io.crate.testing.TestingHelpers.getFunctions;
+import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static java.util.Collections.singletonList;
+import static org.elasticsearch.cluster.metadata.IndexMetaData.SETTING_CREATION_DATE;
+import static org.elasticsearch.cluster.metadata.IndexMetaData.SETTING_INDEX_UUID;
 import static org.elasticsearch.cluster.metadata.IndexMetaData.SETTING_VERSION_CREATED;
 import static org.elasticsearch.env.Environment.PATH_HOME_SETTING;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.is;
 import static org.mockito.Mockito.mock;
 
 /**
@@ -159,16 +165,16 @@ import static org.mockito.Mockito.mock;
  */
 public class SQLExecutor {
 
-    private static final Logger LOGGER = Loggers.getLogger(SQLExecutor.class);
+    private static final Logger LOGGER = LogManager.getLogger(SQLExecutor.class);
 
     private final Functions functions;
     public final Analyzer analyzer;
     public final Planner planner;
+    private final RelationNormalizer relationNormalizer;
     private final RelationAnalyzer relAnalyzer;
     private final SessionContext sessionContext;
-    private final TransactionContext transactionContext;
+    private final CoordinatorTxnCtx coordinatorTxnCtx;
     private final Random random;
-    private final SQLPrinter sqlPrinter;
     private final Schemas schemas;
 
     /**
@@ -183,12 +189,24 @@ public class SQLExecutor {
     public PlannerContext getPlannerContext(ClusterState clusterState, Random random) {
         return new PlannerContext(
             clusterState,
-            new RoutingProvider(random.nextInt(), new String[0]),
+            new RoutingProvider(random.nextInt(), emptyList()),
             UUID.randomUUID(),
             functions,
-            new TransactionContext(sessionContext),
+            new CoordinatorTxnCtx(sessionContext),
             -1,
             -1
+        );
+    }
+
+    public <T extends AnalyzedRelation> T normalize(QueriedRelation relation, CoordinatorTxnCtx txnCtx) {
+        //noinspection unchecked
+        return (T) relationNormalizer.normalize(relation, txnCtx);
+    }
+
+    public <T extends QueriedRelation> T normalize(String statement) {
+        return normalize(
+            analyze(statement),
+            new CoordinatorTxnCtx(SessionContext.systemSessionContext())
         );
     }
 
@@ -199,7 +217,7 @@ public class SQLExecutor {
         private final Map<RelationName, DocTableInfo> docTables = new HashMap<>();
         private final Map<RelationName, BlobTableInfo> blobTables = new HashMap<>();
         private final Functions functions;
-        private final TestingDocTableInfoFactory testingDocTableInfoFactory;
+        private final DocTableInfoFactory tableInfoFactory;
         private final ViewInfoFactory testingViewInfoFactory;
         private final AnalysisRegistry analysisRegistry;
         private final CreateTableStatementAnalyzer createTableStatementAnalyzer;
@@ -211,6 +229,7 @@ public class SQLExecutor {
 
         private TableStats tableStats = new TableStats();
         private Settings settings = Settings.EMPTY;
+        private boolean hasValidLicense = true;
 
         private Builder(ClusterService clusterService, int numNodes, Random random) {
             this.random = random;
@@ -221,7 +240,7 @@ public class SQLExecutor {
             schemaInfoByName.put("information_schema", new InformationSchemaInfo());
             functions = getFunctions();
 
-            testingDocTableInfoFactory = new TestingDocTableInfoFactory(
+            tableInfoFactory = new TestingDocTableInfoFactory(
                 docTables, functions, new IndexNameExpressionResolver(Settings.EMPTY));
             testingViewInfoFactory = (ident, state) -> null;
             udfService = new UserDefinedFunctionService(clusterService, functions);
@@ -230,7 +249,7 @@ public class SQLExecutor {
                 Settings.EMPTY,
                 schemaInfoByName,
                 clusterService,
-                new DocSchemaInfoFactory(testingDocTableInfoFactory, testingViewInfoFactory, functions, udfService)
+                new DocSchemaInfoFactory(tableInfoFactory, testingViewInfoFactory, functions, udfService)
             );
             File homeDir = createTempDir();
             Environment environment = new Environment(
@@ -253,7 +272,10 @@ public class SQLExecutor {
                 Settings.EMPTY,
                 new AllocationDeciders(
                     Settings.EMPTY,
-                    singletonList(new SameShardAllocationDecider(Settings.EMPTY, clusterService.getClusterSettings()))
+                    Arrays.asList(
+                        new SameShardAllocationDecider(Settings.EMPTY, clusterService.getClusterSettings()),
+                        new ReplicaAfterPrimaryActiveAllocationDecider(Settings.EMPTY)
+                    )
                 ),
                 new TestGatewayAllocator(),
                 new BalancedShardsAllocator(Settings.EMPTY),
@@ -288,6 +310,11 @@ public class SQLExecutor {
             return this;
         }
 
+        public Builder setHasValidLicense(boolean hasValidLicense) {
+            this.hasValidLicense = hasValidLicense;
+            return this;
+        }
+
         /**
          * Adds a couple of tables which are defined in {@link T3} and {@link io.crate.analyze.TableDefinitions}.
          * <p>
@@ -298,16 +325,14 @@ public class SQLExecutor {
          * Using {@link #addTable(String)} is preferred for this reason.
          * </p>
          */
-        public Builder enableDefaultTables() {
+        public Builder enableDefaultTables() throws IOException {
             // we should try to reduce the number of tables here eventually...
-            addDocTable(USER_TABLE_INFO);
+            addTable(USER_TABLE_DEFINITION);
             addDocTable(USER_TABLE_INFO_CLUSTERED_BY_ONLY);
             addDocTable(USER_TABLE_INFO_MULTI_PK);
             addDocTable(DEEPLY_NESTED_TABLE_INFO);
             addDocTable(NESTED_PK_TABLE_INFO);
             addDocTable(TEST_PARTITIONED_TABLE_INFO);
-            addDocTable(TEST_NESTED_PARTITIONED_TABLE_INFO);
-            addDocTable(TEST_MULTIPLE_PARTITIONED_TABLE_INFO);
             addDocTable(TEST_DOC_TRANSACTIONS_TABLE_INFO);
             addDocTable(TEST_DOC_LOCATIONS_TABLE_INFO);
             addDocTable(TEST_CLUSTER_BY_STRING_TABLE_INFO);
@@ -315,6 +340,19 @@ public class SQLExecutor {
             addDocTable(T3.T1_INFO);
             addDocTable(T3.T2_INFO);
             addDocTable(T3.T3_INFO);
+
+            RelationName multiPartName = new RelationName("doc", "multi_parted");
+            addPartitionedTable("create table doc.multi_parted (" +
+                                " id int," +
+                                " date timestamp," +
+                                " num long," +
+                                " obj object as (name string)" +
+                                ") " +
+                                "partitioned by (date, obj['name'])",
+                new PartitionName(multiPartName, Arrays.asList("1395874800000", "0")).toString(),
+                new PartitionName(multiPartName, Arrays.asList("1395961200000", "-100")).toString(),
+                new PartitionName(multiPartName, Arrays.asList(null, "-100")).toString()
+            );
             return this;
         }
 
@@ -328,7 +366,7 @@ public class SQLExecutor {
             for (String schema : searchPath) {
                 schemaInfoByName.put(
                     schema,
-                    new DocSchemaInfo(schema, clusterService, functions, udfService, testingViewInfoFactory, testingDocTableInfoFactory)
+                    new DocSchemaInfo(schema, clusterService, functions, udfService, testingViewInfoFactory, tableInfoFactory)
                 );
             }
             // Can't use the schemas instance from the constructor because
@@ -337,7 +375,7 @@ public class SQLExecutor {
                 Settings.EMPTY,
                 schemaInfoByName,
                 clusterService,
-                new DocSchemaInfoFactory(testingDocTableInfoFactory, testingViewInfoFactory, functions, udfService)
+                new DocSchemaInfoFactory(tableInfoFactory, testingViewInfoFactory, functions, udfService)
             );
             schemas.clusterChanged(new ClusterChangedEvent("init", clusterService.state(), ClusterState.EMPTY_STATE));
             RelationAnalyzer relationAnalyzer = new RelationAnalyzer(functions, schemas);
@@ -363,7 +401,8 @@ public class SQLExecutor {
                     Settings.EMPTY,
                     clusterService,
                     functions,
-                    tableStats
+                    tableStats,
+                    () -> hasValidLicense
                 ),
                 relationAnalyzer,
                 new SessionContext(0, Option.NONE, user, s -> {}, t -> {}, searchPath),
@@ -406,16 +445,16 @@ public class SQLExecutor {
         public Builder addPartitionedTable(String createTableStmt, String... partitions) throws IOException {
             CreateTable stmt = (CreateTable) SqlParser.createStatement(createTableStmt);
             CreateTableAnalyzedStatement analyzedStmt = createTableStatementAnalyzer.analyze(
-                stmt, ParameterContext.EMPTY, new TransactionContext(SessionContext.systemSessionContext()));
+                stmt, ParameterContext.EMPTY, new CoordinatorTxnCtx(SessionContext.systemSessionContext()));
             if (!analyzedStmt.isPartitioned()) {
                 throw new IllegalArgumentException("use addTable(..) to add non partitioned tables");
             }
             ClusterState prevState = clusterService.state();
 
             XContentBuilder mappingBuilder = XContentFactory.jsonBuilder().map(analyzedStmt.mapping());
-            CompressedXContent mapping = new CompressedXContent(mappingBuilder.bytes());
-            Settings settings = analyzedStmt.tableParameter().settings().getByPrefix("index.");
-            AliasMetaData.Builder alias = AliasMetaData.builder(analyzedStmt.tableIdent().indexName());
+            CompressedXContent mapping = new CompressedXContent(BytesReference.bytes(mappingBuilder));
+            Settings settings = analyzedStmt.tableParameter().settings();
+            AliasMetaData.Builder alias = AliasMetaData.builder(analyzedStmt.tableIdent().indexNameOrAlias());
             IndexTemplateMetaData.Builder template = IndexTemplateMetaData.builder(analyzedStmt.templateName())
                 .patterns(singletonList(analyzedStmt.templatePrefix()))
                 .order(100)
@@ -450,7 +489,7 @@ public class SQLExecutor {
         public Builder addTable(String createTableStmt) throws IOException {
             CreateTable stmt = (CreateTable) SqlParser.createStatement(createTableStmt);
             CreateTableAnalyzedStatement analyzedStmt = createTableStatementAnalyzer.analyze(
-                stmt, ParameterContext.EMPTY, new TransactionContext(SessionContext.systemSessionContext()));
+                stmt, ParameterContext.EMPTY, new CoordinatorTxnCtx(SessionContext.systemSessionContext()));
 
             if (analyzedStmt.isPartitioned()) {
                 throw new IllegalArgumentException("use addPartitionedTable(..) to add partitioned tables");
@@ -458,7 +497,7 @@ public class SQLExecutor {
             ClusterState prevState = clusterService.state();
             RelationName relationName = analyzedStmt.tableIdent();
             IndexMetaData indexMetaData = getIndexMetaData(
-                relationName.indexName(), analyzedStmt, prevState.nodes().getSmallestNonClientNodeVersion())
+                relationName.indexNameOrAlias(), analyzedStmt, prevState.nodes().getSmallestNonClientNodeVersion())
                 .build();
 
             ClusterState state = ClusterState.builder(prevState)
@@ -467,20 +506,21 @@ public class SQLExecutor {
                 .build();
 
             ClusterServiceUtils.setState(clusterService, allocationService.reroute(state, "assign shards"));
-            docTables.put(relationName, testingDocTableInfoFactory.create(relationName, clusterService.state()));
             return this;
         }
 
         private static IndexMetaData.Builder getIndexMetaData(String indexName,
                                                               CreateTableAnalyzedStatement analyzedStmt,
                                                               Version smallestNodeVersion) throws IOException {
+            Settings.Builder builder = Settings.builder()
+                .put(analyzedStmt.tableParameter().settings())
+                .put(SETTING_VERSION_CREATED, smallestNodeVersion)
+                .put(SETTING_CREATION_DATE, Instant.now().toEpochMilli())
+                .put(SETTING_INDEX_UUID, UUIDs.randomBase64UUID());
+
+            Settings indexSettings = builder.build();
             return IndexMetaData.builder(indexName)
-                .settings(
-                    Settings.builder()
-                        .put(analyzedStmt.tableParameter().settings())
-                        .put(SETTING_VERSION_CREATED, smallestNodeVersion)
-                        .build()
-                )
+                .settings(indexSettings)
                 .putMapping(new MappingMetaData(Constants.DEFAULT_MAPPING_TYPE, analyzedStmt.mapping()));
         }
 
@@ -534,14 +574,14 @@ public class SQLExecutor {
                         Schemas schemas,
                         Random random) {
         this.functions = functions;
+        this.relationNormalizer = new RelationNormalizer(functions);
         this.analyzer = analyzer;
         this.planner = planner;
         this.relAnalyzer = relAnalyzer;
         this.sessionContext = sessionContext;
-        this.transactionContext = new TransactionContext(sessionContext);
+        this.coordinatorTxnCtx = new CoordinatorTxnCtx(sessionContext);
         this.schemas = schemas;
         this.random = random;
-        this.sqlPrinter = new SQLPrinter(new SymbolPrinter(functions));
     }
 
     public Functions functions() {
@@ -550,21 +590,13 @@ public class SQLExecutor {
 
     private <T extends AnalyzedStatement> T analyzeInternal(String stmt, ParameterContext parameterContext) {
         Analysis analysis = analyzer.boundAnalyze(
-            SqlParser.createStatement(stmt), transactionContext, parameterContext);
+            SqlParser.createStatement(stmt), coordinatorTxnCtx, parameterContext);
         //noinspection unchecked
         return (T) analysis.analyzedStatement();
     }
 
     private <T extends AnalyzedStatement> T analyze(String stmt, ParameterContext parameterContext) {
-        T analyzedStatement = analyzeInternal(stmt, parameterContext);
-        if (sqlPrinter.canPrint(analyzedStatement)) {
-            // check if the statement can be printed and analyzed again
-            String generatedSql = sqlPrinter.format(analyzedStatement);
-            AnalyzedStatement analyzedAgain = analyzeInternal(generatedSql, parameterContext);
-            String generatedSql2 = sqlPrinter.format(analyzedAgain);
-            assertThat(generatedSql2, is(generatedSql));
-        }
-        return analyzedStatement;
+        return analyzeInternal(stmt, parameterContext);
     }
 
     public <T extends AnalyzedStatement> T analyze(String statement) {
@@ -591,15 +623,15 @@ public class SQLExecutor {
      *                If tables are used here they must also be registered in the SQLExecutor having used {@link Builder#addDocTable(DocTableInfo)}
      */
     public Symbol asSymbol(Map<QualifiedName, AnalyzedRelation> sources, String expression) {
-        TransactionContext transactionContext = new TransactionContext(sessionContext);
+        CoordinatorTxnCtx coordinatorTxnCtx = new CoordinatorTxnCtx(sessionContext);
         ExpressionAnalyzer expressionAnalyzer = new ExpressionAnalyzer(
             functions,
-            transactionContext,
+            coordinatorTxnCtx,
             ParamTypeHints.EMPTY,
             new FullQualifiedNameFieldProvider(sources, ParentRelations.NO_PARENTS, sessionContext.searchPath().currentSchema()),
             new SubqueryAnalyzer(
                 relAnalyzer,
-                new StatementAnalysisContext(ParamTypeHints.EMPTY, Operation.READ, transactionContext)
+                new StatementAnalysisContext(ParamTypeHints.EMPTY, Operation.READ, coordinatorTxnCtx)
             )
         );
         return expressionAnalyzer.convert(
@@ -608,28 +640,17 @@ public class SQLExecutor {
 
     public <T> T plan(String statement, UUID jobId, int softLimit, int fetchSize) {
         AnalyzedStatement analyzedStatement = analyze(statement, ParameterContext.EMPTY);
-        T referencePlan = planInternal(analyzedStatement, jobId, softLimit, fetchSize);
-        if (sqlPrinter.canPrint(analyzedStatement)) {
-            // check if the statement can be printed and planned again
-            String printedStatement = sqlPrinter.format(analyzedStatement);
-            assertThat(planInternal(printedStatement, jobId, softLimit, fetchSize), is(referencePlan));
-        }
-        return referencePlan;
-    }
-
-    private <T> T planInternal(String statement, UUID jobId, int softLimit, int fetchSize) {
-        AnalyzedStatement analyzedStatement = analyzeInternal(statement, ParameterContext.EMPTY);
         return planInternal(analyzedStatement, jobId, softLimit, fetchSize);
     }
 
     private <T> T planInternal(AnalyzedStatement analyzedStatement, UUID jobId, int softLimit, int fetchSize) {
-        RoutingProvider routingProvider = new RoutingProvider(random.nextInt(), new String[0]);
+        RoutingProvider routingProvider = new RoutingProvider(random.nextInt(), emptyList());
         PlannerContext plannerContext = new PlannerContext(
             planner.currentClusterState(),
             routingProvider,
             jobId,
             functions,
-            transactionContext,
+            coordinatorTxnCtx,
             softLimit,
             fetchSize
         );
@@ -662,7 +683,7 @@ public class SQLExecutor {
             // we eventually should integrate normalize into unboundAnalyze.
             // But then we have to remove the whereClauseAnalyzer calls because they depend on all values being available
             stmt = (AnalyzedStatement) new RelationNormalizer(functions)
-                .normalize((AnalyzedRelation) stmt, transactionContext);
+                .normalize((AnalyzedRelation) stmt, coordinatorTxnCtx);
         }
         return (T) planner.plan(stmt, getPlannerContext(planner.currentClusterState()));
     }
@@ -677,5 +698,11 @@ public class SQLExecutor {
 
     public SessionContext getSessionContext() {
         return sessionContext;
+    }
+
+    public <T> T resolveTableInfo(String tableName) {
+        IndexParts indexParts = new IndexParts(tableName);
+        QualifiedName qualifiedName = QualifiedName.of(indexParts.getSchema(), indexParts.getTable());
+        return (T) schemas.resolveTableInfo(qualifiedName, Operation.READ, sessionContext.searchPath());
     }
 }

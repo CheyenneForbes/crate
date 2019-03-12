@@ -24,10 +24,8 @@ package io.crate.metadata;
 import com.google.common.collect.ImmutableList;
 import io.crate.Constants;
 import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.Version;
 import org.elasticsearch.cluster.ClusterState;
-import org.elasticsearch.cluster.ClusterStateTaskListener;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.common.settings.Settings;
@@ -59,12 +57,7 @@ public class PartitionInfosTest extends CrateDummyClusterServiceUnitTest {
             }
         });
         clusterService.getClusterApplierService()
-            .onNewClusterState("test", () -> newState, new ClusterStateTaskListener() {
-            @Override
-            public void onFailure(String source, Exception e) {
-                processed.completeExceptionally(e);
-            }
-        });
+            .onNewClusterState("test", () -> newState, (source, e) -> processed.completeExceptionally(e));
         processed.get(5, TimeUnit.SECONDS);
     }
 
@@ -79,7 +72,7 @@ public class PartitionInfosTest extends CrateDummyClusterServiceUnitTest {
     @Test
     public void testPartitionWithoutMapping() throws Exception {
         PartitionName partitionName = new PartitionName(
-            new RelationName("doc", "test1"), ImmutableList.of(new BytesRef("foo")));
+            new RelationName("doc", "test1"), ImmutableList.of("foo"));
         addIndexMetaDataToClusterState(IndexMetaData.builder(partitionName.asIndexName())
             .settings(defaultSettings()).numberOfShards(10).numberOfReplicas(4));
         Iterable<PartitionInfo> partitioninfos = new PartitionInfos(clusterService);
@@ -89,7 +82,7 @@ public class PartitionInfosTest extends CrateDummyClusterServiceUnitTest {
     @Test
     public void testPartitionWithMeta() throws Exception {
         PartitionName partitionName = new PartitionName(
-            new RelationName("doc", "test1"), ImmutableList.of(new BytesRef("foo")));
+            new RelationName("doc", "test1"), ImmutableList.of("foo"));
         IndexMetaData.Builder indexMetaData = IndexMetaData
             .builder(partitionName.asIndexName())
             .settings(defaultSettings())
@@ -102,7 +95,7 @@ public class PartitionInfosTest extends CrateDummyClusterServiceUnitTest {
         PartitionInfo partitioninfo = iter.next();
         assertThat(partitioninfo.name().asIndexName(), is(partitionName.asIndexName()));
         assertThat(partitioninfo.numberOfShards(), is(10));
-        assertThat(partitioninfo.numberOfReplicas().utf8ToString(), is("4"));
+        assertThat(partitioninfo.numberOfReplicas(), is("4"));
         assertThat(partitioninfo.values(), hasEntry("col", "foo"));
         assertThat(iter.hasNext(), is(false));
     }
@@ -110,7 +103,7 @@ public class PartitionInfosTest extends CrateDummyClusterServiceUnitTest {
     @Test
     public void testPartitionWithMetaMultiCol() throws Exception {
         PartitionName partitionName = new PartitionName(
-            new RelationName("doc", "test1"), ImmutableList.of(new BytesRef("foo"), new BytesRef("1")));
+            new RelationName("doc", "test1"), ImmutableList.of("foo", "1"));
         IndexMetaData.Builder indexMetaData = IndexMetaData
             .builder(partitionName.asIndexName())
             .settings(defaultSettings())
@@ -123,7 +116,7 @@ public class PartitionInfosTest extends CrateDummyClusterServiceUnitTest {
         PartitionInfo partitioninfo = iter.next();
         assertThat(partitioninfo.name().asIndexName(), is(partitionName.asIndexName()));
         assertThat(partitioninfo.numberOfShards(), is(10));
-        assertThat(partitioninfo.numberOfReplicas().utf8ToString(), is("4"));
+        assertThat(partitioninfo.numberOfReplicas(), is("4"));
         assertThat(partitioninfo.values(), hasEntry("col", "foo"));
         assertThat(partitioninfo.values(), hasEntry("col2", 1));
         assertThat(iter.hasNext(), is(false));

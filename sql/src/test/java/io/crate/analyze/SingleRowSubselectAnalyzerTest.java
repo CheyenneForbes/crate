@@ -31,6 +31,8 @@ import org.hamcrest.Matchers;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.IOException;
+
 import static io.crate.testing.SymbolMatchers.isFunction;
 import static io.crate.testing.SymbolMatchers.isReference;
 import static io.crate.testing.TestingHelpers.isSQL;
@@ -41,7 +43,7 @@ public class SingleRowSubselectAnalyzerTest extends CrateDummyClusterServiceUnit
     private SQLExecutor e;
 
     @Before
-    public void prepare() {
+    public void prepare() throws IOException {
         e = SQLExecutor.builder(clusterService).enableDefaultTables().build();
     }
 
@@ -88,7 +90,7 @@ public class SingleRowSubselectAnalyzerTest extends CrateDummyClusterServiceUnit
 
     @Test
     public void testMatchPredicateWithSingleRowSubselect() throws Exception {
-        QueriedRelation relation = e.analyze(
+        QueriedRelation relation = e.normalize(
             "select * from users where match(shape 1.2, (select shape from users limit 1))");
         assertThat(relation.where().query(),
             isSQL("MATCH((shape 1.2), SelectSymbol{geo_shape_array}) USING intersects"));

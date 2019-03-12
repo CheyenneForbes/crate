@@ -37,10 +37,10 @@ import io.crate.testing.TestingBatchIterators;
 import io.crate.testing.TestingHelpers;
 import io.crate.testing.TestingRowConsumer;
 import io.crate.types.DataTypes;
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.common.breaker.NoopCircuitBreaker;
-import org.elasticsearch.common.logging.Loggers;
 import org.hamcrest.Matchers;
 import org.junit.After;
 import org.junit.Before;
@@ -65,7 +65,7 @@ import static org.mockito.Mockito.verify;
 
 public class DistributingConsumerTest extends CrateUnitTest {
 
-    private Logger logger = Loggers.getLogger(DistributingConsumer.class);
+    private Logger logger = LogManager.getLogger(DistributingConsumer.class);
     private ExecutorService executorService;
 
     @Before
@@ -151,14 +151,12 @@ public class DistributingConsumerTest extends CrateUnitTest {
             0,
             Collections.singletonList("n1"),
             distributedResultAction,
-            streamers,
             2 // pageSize
         );
     }
 
     private DistResultRXTask createPageDownstreamContext(Streamer<?>[] streamers, TestingRowConsumer collectingConsumer) {
         PageBucketReceiver pageBucketReceiver = new CumulativePageBucketReceiver(
-            Loggers.getLogger(DistResultRXTask.class),
             "n1",
             1,
             executorService,
@@ -186,10 +184,9 @@ public class DistributingConsumerTest extends CrateUnitTest {
             PageBucketReceiver bucketReceiver = distResultRXTask.getBucketReceiver(resultRequest.executionPhaseInputId());
             assertThat(bucketReceiver, Matchers.notNullValue());
             if (throwable == null) {
-                resultRequest.streamers(streamers);
                 bucketReceiver.setBucket(
                     resultRequest.bucketIdx(),
-                    resultRequest.rows(),
+                    resultRequest.readRows(streamers),
                     resultRequest.isLast(),
                     needMore -> listener.onResponse(new DistributedResultResponse(needMore)));
             } else {

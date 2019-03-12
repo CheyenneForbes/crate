@@ -40,9 +40,9 @@ import io.crate.execution.jobs.transport.JobRequest;
 import io.crate.execution.jobs.transport.JobResponse;
 import io.crate.execution.jobs.transport.TransportJobAction;
 import io.crate.types.DataTypes;
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.common.logging.Loggers;
 
 import javax.annotation.Nullable;
 import java.util.Collections;
@@ -51,10 +51,12 @@ import java.util.concurrent.Executor;
 
 public class RemoteCollector {
 
-    private static final Logger LOGGER = Loggers.getLogger(RemoteCollector.class);
+    private static final Logger LOGGER = LogManager.getLogger(RemoteCollector.class);
     private static final int RECEIVER_PHASE_ID = 1;
 
     private final UUID jobId;
+    private final String userName;
+    private final String currentSchema;
     private final String localNode;
     private final String remoteNode;
     private final Executor executor;
@@ -72,6 +74,8 @@ public class RemoteCollector {
     private boolean collectorKilled = false;
 
     public RemoteCollector(UUID jobId,
+                           String userName,
+                           String currentSchema,
                            String localNode,
                            String remoteNode,
                            TransportJobAction transportJobAction,
@@ -82,6 +86,8 @@ public class RemoteCollector {
                            RowConsumer consumer,
                            RoutedCollectPhase collectPhase) {
         this.jobId = jobId;
+        this.userName = userName;
+        this.currentSchema = currentSchema;
         this.localNode = localNode;
         this.remoteNode = remoteNode;
         this.executor = executor;
@@ -141,7 +147,14 @@ public class RemoteCollector {
             }
             transportJobAction.execute(
                 remoteNode,
-                new JobRequest(jobId, localNode, Collections.singletonList(nodeOperation), enableProfiling),
+                new JobRequest(
+                    jobId,
+                    userName,
+                    currentSchema,
+                    localNode,
+                    Collections.singletonList(nodeOperation),
+                    enableProfiling
+                ),
                 new ActionListener<JobResponse>() {
                     @Override
                     public void onResponse(JobResponse jobResponse) {
@@ -171,7 +184,6 @@ public class RemoteCollector {
             pagingIterator = PassThroughPagingIterator.oneShot();
         }
         PageBucketReceiver pageBucketReceiver = new CumulativePageBucketReceiver(
-            LOGGER,
             localNode,
             RECEIVER_PHASE_ID,
             executor,

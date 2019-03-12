@@ -22,26 +22,25 @@ package io.crate.azure;
 import io.crate.azure.management.AzureComputeService.Discovery;
 import io.crate.azure.management.AzureComputeService.Management;
 import io.crate.azure.plugin.AzureDiscoveryPlugin;
+import io.crate.plugin.HttpTransportPlugin;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.junit.Test;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 
 import static org.hamcrest.Matchers.notNullValue;
 
-@ESIntegTestCase.ClusterScope(scope = ESIntegTestCase.Scope.TEST,
-    numDataNodes = 0,
-    transportClientRatio = 0,
-    numClientNodes = 0)
+@ESIntegTestCase.ClusterScope(scope = ESIntegTestCase.Scope.TEST, numDataNodes = 0, numClientNodes = 0)
 public class AzureSimpleTests extends AbstractAzureComputeServiceTestCase {
 
     @Override
     protected Collection<Class<? extends Plugin>> nodePlugins() {
-        return Collections.singletonList(AzureDiscoveryPlugin.class);
+        return Arrays.asList(AzureDiscoveryPlugin.class, HttpTransportPlugin.class);
     }
 
     @Test

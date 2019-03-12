@@ -50,28 +50,31 @@ task monitoringTest(type: Exec) {
 }
 
 task itest(type: Exec) {
-    commandLine "$projectDir/bin/test-docs", '-vvvxt', '!process_test'
+    commandLine "$projectDir/bin/test-docs"
 }
 
 task gtest(type: Exec) {
-    commandLine "$projectDir/bin/test-docs", '-vvvxt', 'process_test'
+    commandLine "$projectDir/bin/test-decommission"
 }
 
-task logicTest(type: Exec) {
-    commandLine "$projectDir/bin/test-sqllogic"
+task dnsDiscoveryTest(type: Exec) {
+    commandLine "$projectDir/bin/test-dns-discovery"
 }
 
 task buildDocs(type: Exec, dependsOn: bootstrap) {
     commandLine "$projectDir/bin/sphinx"
 }
 
+task developDocs(type: Exec, dependsOn: bootstrap) {
+    commandLine "$projectDir/bin/sphinx", "dev"
+}
 
 hdfsTest.dependsOn(bootstrap, lessLogging, ignoreDiskThreshold,
         project(':es:es-repository-hdfs').blackBoxTestJar)
 monitoringTest.dependsOn(bootstrap, lessLogging, ignoreDiskThreshold)
 itest.dependsOn(bootstrap, lessLogging, ignoreDiskThreshold)
 gtest.dependsOn(bootstrap, lessLogging, ignoreDiskThreshold)
-logicTest.dependsOn(bootstrap, lessLogging, ignoreDiskThreshold)
+dnsDiscoveryTest.dependsOn(bootstrap, lessLogging, ignoreDiskThreshold)
 
 task cleanDocs {
     doLast {

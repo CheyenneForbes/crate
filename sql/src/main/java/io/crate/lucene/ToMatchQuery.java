@@ -32,6 +32,7 @@ import io.crate.expression.symbol.Symbol;
 import io.crate.geo.GeoJSONUtils;
 import io.crate.lucene.match.MatchQueries;
 import io.crate.types.DataTypes;
+import io.crate.types.ObjectType;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.BoostQuery;
@@ -41,7 +42,6 @@ import org.apache.lucene.search.TermRangeQuery;
 import org.apache.lucene.spatial.prefix.PrefixTreeStrategy;
 import org.apache.lucene.spatial.query.SpatialArgs;
 import org.apache.lucene.spatial.query.SpatialOperation;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.geo.ShapeRelation;
 import org.elasticsearch.index.mapper.GeoShapeFieldMapper;
 import org.elasticsearch.index.mapper.MappedFieldType;
@@ -59,7 +59,7 @@ class ToMatchQuery implements FunctionToQuery {
     public Query apply(Function input, LuceneQueryBuilder.Context context) throws IOException {
         List<Symbol> arguments = input.arguments();
         assert arguments.size() == 4 : "invalid number of arguments";
-        assert Symbol.isLiteral(arguments.get(0), DataTypes.OBJECT) :
+        assert Symbol.isLiteral(arguments.get(0), ObjectType.untyped()) :
             "fields must be literal";
         assert Symbol.isLiteral(arguments.get(2), DataTypes.STRING) :
             "matchType must be literal";
@@ -82,7 +82,7 @@ class ToMatchQuery implements FunctionToQuery {
         String fieldName = ((String) Iterables.getOnlyElement(fields.keySet()));
         MappedFieldType fieldType = context.mapperService.fullName(fieldName);
         GeoShapeFieldMapper.GeoShapeFieldType geoShapeFieldType = (GeoShapeFieldMapper.GeoShapeFieldType) fieldType;
-        String matchType = ((BytesRef) ((Input) arguments.get(2)).value()).utf8ToString();
+        String matchType = (String) ((Input) arguments.get(2)).value();
         @SuppressWarnings("unchecked")
         Shape shape = GeoJSONUtils.map2Shape((Map<String, Object>) queryTerm);
 
@@ -132,8 +132,8 @@ class ToMatchQuery implements FunctionToQuery {
     private static Query stringMatch(LuceneQueryBuilder.Context context, List<Symbol> arguments, Object queryTerm) throws IOException {
         @SuppressWarnings("unchecked")
         Map<String, Object> fields = (Map) ((Literal) arguments.get(0)).value();
-        BytesRef queryString = (BytesRef) queryTerm;
-        BytesRef matchType = (BytesRef) ((Literal) arguments.get(2)).value();
+        String queryString = (String) queryTerm;
+        String matchType = (String) ((Literal) arguments.get(2)).value();
         //noinspection unchecked
         Map<String, Object> options = (Map<String, Object>) ((Literal) arguments.get(3)).value();
 
@@ -159,7 +159,7 @@ class ToMatchQuery implements FunctionToQuery {
                 context.queryShardContext,
                 matchType,
                 (Map<String, Float>) (Map) fields,
-                queryString.utf8ToString(),
+                queryString,
                 options
             );
         }
@@ -167,8 +167,8 @@ class ToMatchQuery implements FunctionToQuery {
 
     private static Query singleMatchQuery(QueryShardContext queryShardContext,
                                           Map.Entry<String, Object> entry,
-                                          BytesRef queryString,
-                                          BytesRef matchType,
+                                          String queryString,
+                                          String matchType,
                                           Map<String, Object> options) throws IOException {
         Query query = MatchQueries.singleMatch(
             queryShardContext,

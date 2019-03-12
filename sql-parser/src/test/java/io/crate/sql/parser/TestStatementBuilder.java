@@ -33,16 +33,16 @@ import io.crate.sql.tree.Assignment;
 import io.crate.sql.tree.ComparisonExpression;
 import io.crate.sql.tree.CopyFrom;
 import io.crate.sql.tree.CreateFunction;
-import io.crate.sql.tree.CreateIngestRule;
 import io.crate.sql.tree.CreateTable;
 import io.crate.sql.tree.CreateUser;
 import io.crate.sql.tree.DeallocateStatement;
 import io.crate.sql.tree.DefaultTraversalVisitor;
 import io.crate.sql.tree.DenyPrivilege;
-import io.crate.sql.tree.DropIngestRule;
 import io.crate.sql.tree.DropUser;
+import io.crate.sql.tree.EscapedCharStringLiteral;
 import io.crate.sql.tree.Expression;
 import io.crate.sql.tree.FunctionCall;
+import io.crate.sql.tree.GCDanglingArtifacts;
 import io.crate.sql.tree.GrantPrivilege;
 import io.crate.sql.tree.InsertFromValues;
 import io.crate.sql.tree.KillStatement;
@@ -55,11 +55,13 @@ import io.crate.sql.tree.QualifiedName;
 import io.crate.sql.tree.QualifiedNameReference;
 import io.crate.sql.tree.Query;
 import io.crate.sql.tree.RevokePrivilege;
+import io.crate.sql.tree.SetStatement;
 import io.crate.sql.tree.ShowCreateTable;
 import io.crate.sql.tree.Statement;
 import io.crate.sql.tree.StringLiteral;
 import io.crate.sql.tree.SubqueryExpression;
 import io.crate.sql.tree.SubscriptExpression;
+import io.crate.sql.tree.SwapTable;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
@@ -97,6 +99,39 @@ public class TestStatementBuilder {
     }
 
     @Test
+    public void testEmptyOverClauseAfterFunction() {
+        printStatement("SELECT avg(x) OVER () FROM t");
+    }
+
+    @Test
+    public void testOverClauseWithOrderBy() {
+        printStatement("SELECT avg(x) OVER (ORDER BY x) FROM t");
+        printStatement("SELECT avg(x) OVER (ORDER BY x DESC) FROM t");
+        printStatement("SELECT avg(x) OVER (ORDER BY x DESC NULLS FIRST) FROM t");
+    }
+
+    @Test
+    public void testOverClauseWithPartition() {
+        printStatement("SELECT avg(x) OVER (PARTITION BY p) FROM t");
+        printStatement("SELECT avg(x) OVER (PARTITION BY p1, p2, p3) FROM t");
+    }
+
+    @Test
+    public void testOverClauseWithPartitionAndOrderBy() {
+        printStatement("SELECT avg(x) OVER (PARTITION BY p ORDER BY x ASC) FROM t");
+        printStatement("SELECT avg(x) OVER (PARTITION BY p1, p2, p3 ORDER BY x, y) FROM t");
+    }
+
+    @Test
+    public void testOverClauseWithFrameClause() {
+        printStatement("SELECT avg(x) OVER (ROWS BETWEEN 5 PRECEDING AND 10 FOLLOWING) FROM t");
+        printStatement("SELECT avg(x) OVER (RANGE BETWEEN 5 PRECEDING AND 10 FOLLOWING) FROM t");
+        printStatement("SELECT avg(x) OVER (ROWS UNBOUND PRECEDING) FROM t");
+        printStatement("SELECT avg(x) OVER (ROWS BETWEEN UNBOUND PRECEDING AND CURRENT ROW) FROM t");
+        printStatement("SELECT avg(x) OVER (ROWS BETWEEN 10 PRECEDING AND UNBOUND FOLLOWING) FROM t");
+    }
+
+    @Test
     public void testCommit() {
         printStatement("COMMIT");
     }
@@ -120,6 +155,22 @@ public class TestStatementBuilder {
         printStatement("drop table test");
         printStatement("drop table if exists test");
         printStatement("drop table bar.foo");
+    }
+
+    @Test
+    public void testSwapTable() {
+        printStatement("ALTER CLUSTER SWAP TABLE t1 TO t2");
+        printStatement("ALTER CLUSTER SWAP TABLE t1 TO t2 WITH (prune_second = true)");
+    }
+
+    @Test
+    public void testAlterClusterGCDanglingArtifacts() {
+        printStatement("ALTER CLUSTER GC DANGLING ARTIFACTS");
+    }
+
+    @Test
+    public void testAlterClusterDecommissionNode() {
+        printStatement("ALTER CLUSTER DECOMMISSION 'node1'");
     }
 
     @Test
@@ -171,6 +222,12 @@ public class TestStatementBuilder {
         printStatement("show schemas like 'doc%'");
         printStatement("show schemas where schema_name='doc'");
         printStatement("show schemas where schema_name LIKE 'd%'");
+    }
+
+    @Test
+    public void testShowParameterStmtBuilder() {
+        printStatement("show search_path");
+        printStatement("show all");
     }
 
     @Test
@@ -317,6 +374,51 @@ public class TestStatementBuilder {
     }
 
     @Test
+    public void testSetLicenseStmtBuilder() throws Exception {
+        printStatement("set license 'LICENSE_KEY'");
+    }
+
+    @Test
+    public void testSetLicenseInputWithoutQuotesThrowsParsingException() {
+        expectedException.expect(ParsingException.class);
+        expectedException.expectMessage(containsString("no viable alternative at input"));
+        printStatement("set license LICENSE_KEY");
+    }
+
+    @Test
+    public void testSetLicenseWithoutParamThrowsParsingException() {
+        expectedException.expect(ParsingException.class);
+        expectedException.expectMessage(containsString("no viable alternative at input 'set license'"));
+        printStatement("set license");
+    }
+
+    @Test
+    public void testSetLicenseLikeAnExpressionThrowsParsingException() {
+        expectedException.expect(ParsingException.class);
+        expectedException.expectMessage(containsString("no viable alternative at input"));
+        printStatement("set license key='LICENSE_KEY'");
+    }
+
+    @Test
+    public void testSetLicenseMultipleInputThrowsParsingException() {
+        expectedException.expect(ParsingException.class);
+        expectedException.expectMessage(containsString("extraneous input ''LICENSE_KEY2'' expecting <EOF>"));
+        printStatement("set license 'LICENSE_KEY' 'LICENSE_KEY2'");
+    }
+
+    @Test
+    public void testSetLicense() {
+        SetStatement stmt = (SetStatement) SqlParser.createStatement("set license 'LICENSE_KEY'");
+        assertThat(stmt.scope(), is(SetStatement.Scope.LICENSE));
+        assertThat(stmt.settingType(), is(SetStatement.SettingType.PERSISTENT));
+        assertThat(stmt.assignments().size(), is(1));
+
+        Assignment assignment = stmt.assignments().get(0);
+        assertThat(assignment.expressions().size(), is(1));
+        assertThat(assignment.expressions().get(0).toString(), is("'LICENSE_KEY'"));
+    }
+
+    @Test
     public void testResetGlobalStmtBuilder() {
         printStatement("reset global some_setting['nested'], other_setting");
     }
@@ -408,6 +510,13 @@ public class TestStatementBuilder {
     }
 
     @Test
+    public void testCreateTableOptionsMultipleTimesNotAllowed() {
+        expectedException.expect(ParsingException.class);
+        expectedException.expectMessage("mismatched input 'partitioned' expecting <EOF>");
+        printStatement("create table test (col1 int, col2 timestamp) partitioned by (col1) partitioned by (col2)");
+    }
+
+    @Test
     public void testBlobTable() throws Exception {
         printStatement("drop blob table screenshots");
 
@@ -448,6 +557,11 @@ public class TestStatementBuilder {
         printStatement("create analyzer \"My_Builtin\" extends builtin WITH (" +
             "  over='write'" +
             ")");
+    }
+
+    @Test
+    public void testDropAnalyzer() {
+        printStatement("drop analyzer my_analyzer");
     }
 
     @Test
@@ -498,22 +612,6 @@ public class TestStatementBuilder {
         printStatement("grant ALL ON TABLE my_schema.t to anna");
         printStatement("grant ALL ON TABLE my_schema.t, banana.b, tree to anna, nyan, cat");
     }
-
-
-    @Test
-    public void testCreateIngestRuleStmtBuilder() {
-        printStatement("CREATE INGEST RULE v4 ON mqtt WHERE topic like 'v4/%' INTO my_schema.raw_v4");
-        printStatement("CREATE INGEST RULE \"Nyan cat space übercool\" ON \"http\" WHERE topic like 'v4/%' INTO my_schema.raw_v4");
-        printStatement("CREATE INGEST RULE v5 ON http INTO t1");
-    }
-
-    @Test
-    public void testDropIngestRuleStmtBuilder() {
-        printStatement("DROP INGEST RULE v4");
-        printStatement("DROP INGEST RULE \"Nyan cat space übercool\"");
-        printStatement("DROP INGEST RULE IF EXISTS \"Nyan cat space übercool\"");
-    }
-
 
     @Test
     public void testDenyPrivilegeStmtBuilder() {
@@ -684,6 +782,20 @@ public class TestStatementBuilder {
     }
 
     @Test
+    public void testEscapedStringLiteralBuilder() throws Exception {
+        printStatement("select E'aValue'");
+        printStatement("select E'\\141Value'");
+        printStatement("select e'aa\\\'bb'");
+    }
+
+    @Test
+    public void testThatEscapedStringLiteralContainingDoubleBackSlashAndSingleQuoteThrowsException() throws Exception {
+        expectedException.expect(IllegalArgumentException.class);
+        expectedException.expectMessage("Invalid Escaped String Literal");
+        printStatement("select e'aa\\\\\'bb' as col1");
+    }
+
+    @Test
     public void testSystemInformationFunctionsStmtBuilder() {
         printStatement("select current_schema");
         printStatement("select current_schema()");
@@ -815,11 +927,6 @@ public class TestStatementBuilder {
         printStatement("insert into foo (id, name) values ('string', 1.2), (abs(-4), 4+?)");
         printStatement("insert into schemah.foo (id, name) values ('string', 1.2)");
 
-        printStatement("insert into t (a, b) values (1, 2) on duplicate key update a = a + 1");
-        printStatement("insert into t (a, b) values (1, 2) on duplicate key update a = a + 1, b = 3");
-        printStatement("insert into t (a, b) values (1, 2), (3, 4) on duplicate key update a = values (a) + 1, b = 4");
-        printStatement("insert into t (a, b) values (1, 2), (3, 4) on duplicate key update a = values (a) + 1, b = values(b) - 2");
-
         printStatement("insert into t (a, b) values (1, 2) on conflict do nothing");
         printStatement("insert into t (a, b) values (1, 2) on conflict (a,b) do nothing");
         printStatement("insert into t (a, b) values (1, 2) on conflict (a) do update set b = b + 1");
@@ -828,7 +935,7 @@ public class TestStatementBuilder {
         printStatement("insert into t (a, b, c) values (1, 2), (3, 4) on conflict (c) do update set a = excluded.a + 1, b = excluded.b - 2");
 
         InsertFromValues insert = (InsertFromValues) SqlParser.createStatement(
-                "insert into test_generated_column (id, ts) values (?, ?) on duplicate key update ts = ?");
+                "insert into test_generated_column (id, ts) values (?, ?) on conflict (id) do update set ts = ?");
         Assignment onDuplicateAssignment = insert.getDuplicateKeyContext().getAssignments().get(0);
         assertThat(onDuplicateAssignment.expression(), instanceOf(ParameterExpression.class));
         assertThat(onDuplicateAssignment.expressions().get(0).toString(), is("$3"));
@@ -1086,6 +1193,16 @@ public class TestStatementBuilder {
     }
 
     @Test
+    public void testEscapedStringLiteral() throws Exception {
+        String input = "this is a triple-a:\\141\\x61\\u0061";
+        String expectedValue = "this is a triple-a:aaa";
+        Expression expr = SqlParser.createExpression(Literals.quoteEscapedStringLiteral(input));
+        EscapedCharStringLiteral escapedCharStringLiteral = (EscapedCharStringLiteral) expr;
+        assertThat(escapedCharStringLiteral.getRawValue(), is(input));
+        assertThat(escapedCharStringLiteral.getValue(), is(expectedValue));
+    }
+
+    @Test
     public void testObjectLiteral() throws Exception {
         Expression emptyObjectLiteral = SqlParser.createExpression("{}");
         assertThat(emptyObjectLiteral, instanceOf(ObjectLiteral.class));
@@ -1324,14 +1441,14 @@ public class TestStatementBuilder {
         if (statement instanceof Query ||
             statement instanceof CreateTable ||
             statement instanceof CopyFrom ||
+            statement instanceof SwapTable ||
+            statement instanceof GCDanglingArtifacts ||
             statement instanceof CreateFunction ||
             statement instanceof CreateUser ||
             statement instanceof DropUser ||
             statement instanceof GrantPrivilege ||
             statement instanceof DenyPrivilege ||
-            statement instanceof RevokePrivilege ||
-            statement instanceof CreateIngestRule ||
-            statement instanceof DropIngestRule) {
+            statement instanceof RevokePrivilege) {
             println(SqlFormatter.formatSql(statement));
             println("");
             assertFormattedSql(statement);

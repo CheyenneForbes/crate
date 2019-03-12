@@ -35,7 +35,6 @@ import io.crate.metadata.Schemas;
 import io.crate.metadata.blob.BlobSchemaInfo;
 import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
 import io.crate.testing.SQLExecutor;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.metadata.MetaData;
@@ -46,9 +45,12 @@ import org.elasticsearch.test.ClusterServiceUtils;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.IOException;
+import java.util.Collections;
+
 import static io.crate.analyze.TableDefinitions.TEST_DOC_LOCATIONS_TABLE_INFO;
 import static io.crate.analyze.TableDefinitions.TEST_PARTITIONED_TABLE_INFO;
-import static io.crate.analyze.TableDefinitions.USER_TABLE_INFO;
+import static io.crate.analyze.TableDefinitions.USER_TABLE_DEFINITION;
 import static io.crate.testing.SettingMatcher.hasEntry;
 import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.contains;
@@ -62,13 +64,14 @@ public class SnapshotRestoreAnalyzerTest extends CrateDummyClusterServiceUnitTes
     private SQLExecutor executor;
 
     @Before
-    public void prepare() {
+    public void prepare() throws IOException {
         RepositoriesMetaData repositoriesMetaData = new RepositoriesMetaData(
-            new RepositoryMetaData(
-                "my_repo",
-                "fs",
-                Settings.builder().put("location", "/tmp/my_repo").build()
-            ));
+            Collections.singletonList(
+                new RepositoryMetaData(
+                    "my_repo",
+                    "fs",
+                    Settings.builder().put("location", "/tmp/my_repo").build()
+            )));
         ClusterState clusterState = ClusterState.builder(new ClusterName("testing"))
             .metaData(MetaData.builder()
                 .putCustom(RepositoriesMetaData.TYPE, repositoriesMetaData))
@@ -77,7 +80,7 @@ public class SnapshotRestoreAnalyzerTest extends CrateDummyClusterServiceUnitTes
         RelationName myBlobsIdent = new RelationName(BlobSchemaInfo.NAME, "my_blobs");
         TestingBlobTableInfo myBlobsTableInfo = TableDefinitions.createBlobTable(myBlobsIdent);
         executor = SQLExecutor.builder(clusterService)
-            .addDocTable(USER_TABLE_INFO)
+            .addTable(USER_TABLE_DEFINITION)
             .addDocTable(TEST_DOC_LOCATIONS_TABLE_INFO)
             .addDocTable(TEST_PARTITIONED_TABLE_INFO)
             .addBlobTable(myBlobsTableInfo)
@@ -189,8 +192,8 @@ public class SnapshotRestoreAnalyzerTest extends CrateDummyClusterServiceUnitTes
     @Test
     public void testCreateSnapshotNoWildcards() throws Exception {
         expectedException.expect(RelationUnknown.class);
-        expectedException.expectMessage("Relation 'user*' unknown");
-        analyze("CREATE SNAPSHOT my_repo.my_snapshot TABLE \"user*\"");
+        expectedException.expectMessage("Relation 'foobar*' unknown");
+        analyze("CREATE SNAPSHOT my_repo.my_snapshot TABLE \"foobar*\"");
     }
 
     @Test
@@ -274,7 +277,7 @@ public class SnapshotRestoreAnalyzerTest extends CrateDummyClusterServiceUnitTes
         RestoreSnapshotAnalyzedStatement statement = analyze(
             "RESTORE SNAPSHOT my_repo.my_snapshot TABLE parted PARTITION (date=123)");
         PartitionName partition = new PartitionName(
-            new RelationName("doc", "parted"), ImmutableList.of(new BytesRef("123")));
+            new RelationName("doc", "parted"), ImmutableList.of("123"));
         assertThat(statement.restoreTables().size(), is(1));
         assertThat(statement.restoreTables().get(0).partitionName(), is(partition));
         assertThat(statement.restoreTables().get(0).tableIdent(), is(new RelationName(Schemas.DOC_SCHEMA_NAME, "parted")));
@@ -285,7 +288,7 @@ public class SnapshotRestoreAnalyzerTest extends CrateDummyClusterServiceUnitTes
         RestoreSnapshotAnalyzedStatement statement = analyze(
             "RESTORE SNAPSHOT my_repo.my_snapshot TABLE unknown_parted PARTITION (date=123)");
         PartitionName partitionName = new PartitionName(
-            new RelationName("doc", "unknown_parted"), ImmutableList.of(new BytesRef("123")));
+            new RelationName("doc", "unknown_parted"), ImmutableList.of("123"));
         assertThat(statement.restoreTables().size(), is(1));
         assertThat(statement.restoreTables().get(0).partitionName(), is(partitionName));
         assertThat(statement.restoreTables().get(0).tableIdent(), is(new RelationName(Schemas.DOC_SCHEMA_NAME, "unknown_parted")));

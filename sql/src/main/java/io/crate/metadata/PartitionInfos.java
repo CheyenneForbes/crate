@@ -29,14 +29,13 @@ import io.crate.metadata.doc.DocIndexMetaData;
 import io.crate.metadata.doc.PartitionedByMappingExtractor;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.metadata.MappingMetaData;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.collect.Tuple;
-import org.elasticsearch.common.logging.Loggers;
-import org.elasticsearch.common.lucene.BytesRefs;
+import org.elasticsearch.common.settings.Settings;
 
 import java.util.HashMap;
 import java.util.Iterator;
@@ -47,7 +46,7 @@ import java.util.stream.StreamSupport;
 public class PartitionInfos implements Iterable<PartitionInfo> {
 
     private final ClusterService clusterService;
-    private static final Logger LOGGER = Loggers.getLogger(PartitionInfos.class);
+    private static final Logger LOGGER = LogManager.getLogger(PartitionInfos.class);
 
     public PartitionInfos(ClusterService clusterService) {
         this.clusterService = clusterService;
@@ -70,13 +69,14 @@ public class PartitionInfos implements Iterable<PartitionInfo> {
             MappingMetaData mappingMetaData = indexMetaData.mapping(Constants.DEFAULT_MAPPING_TYPE);
             Map<String, Object> mappingMap = mappingMetaData.sourceAsMap();
             Map<String, Object> valuesMap = buildValuesMap(partitionName, mappingMetaData);
-            BytesRef numberOfReplicas = NumberOfReplicas.fromSettings(indexMetaData.getSettings());
+            Settings settings = indexMetaData.getSettings();
+            String numberOfReplicas = NumberOfReplicas.fromSettings(settings);
             return new PartitionInfo(
                 partitionName,
                 indexMetaData.getNumberOfShards(),
                 numberOfReplicas,
-                DocIndexMetaData.getVersionCreated(mappingMap),
-                DocIndexMetaData.getVersionUpgraded(mappingMap),
+                IndexMetaData.SETTING_INDEX_VERSION_CREATED.get(settings),
+                settings.getAsVersion(IndexMetaData.SETTING_VERSION_UPGRADED, null),
                 DocIndexMetaData.isClosed(indexMetaData, mappingMap, false),
                 valuesMap,
                 TableParameterInfo.tableParametersFromIndexMetaData(indexMetaData));
@@ -92,8 +92,7 @@ public class PartitionInfos implements Iterable<PartitionInfo> {
         Iterable<Tuple<ColumnIdent, DataType>> partitionColumnInfoIterable = PartitionedByMappingExtractor.extractPartitionedByColumns(mappingMetaData.sourceAsMap());
         for (Tuple<ColumnIdent, DataType> columnInfo : partitionColumnInfoIterable) {
             String columnName = columnInfo.v1().sqlFqn();
-            // produce string type values as string, not bytesref
-            Object value = BytesRefs.toString(partitionName.values().get(i));
+            Object value = partitionName.values().get(i);
             if (!columnInfo.v2().equals(DataTypes.STRING)) {
                 value = columnInfo.v2().value(value);
             }

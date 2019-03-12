@@ -6,14 +6,12 @@ buildscript {
         mavenCentral()
     }
     dependencies {
-        classpath 'de.thetaphi:forbiddenapis:2.5'
-        classpath "gradle.plugin.com.github.spotbugs:spotbugs-gradle-plugin:1.6.2"
+        classpath 'de.thetaphi:forbiddenapis:2.6'
     }
 }
 
 plugins {
-    id 'com.github.johnrengelman.shadow' version '2.0.2'
-    id 'com.github.spotbugs' version '1.6.2'
+    id 'com.github.johnrengelman.shadow' version '2.0.4'
 }
 
 
@@ -37,12 +35,11 @@ repositories {
 }
 
 allprojects {
-    apply plugin: 'com.github.spotbugs'
     apply plugin: 'jacoco'
 
     tasks.withType(JavaCompile) {
-        sourceCompatibility = "1.8"
-        targetCompatibility = "1.8"
+        sourceCompatibility = "11"
+        targetCompatibility = "11"
         options.encoding = 'UTF-8'
     }
 
@@ -51,7 +48,7 @@ allprojects {
         outputs.upToDateWhen { false }
 
         minHeapSize = "1024m"
-        maxHeapSize = "2024m"
+        maxHeapSize = "4096m"
 
         // allow to set the number of test forks from the CLI
         if (project.hasProperty('testForks')) {
@@ -91,24 +88,10 @@ allprojects {
     }
 
     jacoco {
-        toolVersion = "0.8.1"
+        toolVersion = "0.8.3"
     }
 
     group = 'io.crate'
-
-    spotbugs {
-        excludeFilter = file("$rootDir/gradle/findBugs-excludeFilter.xml")
-        ignoreFailures = true
-        effort = "max"
-        reportLevel = "low"
-    }
-
-    tasks.withType(com.github.spotbugs.SpotBugsTask) {
-        reports {
-            xml.enabled = false
-            html.enabled = true
-        }
-    }
 
     tasks.withType(Javadoc) {
         failOnError = false
@@ -316,5 +299,5 @@ idea {
 }
 
 wrapper {
-    gradleVersion = '4.10.2'
+    gradleVersion = '5.2'
 }

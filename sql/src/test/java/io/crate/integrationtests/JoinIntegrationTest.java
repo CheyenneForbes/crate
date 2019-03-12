@@ -22,20 +22,25 @@
 package io.crate.integrationtests;
 
 import com.carrotsearch.hppc.ObjectObjectHashMap;
+import io.crate.breaker.CrateCircuitBreakerService;
 import io.crate.data.CollectionBucket;
 import io.crate.exceptions.SQLExceptions;
+import io.crate.execution.engine.join.RamBlockSizeCalculator;
 import io.crate.execution.engine.sort.OrderingByPosition;
 import io.crate.metadata.RelationName;
 import io.crate.planner.TableStats;
 import io.crate.testing.TestingHelpers;
 import io.crate.testing.UseHashJoins;
+import org.elasticsearch.common.breaker.CircuitBreaker;
 import org.elasticsearch.index.IndexNotFoundException;
+import org.elasticsearch.indices.breaker.BreakerSettings;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.junit.Test;
 
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Random;
 
 import static io.crate.testing.TestingHelpers.printRows;
 import static io.crate.testing.TestingHelpers.printedTable;
@@ -812,12 +817,30 @@ public class JoinIntegrationTest extends SQLTransportIntegrationTest {
         execute("insert into t1 (a) values (0), (0), (1), (2), (4)");
         execute("insert into t2 (x) values (1), (3), (3), (4), (4)");
         execute("refresh table t1, t2");
-        execute("select a, x from t1 join t2 on t1.a + 1 = t2.x order by a, x");
-        assertThat(TestingHelpers.printedTable(response.rows()),
-            is("0| 1\n" +
-               "0| 1\n" +
-               "2| 3\n" +
-               "2| 3\n"));
+
+        configureQueryCircuitBreakerForCluster(20L, 1.0d);
+        CircuitBreaker queryCircuitBreaker = internalCluster().getInstance(CrateCircuitBreakerService.class).getBreaker(CrateCircuitBreakerService.QUERY);
+        randomiseAndConfigureJoinBlockSize("t1", 5L, queryCircuitBreaker);
+        randomiseAndConfigureJoinBlockSize("t2", 5L, queryCircuitBreaker);
+
+        try {
+            execute("select a, x from t1 join t2 on t1.a + 1 = t2.x order by a, x");
+            assertThat(TestingHelpers.printedTable(response.rows()),
+                is("0| 1\n" +
+                   "0| 1\n" +
+                   "2| 3\n" +
+                   "2| 3\n"));
+        } finally {
+            configureQueryCircuitBreakerForCluster(queryCircuitBreaker.getLimit(), queryCircuitBreaker.getOverhead());
+            Iterable<TableStats> tableStatsOnAllNodes = internalCluster().getInstances(TableStats.class);
+            resetTableStats();
+        }
+    }
+
+    private void resetTableStats() {
+        for (TableStats tableStats : internalCluster().getInstances(TableStats.class)) {
+            tableStats.updateTableStats(new ObjectObjectHashMap<>());
+        }
     }
 
     @Test
@@ -872,6 +895,64 @@ public class JoinIntegrationTest extends SQLTransportIntegrationTest {
         assertThat(TestingHelpers.printedTable(response.rows()),
             is("0| 0| 0\n" +
                "1| 1| 1\n"));
+    }
+
+    @Test
+    public void testBlockHashJoinWithBlockLoadingAndGroupByOnRightSide() {
+        execute("create table t1 (x integer)");
+        execute("insert into t1 (x) values (0), (1), (2), (3), (4), (5), (6), (7), (8), (9)");
+        execute("refresh table t1");
+
+        configureQueryCircuitBreakerForCluster(40L, 1.0d);
+        CircuitBreaker queryCircuitBreaker = internalCluster().getInstance(CrateCircuitBreakerService.class).getBreaker(CrateCircuitBreakerService.QUERY);
+        randomiseAndConfigureJoinBlockSize("t1", 10L, queryCircuitBreaker);
+
+        try {
+            execute("select x from t1 left_rel JOIN (select x x2, count(x) from t1 group by x2) right_rel " +
+                    "ON left_rel.x = right_rel.x2 order by left_rel.x");
+
+            assertThat(TestingHelpers.printedTable(response.rows()),
+                is("0\n" +
+                   "1\n" +
+                   "2\n" +
+                   "3\n" +
+                   "4\n" +
+                   "5\n" +
+                   "6\n" +
+                   "7\n" +
+                   "8\n" +
+                   "9\n"));
+        } finally {
+            configureQueryCircuitBreakerForCluster(queryCircuitBreaker.getLimit(), queryCircuitBreaker.getOverhead());
+            resetTableStats();
+        }
+    }
+
+    private void configureQueryCircuitBreakerForCluster(long availableMemory, double overhead) {
+        for (CrateCircuitBreakerService circuitBreakerService : internalCluster().getInstances(CrateCircuitBreakerService.class)) {
+            circuitBreakerService.registerBreaker(
+                new BreakerSettings(CrateCircuitBreakerService.QUERY, availableMemory, overhead, CircuitBreaker.Type.MEMORY));
+        }
+    }
+
+    private void randomiseAndConfigureJoinBlockSize(String relationName, long rowsCount, CircuitBreaker circuitBreaker) {
+        long availableMemory = circuitBreaker.getLimit() - circuitBreaker.getUsed();
+        // We're randomising the table size we configure in the stats in a way such that the number of rows that fit
+        // in memory is sometimes less than the row count of the table (ie. multiple blocks are created) and sometimes
+        // the entire table fits in memory (ie. one block is used)
+        long tableSizeInBytes = new Random().nextInt(3 * (int) availableMemory);
+        long rowSizeBytes = tableSizeInBytes / rowsCount;
+
+        for (TableStats tableStats : internalCluster().getInstances(TableStats.class)) {
+            ObjectObjectHashMap<RelationName, TableStats.Stats> newStats = new ObjectObjectHashMap<>();
+            newStats.put(new RelationName(sqlExecutor.getCurrentSchema(), relationName), new TableStats.Stats(rowsCount, tableSizeInBytes));
+            tableStats.updateTableStats(newStats);
+        }
+
+        RamBlockSizeCalculator ramBlockSizeCalculator = new RamBlockSizeCalculator(500_000, circuitBreaker, rowSizeBytes, rowsCount);
+        logger.info("\n\tThe block size for relation {}, total size {} bytes, with row count {} and row size {} bytes, " +
+                    "if it would be used in a block join algorithm, would be {}",
+            relationName, tableSizeInBytes, rowsCount, rowSizeBytes, ramBlockSizeCalculator.getAsInt());
     }
 
     @Test

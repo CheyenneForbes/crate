@@ -40,6 +40,7 @@ import io.crate.testing.SQLExecutor;
 import org.elasticsearch.common.settings.Settings;
 import org.junit.Test;
 
+import java.io.IOException;
 import java.util.Collections;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -49,7 +50,7 @@ import static org.mockito.Mockito.mock;
 public class BatchPortalTest extends CrateDummyClusterServiceUnitTest {
 
     @Test
-    public void testEachStatementReceivesCorrectParams() {
+    public void testEachStatementReceivesCorrectParams() throws IOException {
         SQLExecutor sqlExecutor = SQLExecutor.builder(clusterService).enableDefaultTables().build();
 
         AtomicReference<Row> lastParams = new AtomicReference<>();
@@ -60,15 +61,15 @@ public class BatchPortalTest extends CrateDummyClusterServiceUnitTest {
             }
 
             @Override
-            public void execute(DependencyCarrier executor,
-                                PlannerContext plannerContext,
-                                RowConsumer consumer,
-                                Row params,
-                                SubQueryResults subQueryResults) {
+            public void executeOrFail(DependencyCarrier executor,
+                                      PlannerContext plannerContext,
+                                      RowConsumer consumer,
+                                      Row params,
+                                      SubQueryResults subQueryResults) {
                 lastParams.set(params);
             }
         };
-        Planner planner = new Planner(Settings.EMPTY, clusterService, sqlExecutor.functions(), new TableStats()) {
+        Planner planner = new Planner(Settings.EMPTY, clusterService, sqlExecutor.functions(), new TableStats(), () -> true) {
             @Override
             public Plan plan(AnalyzedStatement analyzedStatement, PlannerContext plannerContext) {
                 return insertPlan;

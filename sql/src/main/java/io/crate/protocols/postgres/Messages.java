@@ -22,9 +22,9 @@
 
 package io.crate.protocols.postgres;
 
-import io.crate.expression.symbol.Field;
 import io.crate.data.Row;
 import io.crate.exceptions.SQLExceptions;
+import io.crate.expression.symbol.Field;
 import io.crate.protocols.postgres.types.PGType;
 import io.crate.protocols.postgres.types.PGTypes;
 import io.crate.types.DataType;
@@ -33,7 +33,7 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
 import org.apache.logging.log4j.Logger;
-import org.elasticsearch.common.logging.Loggers;
+import org.apache.logging.log4j.LogManager;
 
 import javax.annotation.Nullable;
 import java.nio.charset.StandardCharsets;
@@ -57,7 +57,7 @@ import java.util.SortedSet;
  */
 public class Messages {
 
-    private static final Logger LOGGER = Loggers.getLogger(Messages.class);
+    private static final Logger LOGGER = LogManager.getLogger(Messages.class);
 
     private static final byte[] SEVERITY_FATAL = "FATAL".getBytes(StandardCharsets.UTF_8);
     private static final byte[] SEVERITY_ERROR = "ERROR".getBytes(StandardCharsets.UTF_8);
@@ -298,8 +298,15 @@ public class Messages {
 
         for (int i = 0; i < row.numColumns(); i++) {
             DataType dataType = columnTypes.get(i);
-            PGType pgType = PGTypes.get(dataType);
-            Object value = row.get(i);
+            PGType pgType;
+            Object value;
+            try {
+                pgType = PGTypes.get(dataType);
+                value = row.get(i);
+            } catch (Exception e) {
+                buffer.release();
+                throw e;
+            }
             if (value == null) {
                 buffer.writeInt(-1);
                 length += 4;
@@ -314,6 +321,7 @@ public class Messages {
                         break;
 
                     default:
+                        buffer.release();
                         throw new AssertionError("Unrecognized formatCode: " + formatCode);
                 }
             }
@@ -356,6 +364,7 @@ public class Messages {
         buffer.writeByte('t');
         buffer.writeInt(messageByteSize);
         if (parameters.length > Short.MAX_VALUE) {
+            buffer.release();
             throw new IllegalArgumentException("Too many parameters. Max supported: " + Short.MAX_VALUE);
         }
         buffer.writeShort(parameters.length);

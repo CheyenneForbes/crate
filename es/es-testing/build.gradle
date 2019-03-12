@@ -1,6 +1,5 @@
 dependencies {
-    compile project(':es:es-core')
-    compile project(':es:es-client')
+    compile project(':es:es-server')
 
     // same deps as in es/upstream/test/framework/build.gradle  except ES/ES-client (we compile the project)
     compile "com.carrotsearch.randomizedtesting:randomizedtesting-runner:${versions.randomizedrunner}"
@@ -12,28 +11,10 @@ dependencies {
     compile "org.apache.httpcomponents:httpcore:${versions.httpcore}"
     compile "commons-logging:commons-logging:${versions.commonslogging}"
     compile "commons-codec:commons-codec:${versions.commonscodec}"
-    compile "org.elasticsearch:securemock:${versions.securemock}"
     compile "org.elasticsearch:mocksocket:${versions.mocksocket}"
+    compile "org.mockito:mockito-core:${versions.mockito}"
 
     // crate extra dependencies
     compile "com.google.code.findbugs:jsr305:${versions.jsr305}"
     compile "com.google.guava:guava:${versions.guava}"
 }
-
-sourceSets {
-    main {
-        java.srcDirs = ['../upstream/test/framework/src/main/java']
-        resources {
-            srcDir '../upstream/test/framework/src/main/resources'
-            include '**/*.*'
-        }
-    }
-}
-
-idea {
-    module {
-        contentRoot = file('../upstream/test/framework')
-        excludeDirs += file('build')
-    }
-}
-

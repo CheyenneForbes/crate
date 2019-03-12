@@ -38,16 +38,16 @@ import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.cluster.snapshots.create.CreateSnapshotRequest;
 import org.elasticsearch.action.admin.cluster.snapshots.create.CreateSnapshotResponse;
 import org.elasticsearch.action.admin.cluster.snapshots.delete.DeleteSnapshotRequest;
-import org.elasticsearch.action.admin.cluster.snapshots.delete.DeleteSnapshotResponse;
 import org.elasticsearch.action.admin.cluster.snapshots.get.GetSnapshotsRequest;
 import org.elasticsearch.action.admin.cluster.snapshots.get.GetSnapshotsResponse;
 import org.elasticsearch.action.admin.cluster.snapshots.get.TransportGetSnapshotsAction;
 import org.elasticsearch.action.admin.cluster.snapshots.restore.RestoreSnapshotRequest;
 import org.elasticsearch.action.admin.cluster.snapshots.restore.RestoreSnapshotResponse;
 import org.elasticsearch.action.support.IndicesOptions;
+import org.elasticsearch.action.support.master.AcknowledgedResponse;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Singleton;
-import org.elasticsearch.common.logging.Loggers;
+import org.apache.logging.log4j.LogManager;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.snapshots.SnapshotInfo;
 import org.elasticsearch.snapshots.SnapshotState;
@@ -65,7 +65,7 @@ import static io.crate.analyze.SnapshotSettings.WAIT_FOR_COMPLETION;
 @Singleton
 public class SnapshotRestoreDDLDispatcher {
 
-    private static final Logger LOGGER = Loggers.getLogger(SnapshotRestoreDDLDispatcher.class);
+    private static final Logger LOGGER = LogManager.getLogger(SnapshotRestoreDDLDispatcher.class);
     private final TransportActionProvider transportActionProvider;
     private final String[] ALL_TEMPLATES = new String[]{"_all"};
 
@@ -81,9 +81,9 @@ public class SnapshotRestoreDDLDispatcher {
 
         transportActionProvider.transportDeleteSnapshotAction().execute(
             new DeleteSnapshotRequest(repositoryName, snapshotName),
-            new ActionListener<DeleteSnapshotResponse>() {
+            new ActionListener<AcknowledgedResponse>() {
                 @Override
-                public void onResponse(DeleteSnapshotResponse response) {
+                public void onResponse(AcknowledgedResponse response) {
                     if (!response.isAcknowledged()) {
                         LOGGER.info("delete snapshot '{}.{}' not acknowledged", repositoryName, snapshotName);
                     }
@@ -189,7 +189,7 @@ public class SnapshotRestoreDDLDispatcher {
             } else if (ignoreUnavailable) {
                 // If ignoreUnavailable is true, it's cheaper to simply return indexName and the partitioned wildcard instead
                 // checking if it's a partitioned table or not
-                resolveIndicesAndTemplatesContext.addIndex(table.tableIdent().indexName());
+                resolveIndicesAndTemplatesContext.addIndex(table.tableIdent().indexNameOrAlias());
                 // For the case its a partitioned table we restore all partitions and the templates
                 String templateName = table.partitionTemplate();
                 resolveIndicesAndTemplatesContext.addIndex(templateName + "*");
@@ -261,7 +261,7 @@ public class SnapshotRestoreDDLDispatcher {
         public static void resolveTableFromSnapshot(RestoreSnapshotAnalyzedStatement.RestoreTableInfo table,
                                                     List<SnapshotInfo> snapshots,
                                                     ResolveIndicesAndTemplatesContext ctx) throws RelationUnknown {
-            String name = table.tableIdent().indexName();
+            String name = table.tableIdent().indexNameOrAlias();
             for (SnapshotInfo snapshot : snapshots) {
                 for (String index : snapshot.indices()) {
                     if (name.equals(index)) {

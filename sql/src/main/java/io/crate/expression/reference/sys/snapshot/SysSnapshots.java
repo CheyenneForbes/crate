@@ -21,66 +21,73 @@
 
 package io.crate.expression.reference.sys.snapshot;
 
-import com.google.common.base.Function;
-import com.google.common.collect.Lists;
+import com.google.common.annotations.VisibleForTesting;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.elasticsearch.Version;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Singleton;
 import org.elasticsearch.repositories.RepositoriesService;
 import org.elasticsearch.repositories.Repository;
+import org.elasticsearch.snapshots.SnapshotException;
 import org.elasticsearch.snapshots.SnapshotId;
 import org.elasticsearch.snapshots.SnapshotInfo;
-import org.elasticsearch.snapshots.SnapshotsService;
+import org.elasticsearch.snapshots.SnapshotState;
 
-import javax.annotation.Nullable;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.function.Supplier;
 
 @Singleton
 public class SysSnapshots {
 
-    private final SnapshotsService snapshotsService;
-    private final RepositoriesService repositoriesService;
+    private static final Logger LOGGER = LogManager.getLogger(SysSnapshots.class);
+    private final Supplier<Collection<Repository>> getRepositories;
 
     @Inject
-    public SysSnapshots(SnapshotsService snapshotsService,
-                        RepositoriesService repositoriesService) {
-        this.snapshotsService = snapshotsService;
-        this.repositoriesService = repositoriesService;
+    public SysSnapshots(RepositoriesService repositoriesService) {
+        this(repositoriesService::getRepositoriesList);
     }
 
-    public Iterable<SysSnapshot> snapshotsGetter() {
-        List<SysSnapshot> sysSnapshots = new ArrayList<>();
-        for (Repository repository : repositoriesService.getRepositoriesList()) {
-            final String repositoryName = repository.getMetadata().name();
+    @VisibleForTesting
+    SysSnapshots(Supplier<Collection<Repository>> getRepositories) {
+        this.getRepositories = getRepositories;
+    }
 
+    public Iterable<SysSnapshot> currentSnapshots() {
+        return () -> getRepositories.get().stream()
+            .flatMap(repository -> repository.getRepositoryData().getSnapshotIds().stream()
+                .map(snapshotId -> createSysSnapshot(repository, snapshotId))
+            ).iterator();
+    }
 
-            List<SnapshotId> compatibleSnapshotIds = new ArrayList<>(
-                repositoriesService.repository(repositoryName).getRepositoryData().getSnapshotIds());
-            Set<SnapshotId> incompatibleSnapshotIds = new HashSet<>(
-                repositoriesService.repository(repositoryName).getRepositoryData().getIncompatibleSnapshotIds());
-            List<SnapshotInfo> snapshots = new ArrayList<>(
-                snapshotsService.snapshots(repositoryName, compatibleSnapshotIds, incompatibleSnapshotIds, true));
-            sysSnapshots.addAll(Lists.transform(snapshots, new Function<SnapshotInfo, SysSnapshot>() {
-                @Nullable
-                @Override
-                public SysSnapshot apply(@Nullable SnapshotInfo snapshot) {
-                    if (snapshot == null) {
-                        return null;
-                    }
-                    return new SysSnapshot(
-                        snapshot.snapshotId().getName(),
-                        repositoryName,
-                        snapshot.indices(),
-                        snapshot.startTime(),
-                        snapshot.endTime(),
-                        snapshot.version().toString(),
-                        snapshot.state().name()
-                    );
-                }
-            }));
+    private static SysSnapshot createSysSnapshot(Repository repository, SnapshotId snapshotId) {
+        SnapshotInfo snapshotInfo;
+        try {
+            snapshotInfo = repository.getSnapshotInfo(snapshotId);
+        } catch (SnapshotException e) {
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug("Couldn't retrieve snapshotId={} error={}", snapshotId, e);
+            }
+            return new SysSnapshot(
+                snapshotId.getName(),
+                repository.getMetadata().name(),
+                Collections.emptyList(),
+                null,
+                null,
+                null,
+                SnapshotState.FAILED.name()
+            );
         }
-        return sysSnapshots;
+        Version version = snapshotInfo.version();
+        return new SysSnapshot(
+            snapshotId.getName(),
+            repository.getMetadata().name(),
+            snapshotInfo.indices(),
+            snapshotInfo.startTime(),
+            snapshotInfo.endTime(),
+            version == null ? null : version.toString(),
+            snapshotInfo.state().name()
+        );
     }
 }

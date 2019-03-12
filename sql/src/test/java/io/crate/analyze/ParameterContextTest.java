@@ -28,6 +28,7 @@ import io.crate.data.Rows;
 import io.crate.test.integration.CrateUnitTest;
 import io.crate.types.ArrayType;
 import io.crate.types.DataTypes;
+import io.crate.types.ObjectType;
 import org.apache.lucene.util.BytesRef;
 import org.junit.Test;
 
@@ -75,7 +76,7 @@ public class ParameterContextTest extends CrateUnitTest {
         assertThat(ctx.getAsSymbol(1), isLiteral(2));
         assertThat(ctx.getAsSymbol(2), isLiteral("bar"));
         assertThat(ctx.getAsSymbol(3), isLiteral(new Object[0], new ArrayType(DataTypes.UNDEFINED)));
-        assertThat(ctx.getAsSymbol(4), isLiteral(new BytesRef[]{new BytesRef("foo"), new BytesRef("bar")}, new ArrayType(DataTypes.STRING)));
+        assertThat(ctx.getAsSymbol(4), isLiteral(new String[]{"foo", "bar"}, new ArrayType(DataTypes.STRING)));
     }
 
     @Test
@@ -105,9 +106,9 @@ public class ParameterContextTest extends CrateUnitTest {
         };
         ParameterContext ctx = new ParameterContext(Row.EMPTY, Rows.of(bulkArgs));
         ctx.setBulkIdx(0);
-        assertThat(ctx.getAsSymbol(0), isLiteral(obj1, DataTypes.OBJECT));
+        assertThat(ctx.getAsSymbol(0), isLiteral(obj1, ObjectType.untyped()));
         ctx.setBulkIdx(1);
-        assertThat(ctx.getAsSymbol(0), isLiteral(obj2, DataTypes.OBJECT));
+        assertThat(ctx.getAsSymbol(0), isLiteral(obj2, ObjectType.untyped()));
     }
 
     @Test

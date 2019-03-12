@@ -24,11 +24,11 @@ package io.crate.protocols.ssl;
 
 import io.crate.plugin.PipelineRegistry;
 import io.netty.handler.ssl.SslContext;
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Provider;
 import org.elasticsearch.common.inject.Singleton;
-import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
 
 import java.lang.reflect.InvocationTargetException;
@@ -45,13 +45,12 @@ public class SslContextProvider implements Provider<SslContext> {
     private static final String SSL_CONTEXT_METHOD_NAME = "buildSslContext";
 
     private final Settings settings;
-    private final Logger logger;
     private SslContext sslContext;
 
     @Inject
     public SslContextProvider(Settings settings, PipelineRegistry pipelineRegistry) {
         this.settings = settings;
-        logger = Loggers.getLogger(getClass().getPackage().getName(), settings);
+        Logger logger = LogManager.getLogger(getClass().getPackage().getName());
 
         if (SslConfigSettings.isHttpsEnabled(settings)) {
             pipelineRegistry.registerSslContextProvider(this);
@@ -72,7 +71,6 @@ public class SslContextProvider implements Provider<SslContext> {
             if (!returnType.isAssignableFrom(value.getClass())) {
                 throw new SslHandlerLoadingException("Returned type did not match the expected type: " + returnType);
             }
-            //noinspection unchecked
             return (SslContext) value;
         } catch (Throwable e) {
             // The JVM wraps the exception of dynamically loaded classes into an InvocationTargetException

@@ -176,12 +176,13 @@ public class LegacyUpsertById implements Plan {
     }
 
     @Override
-    public void execute(DependencyCarrier executor,
-                        PlannerContext plannerCtx,
-                        RowConsumer consumer,
-                        Row params,
-                        SubQueryResults subQueryResults) {
+    public void executeOrFail(DependencyCarrier executor,
+                              PlannerContext plannerCtx,
+                              RowConsumer consumer,
+                              Row params,
+                              SubQueryResults subQueryResults) throws Exception {
         LegacyUpsertByIdTask task = new LegacyUpsertByIdTask(
+            plannerCtx.transactionContext(),
             plannerCtx.jobId(),
             this,
             executor.clusterService(),
@@ -199,6 +200,7 @@ public class LegacyUpsertById implements Plan {
                                                      List<Row> bulkParams,
                                                      SubQueryResults subQueryResults) {
         LegacyUpsertByIdTask task = new LegacyUpsertByIdTask(
+            plannerContext.transactionContext(),
             plannerContext.jobId(),
             this,
             executor.clusterService(),

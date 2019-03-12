@@ -22,7 +22,6 @@ import com.google.common.annotations.VisibleForTesting;
 import io.crate.metadata.UsersMetaData;
 import io.crate.metadata.UsersPrivilegesMetaData;
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.master.TransportMasterNodeAction;
 import org.elasticsearch.cluster.AckedClusterStateUpdateTask;
 import org.elasticsearch.cluster.ClusterState;
@@ -33,10 +32,11 @@ import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.inject.internal.Nullable;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
+
+import javax.annotation.Nullable;
 
 public class TransportDropUserAction extends TransportMasterNodeAction<DropUserRequest, WriteUserResponse> {
 
@@ -45,9 +45,8 @@ public class TransportDropUserAction extends TransportMasterNodeAction<DropUserR
                                    TransportService transportService,
                                    ClusterService clusterService,
                                    ThreadPool threadPool,
-                                   ActionFilters actionFilters,
                                    IndexNameExpressionResolver indexNameExpressionResolver) {
-        super(settings, "crate/sql/drop_user", transportService, clusterService, threadPool, actionFilters,
+        super(settings, "internal:crate:sql/user/drop", transportService, clusterService, threadPool,
             indexNameExpressionResolver, DropUserRequest::new);
     }
 

@@ -23,6 +23,7 @@ import io.crate.analyze.user.Privilege;
 import io.crate.analyze.user.Privilege.State;
 import io.crate.analyze.user.PrivilegeIdent;
 import org.elasticsearch.ElasticsearchParseException;
+import org.elasticsearch.Version;
 import org.elasticsearch.cluster.AbstractNamedDiffable;
 import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.common.io.stream.StreamInput;
@@ -110,6 +111,35 @@ public class UsersPrivilegesMetaData extends AbstractNamedDiffable<MetaData.Cust
     @VisibleForTesting
     public UsersPrivilegesMetaData(Map<String, Set<Privilege>> usersPrivileges) {
         this.usersPrivileges = usersPrivileges;
+    }
+
+    public static UsersPrivilegesMetaData swapPrivileges(UsersPrivilegesMetaData usersPrivileges,
+                                                         RelationName source,
+                                                         RelationName target) {
+        HashMap<String, Set<Privilege>> privilegesByUser = new HashMap<>();
+        for (Map.Entry<String, Set<Privilege>> userPrivileges : usersPrivileges.usersPrivileges.entrySet()) {
+            String user = userPrivileges.getKey();
+            Set<Privilege> privileges = userPrivileges.getValue();
+            Set<Privilege> updatedPrivileges = new HashSet<>();
+            for (Privilege privilege : privileges) {
+                PrivilegeIdent ident = privilege.ident();
+                if (ident.clazz() == Privilege.Clazz.TABLE) {
+                    if (source.fqn().equals(ident.ident())) {
+                        updatedPrivileges.add(
+                            new Privilege(privilege.state(), ident.type(), ident.clazz(), target.fqn(), privilege.grantor()));
+                    } else if (target.fqn().equals(ident.ident())) {
+                        updatedPrivileges.add(
+                            new Privilege(privilege.state(), ident.type(), ident.clazz(), source.fqn(), privilege.grantor()));
+                    } else {
+                        updatedPrivileges.add(privilege);
+                    }
+                } else {
+                    updatedPrivileges.add(privilege);
+                }
+            }
+            privilegesByUser.put(user, updatedPrivileges);
+        }
+        return new UsersPrivilegesMetaData(privilegesByUser);
     }
 
     /**
@@ -351,5 +381,10 @@ public class UsersPrivilegesMetaData extends AbstractNamedDiffable<MetaData.Cust
     @Override
     public String getWriteableName() {
         return TYPE;
+    }
+
+    @Override
+    public Version getMinimalSupportedVersion() {
+        return Version.ES_V_6_1_4;
     }
 }

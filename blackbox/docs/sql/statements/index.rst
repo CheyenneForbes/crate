@@ -15,7 +15,6 @@ SQL Statements
     create-analyzer
     create-blob-table
     create-function
-    create-ingest-rule
     create-repository
     create-snapshot
     create-table
@@ -24,8 +23,8 @@ SQL Statements
     deallocate
     delete
     deny
+    drop-analyzer
     drop-function
-    drop-ingest-rule
     drop-repository
     drop-snapshot
     drop-table
@@ -42,8 +41,10 @@ SQL Statements
     select
     set
     set-transaction
+    set-license
     show-columns
     show-create-table
     show-schemas
     show-tables
+    show
     update

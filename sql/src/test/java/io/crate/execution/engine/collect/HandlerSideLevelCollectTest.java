@@ -37,7 +37,9 @@ import io.crate.expression.symbol.Literal;
 import io.crate.expression.symbol.Symbol;
 import io.crate.integrationtests.SQLTransportIntegrationTest;
 import io.crate.metadata.ColumnIdent;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.FunctionImplementation;
+import io.crate.metadata.TransactionContext;
 import io.crate.metadata.Functions;
 import io.crate.metadata.Reference;
 import io.crate.metadata.ReferenceIdent;
@@ -54,7 +56,6 @@ import io.crate.planner.distribution.DistributionInfo;
 import io.crate.testing.TestingHelpers;
 import io.crate.testing.TestingRowConsumer;
 import io.crate.types.DataTypes;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.Randomness;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.hamcrest.Matchers;
@@ -63,6 +64,7 @@ import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 
@@ -74,7 +76,8 @@ public class HandlerSideLevelCollectTest extends SQLTransportIntegrationTest {
 
     private MapSideDataCollectOperation operation;
     private Functions functions;
-    private RoutingProvider routingProvider = new RoutingProvider(Randomness.get().nextInt(), new String[0]);
+    private RoutingProvider routingProvider = new RoutingProvider(Randomness.get().nextInt(), Collections.emptyList());
+    private TransactionContext txnCtx = CoordinatorTxnCtx.systemTransactionContext();
 
     @Before
     public void prepare() {
@@ -95,8 +98,7 @@ public class HandlerSideLevelCollectTest extends SQLTransportIntegrationTest {
             toCollect,
             ImmutableList.<Projection>of(),
             whereClause.queryOrFallback(),
-            DistributionInfo.DEFAULT_BROADCAST,
-            null
+            DistributionInfo.DEFAULT_BROADCAST
         );
     }
 
@@ -116,12 +118,12 @@ public class HandlerSideLevelCollectTest extends SQLTransportIntegrationTest {
         RoutedCollectPhase collectNode = collectNode(routing, Arrays.<Symbol>asList(clusterNameRef), RowGranularity.CLUSTER);
         Bucket result = collect(collectNode);
         assertThat(result.size(), is(1));
-        assertThat(((BytesRef) result.iterator().next().get(0)).utf8ToString(), Matchers.startsWith("SUITE-"));
+        assertThat(((String) result.iterator().next().get(0)), Matchers.startsWith("SUITE-"));
     }
 
     private Bucket collect(RoutedCollectPhase collectPhase) throws Exception {
         TestingRowConsumer consumer = new TestingRowConsumer();
-        BatchIterator<Row> bi = operation.createIterator(collectPhase, consumer.requiresScroll(), mock(CollectTask.class));
+        BatchIterator<Row> bi = operation.createIterator(txnCtx, collectPhase, consumer.requiresScroll(), mock(CollectTask.class));
         consumer.accept(bi, null);
         return new CollectionBucket(consumer.getResult());
     }
@@ -167,10 +169,13 @@ public class HandlerSideLevelCollectTest extends SQLTransportIntegrationTest {
         RoutedCollectPhase collectNode = collectNode(routing, toCollect, RowGranularity.DOC);
         Bucket result = collect(collectNode);
 
-        String expected = "NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| id| string| NULL| NULL| NULL| NULL| NULL| NULL| NULL| false| true| NULL| NULL| NULL| 1| sys| cluster| sys| NULL| NULL| NULL\n" +
-                          "NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| master_node| string| NULL| NULL| NULL| NULL| NULL| NULL| NULL| false| true| NULL| NULL| NULL| 2| sys| cluster| sys| NULL| NULL| NULL\n" +
-                          "NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| name| string| NULL| NULL| NULL| NULL| NULL| NULL| NULL| false| true| NULL| NULL| NULL| 3| sys| cluster| sys| NULL| NULL| NULL\n" +
-                          "NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| settings| object| NULL| NULL| NULL| NULL| NULL| NULL| NULL| false| true| NULL| NULL| NULL| 4| sys| cluster| sys| NULL| NULL| NULL\n";
+        String expected =
+            "NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| id| string| NULL| NULL| NULL| NULL| NULL| NULL| NULL| false| true| NULL| NULL| NULL| 1| sys| cluster| sys| NULL| NULL| NULL\n" +
+            "NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| license| object| NULL| NULL| NULL| NULL| NULL| NULL| NULL| false| true| NULL| NULL| NULL| 2| sys| cluster| sys| NULL| NULL| NULL\n" +
+            "NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| license['expiry_date']| timestamp| 3| NULL| NULL| NULL| NULL| NULL| NULL| false| true| NULL| NULL| NULL| NULL| sys| cluster| sys| NULL| NULL| NULL\n" +
+            "NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| license['issued_to']| string| NULL| NULL| NULL| NULL| NULL| NULL| NULL| false| true| NULL| NULL| NULL| NULL| sys| cluster| sys| NULL| NULL| NULL\n" +
+            "NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| master_node| string| NULL| NULL| NULL| NULL| NULL| NULL| NULL| false| true| NULL| NULL| NULL| 3| sys| cluster| sys| NULL| NULL| NULL\n" +
+            "NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| name| string| NULL| NULL| NULL| NULL| NULL| NULL| NULL| false| true| NULL| NULL| NULL| 4| sys| cluster| sys| NULL| NULL| NULL";
 
 
         assertThat(TestingHelpers.printedTable(result), Matchers.containsString(expected));

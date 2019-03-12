@@ -23,8 +23,6 @@
 package io.crate.metadata.sys;
 
 import io.crate.metadata.IndexParts;
-import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.common.lucene.BytesRefs;
 
 import javax.annotation.Nullable;
 
@@ -40,18 +38,18 @@ class TableHealth {
         }
     }
 
-    private final BytesRef tableName;
-    private final BytesRef tableSchema;
+    private final String tableName;
+    private final String tableSchema;
     @Nullable
-    private final BytesRef partitionIdent;
+    private final String partitionIdent;
     private final Health health;
     private final long missingShards;
     private final long underreplicatedShards;
     private final String fqn;
 
-    TableHealth(BytesRef tableName,
-                BytesRef tableSchema,
-                @Nullable BytesRef partitionIdent,
+    TableHealth(String tableName,
+                String tableSchema,
+                @Nullable String partitionIdent,
                 Health health,
                 long missingShards,
                 long underreplicatedShards) {
@@ -61,19 +59,19 @@ class TableHealth {
         this.health = health;
         this.missingShards = missingShards;
         this.underreplicatedShards = underreplicatedShards;
-        fqn = IndexParts.toIndexName(BytesRefs.toString(tableSchema), BytesRefs.toString(tableName), null);
+        fqn = IndexParts.toIndexName(tableSchema, tableName, null);
     }
 
-    public BytesRef getTableName() {
+    public String getTableName() {
         return tableName;
     }
 
-    public BytesRef getTableSchema() {
+    public String getTableSchema() {
         return tableSchema;
     }
 
     @Nullable
-    public BytesRef getPartitionIdent() {
+    public String getPartitionIdent() {
         return partitionIdent;
     }
 
@@ -95,5 +93,44 @@ class TableHealth {
 
     public String fqn() {
         return fqn;
+    }
+
+    @Override
+    public String toString() {
+        return "TableHealth{" +
+               "name='" + tableName + '\'' +
+               ", schema='" + tableSchema + '\'' +
+               ", partitionIdent='" + partitionIdent + '\'' +
+               ", health=" + health +
+               ", missingShards=" + missingShards +
+               ", underreplicatedShards=" + underreplicatedShards +
+               '}';
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+
+        TableHealth that = (TableHealth) o;
+
+        if (missingShards != that.missingShards) return false;
+        if (underreplicatedShards != that.underreplicatedShards) return false;
+        if (!tableName.equals(that.tableName)) return false;
+        if (!tableSchema.equals(that.tableSchema)) return false;
+        if (partitionIdent != null ? !partitionIdent.equals(that.partitionIdent) : that.partitionIdent != null)
+            return false;
+        return health == that.health;
+    }
+
+    @Override
+    public int hashCode() {
+        int result = tableName.hashCode();
+        result = 31 * result + tableSchema.hashCode();
+        result = 31 * result + (partitionIdent != null ? partitionIdent.hashCode() : 0);
+        result = 31 * result + health.hashCode();
+        result = 31 * result + (int) (missingShards ^ (missingShards >>> 32));
+        result = 31 * result + (int) (underreplicatedShards ^ (underreplicatedShards >>> 32));
+        return result;
     }
 }

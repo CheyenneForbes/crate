@@ -38,6 +38,7 @@ import io.crate.expression.reference.sys.shard.ShardPartitionOrphanedExpression;
 import io.crate.expression.reference.sys.shard.ShardRecoveryExpression;
 import io.crate.expression.reference.sys.shard.ShardRowContext;
 import io.crate.metadata.ColumnIdent;
+import io.crate.metadata.IndexParts;
 import io.crate.metadata.RelationName;
 import io.crate.metadata.Routing;
 import io.crate.metadata.RoutingProvider;
@@ -60,6 +61,7 @@ import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.index.shard.ShardId;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -119,34 +121,32 @@ public class SysShardsTableInfo extends StaticTableInfo {
 
         static final ColumnIdent MIN_LUCENE_VERSION = new ColumnIdent("min_lucene_version");
         static final ColumnIdent NODE = new ColumnIdent("node");
-        static final ColumnIdent NODE_ID = new ColumnIdent("node", "id");
-        static final ColumnIdent NODE_NAME = new ColumnIdent("node", "name");
     }
 
     public static Map<ColumnIdent, RowCollectExpressionFactory<ShardRowContext>> expressions() {
         return ImmutableMap.<ColumnIdent, RowCollectExpressionFactory<ShardRowContext>>builder()
             .put(Columns.SCHEMA_NAME,
-                () -> NestableCollectExpression.objToBytesRef(r -> r.indexParts().getSchema()))
+                () -> NestableCollectExpression.forFunction(r -> r.indexParts().getSchema()))
             .put(Columns.TABLE_NAME,
-                () -> NestableCollectExpression.objToBytesRef(r -> r.indexParts().getTable()))
+                () -> NestableCollectExpression.forFunction(r -> r.indexParts().getTable()))
             .put(Columns.PARTITION_IDENT,
-                () -> NestableCollectExpression.objToBytesRef(ShardRowContext::partitionIdent))
+                () -> NestableCollectExpression.forFunction(ShardRowContext::partitionIdent))
             .put(Columns.ID, () -> NestableCollectExpression.forFunction(ShardRowContext::id))
             .put(Columns.NUM_DOCS, ShardNumDocsExpression::new)
             .put(Columns.PRIMARY,
                 () -> NestableCollectExpression.forFunction(r -> r.indexShard().routingEntry().primary()))
             .put(Columns.RELOCATING_NODE,
-                () -> NestableCollectExpression.objToBytesRef(r -> r.indexShard().routingEntry().relocatingNodeId()))
+                () -> NestableCollectExpression.forFunction(r -> r.indexShard().routingEntry().relocatingNodeId()))
             .put(Columns.SIZE,
                 () -> NestableCollectExpression.forFunction(ShardRowContext::size))
             .put(Columns.STATE,
-                () -> NestableCollectExpression.objToBytesRef(r -> r.indexShard().state().toString()))
+                () -> NestableCollectExpression.forFunction(r -> r.indexShard().state().toString()))
             .put(Columns.ROUTING_STATE,
-                () -> NestableCollectExpression.objToBytesRef(r -> r.indexShard().routingEntry().state().toString()))
+                () -> NestableCollectExpression.forFunction(r -> r.indexShard().routingEntry().state().toString()))
             .put(Columns.ORPHAN_PARTITION, ShardPartitionOrphanedExpression::new)
             .put(Columns.RECOVERY, ShardRecoveryExpression::new)
-            .put(Columns.PATH, () -> NestableCollectExpression.objToBytesRef(ShardRowContext::path))
-            .put(Columns.BLOB_PATH, () -> NestableCollectExpression.objToBytesRef(ShardRowContext::blobPath))
+            .put(Columns.PATH, () -> NestableCollectExpression.forFunction(ShardRowContext::path))
+            .put(Columns.BLOB_PATH, () -> NestableCollectExpression.forFunction(ShardRowContext::blobPath))
             .put(Columns.MIN_LUCENE_VERSION, ShardMinLuceneVersionExpression::new)
             .put(Columns.NODE, NodeNestableInput::new)
             .build();
@@ -155,28 +155,28 @@ public class SysShardsTableInfo extends StaticTableInfo {
     public static Map<ColumnIdent, RowCollectExpressionFactory<UnassignedShard>> unassignedShardsExpressions() {
         return ImmutableMap.<ColumnIdent, RowCollectExpressionFactory<UnassignedShard>>builder()
             .put(Columns.SCHEMA_NAME,
-                () -> NestableCollectExpression.objToBytesRef(UnassignedShard::schemaName))
+                () -> NestableCollectExpression.forFunction(UnassignedShard::schemaName))
             .put(Columns.TABLE_NAME,
-                () -> NestableCollectExpression.objToBytesRef(UnassignedShard::tableName))
+                () -> NestableCollectExpression.forFunction(UnassignedShard::tableName))
             .put(Columns.PARTITION_IDENT,
-                () -> NestableCollectExpression.objToBytesRef(UnassignedShard::partitionIdent))
+                () -> NestableCollectExpression.forFunction(UnassignedShard::partitionIdent))
             .put(Columns.ID,
                 () -> NestableCollectExpression.forFunction(UnassignedShard::id))
             .put(Columns.NUM_DOCS,
-                () -> NestableCollectExpression.forFunction(r -> 0L))
+                () -> NestableCollectExpression.constant(0L))
             .put(Columns.PRIMARY,
                 () -> NestableCollectExpression.forFunction(UnassignedShard::primary))
             .put(Columns.RELOCATING_NODE,
-                () -> NestableCollectExpression.objToBytesRef(r -> null))
+                () -> NestableCollectExpression.constant(null))
             .put(Columns.SIZE,
-                () -> NestableCollectExpression.forFunction(r -> 0L))
+                () -> NestableCollectExpression.constant(0L))
             .put(Columns.STATE,
-                () -> NestableCollectExpression.objToBytesRef(UnassignedShard::state))
+                () -> NestableCollectExpression.forFunction(UnassignedShard::state))
             .put(Columns.ROUTING_STATE,
-                () -> NestableCollectExpression.objToBytesRef(UnassignedShard::state))
+                () -> NestableCollectExpression.forFunction(UnassignedShard::state))
             .put(Columns.ORPHAN_PARTITION,
                 () -> NestableCollectExpression.forFunction(UnassignedShard::orphanedPartition))
-            .put(Columns.RECOVERY, () -> new NestableCollectExpression<UnassignedShard, Object>() {
+            .put(Columns.RECOVERY, () -> new NestableCollectExpression<>() {
                 @Override
                 public void setNextRow(UnassignedShard unassignedShard) {
                 }
@@ -192,12 +192,12 @@ public class SysShardsTableInfo extends StaticTableInfo {
                 }
             })
             .put(Columns.PATH,
-                () -> NestableCollectExpression.objToBytesRef(r -> null))
+                () -> NestableCollectExpression.constant(null))
             .put(Columns.BLOB_PATH,
-                () -> NestableCollectExpression.objToBytesRef(r -> null))
+                () -> NestableCollectExpression.constant(null))
             .put(Columns.MIN_LUCENE_VERSION,
-                () -> NestableCollectExpression.objToBytesRef(r -> null))
-            .put(Columns.NODE, () -> new NestableCollectExpression<UnassignedShard, Object>() {
+                () -> NestableCollectExpression.constant(null))
+            .put(Columns.NODE, () -> new NestableCollectExpression<>() {
                 @Override
                 public void setNextRow(UnassignedShard unassignedShard) {
                 }
@@ -222,6 +222,20 @@ public class SysShardsTableInfo extends StaticTableInfo {
         Columns.PARTITION_IDENT
     );
 
+    private static final ObjectType TYPE_RECOVERY_SIZE = ObjectType.builder()
+        .setInnerType("used", LongType.INSTANCE)
+        .setInnerType("reused", LongType.INSTANCE)
+        .setInnerType("recovered", LongType.INSTANCE)
+        .setInnerType("percent", FloatType.INSTANCE)
+        .build();
+
+    private static final ObjectType TYPE_RECOVERY_FILES = ObjectType.builder()
+        .setInnerType("used", IntegerType.INSTANCE)
+        .setInnerType("reused", IntegerType.INSTANCE)
+        .setInnerType("recovered", IntegerType.INSTANCE)
+        .setInnerType("percent", FloatType.INSTANCE)
+        .build();
+
     SysShardsTableInfo() {
         super(IDENT, new ColumnRegistrar(IDENT, RowGranularity.SHARD)
                 .register(Columns.SCHEMA_NAME, StringType.INSTANCE)
@@ -235,30 +249,20 @@ public class SysShardsTableInfo extends StaticTableInfo {
                 .register(Columns.STATE, StringType.INSTANCE)
                 .register(Columns.ROUTING_STATE, StringType.INSTANCE)
                 .register(Columns.ORPHAN_PARTITION, BooleanType.INSTANCE)
-
-                .register(Columns.RECOVERY, ObjectType.INSTANCE)
-                .register(Columns.RECOVERY_STAGE, StringType.INSTANCE)
-                .register(Columns.RECOVERY_TYPE, StringType.INSTANCE)
-                .register(Columns.RECOVERY_TOTAL_TIME, LongType.INSTANCE)
-
-                .register(Columns.RECOVERY_SIZE, ObjectType.INSTANCE)
-                .register(Columns.RECOVERY_SIZE_USED, LongType.INSTANCE)
-                .register(Columns.RECOVERY_SIZE_REUSED, LongType.INSTANCE)
-                .register(Columns.RECOVERY_SIZE_RECOVERED, LongType.INSTANCE)
-                .register(Columns.RECOVERY_SIZE_PERCENT, FloatType.INSTANCE)
-
-                .register(Columns.RECOVERY_FILES, ObjectType.INSTANCE)
-                .register(Columns.RECOVERY_FILES_USED, IntegerType.INSTANCE)
-                .register(Columns.RECOVERY_FILES_REUSED, IntegerType.INSTANCE)
-                .register(Columns.RECOVERY_FILES_RECOVERED, IntegerType.INSTANCE)
-                .register(Columns.RECOVERY_FILES_PERCENT, FloatType.INSTANCE)
+                .register(Columns.RECOVERY, ObjectType.builder()
+                    .setInnerType("stage", StringType.INSTANCE)
+                    .setInnerType("type", StringType.INSTANCE)
+                    .setInnerType("total_time", LongType.INSTANCE)
+                    .setInnerType("size", TYPE_RECOVERY_SIZE)
+                    .setInnerType("files", TYPE_RECOVERY_FILES)
+                    .build())
                 .register(Columns.PATH, DataTypes.STRING)
                 .register(Columns.BLOB_PATH, DataTypes.STRING)
-
                 .register(Columns.MIN_LUCENE_VERSION, StringType.INSTANCE)
-                .register(Columns.NODE, DataTypes.OBJECT)
-                .register(Columns.NODE_ID, DataTypes.STRING)
-                .register(Columns.NODE_NAME, DataTypes.STRING),
+                .register(Columns.NODE, ObjectType.builder()
+                    .setInnerType("id", DataTypes.STRING)
+                    .setInnerType("name", DataTypes.STRING)
+                    .build()),
             PRIMARY_KEY);
     }
 
@@ -309,9 +313,9 @@ public class SysShardsTableInfo extends StaticTableInfo {
                               RoutingProvider.ShardSelection shardSelection,
                               SessionContext sessionContext) {
         // TODO: filter on whereClause
-        Map<String, Map<String, IntIndexedContainer>> locations = new TreeMap<>();
-        String[] concreteIndices = clusterState.metaData().getConcreteAllOpenIndices();
-
+        String[] concreteIndices = Arrays.stream(clusterState.metaData().getConcreteAllOpenIndices())
+            .filter(index -> !IndexParts.isDangling(index))
+            .toArray(String[]::new);
         User user = sessionContext != null ? sessionContext.user() : null;
         if (user != null) {
             List<String> accessibleTables = new ArrayList<>(concreteIndices.length);
@@ -324,6 +328,7 @@ public class SysShardsTableInfo extends StaticTableInfo {
             concreteIndices = accessibleTables.toArray(new String[0]);
         }
 
+        Map<String, Map<String, IntIndexedContainer>> locations = new TreeMap<>();
         GroupShardsIterator<ShardIterator> groupShardsIterator =
             clusterState.getRoutingTable().allAssignedShardsGrouped(concreteIndices, true, true);
         for (final ShardIterator shardIt : groupShardsIterator) {

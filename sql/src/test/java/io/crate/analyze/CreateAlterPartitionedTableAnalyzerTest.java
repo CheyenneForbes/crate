@@ -28,7 +28,6 @@ import io.crate.metadata.RelationName;
 import io.crate.sql.parser.ParsingException;
 import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
 import io.crate.testing.SQLExecutor;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.Version;
 import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.ClusterState;
@@ -41,15 +40,16 @@ import org.elasticsearch.test.ClusterServiceUtils;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
+import static io.crate.metadata.FulltextAnalyzerResolver.CustomType.ANALYZER;
 import static io.crate.testing.TestingHelpers.mapToSortedString;
 import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.hasKey;
-import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
@@ -58,13 +58,13 @@ public class CreateAlterPartitionedTableAnalyzerTest extends CrateDummyClusterSe
     private SQLExecutor e;
 
     @Before
-    public void prepare() {
+    public void prepare() throws IOException {
         String analyzerSettings = FulltextAnalyzerResolver.encodeSettings(
             Settings.builder().put("search", "foobar").build()).utf8ToString();
         MetaData metaData = MetaData.builder()
                                     .persistentSettings(
                                         Settings.builder()
-                                                .put("crate.analysis.custom.analyzer.ft_search", analyzerSettings)
+                                                .put(ANALYZER.buildSettingName("ft_search"), analyzerSettings)
                                                 .build())
                                     .build();
         ClusterState state =
@@ -93,7 +93,7 @@ public class CreateAlterPartitionedTableAnalyzerTest extends CrateDummyClusterSe
                                                           "  date timestamp" +
                                                           ") partitioned by (name)");
         assertThat(analysis.partitionedBy().size(), is(1));
-        assertThat(analysis.partitionedBy().get(0), contains("name", "string"));
+        assertThat(analysis.partitionedBy().get(0), contains("name", "keyword"));
 
         // partitioned columns must be not indexed in mapping
         Map<String, Object> nameMapping = (Map<String, Object>) analysis.mappingProperties().get("name");
@@ -105,7 +105,7 @@ public class CreateAlterPartitionedTableAnalyzerTest extends CrateDummyClusterSe
         assertTrue(analysis.isPartitioned());
         assertThat(partitionedByMeta.size(), is(1));
         assertThat(partitionedByMeta.get(0).get(0), is("name"));
-        assertThat(partitionedByMeta.get(0).get(1), is("string"));
+        assertThat(partitionedByMeta.get(0).get(1), is("keyword"));
     }
 
     @Test
@@ -124,7 +124,7 @@ public class CreateAlterPartitionedTableAnalyzerTest extends CrateDummyClusterSe
                 not(hasKey("name")),
                 not(hasKey("date"))
             ));
-        assertThat(analysis.partitionedBy().get(0), contains("name", "string"));
+        assertThat(analysis.partitionedBy().get(0), contains("name", "keyword"));
         assertThat(analysis.partitionedBy().get(1), contains("date", "date"));
     }
 
@@ -147,7 +147,7 @@ public class CreateAlterPartitionedTableAnalyzerTest extends CrateDummyClusterSe
         Map metaColumns = (Map) ((Map) analysis.mapping().get("_meta")).get("columns");
         assertNull(metaColumns);
         assertThat(analysis.partitionedBy().get(0), contains("date", "date"));
-        assertThat(analysis.partitionedBy().get(1), contains("o.name", "string"));
+        assertThat(analysis.partitionedBy().get(1), contains("o.name", "keyword"));
     }
 
     @Test(expected = IllegalArgumentException.class)
@@ -277,10 +277,7 @@ public class CreateAlterPartitionedTableAnalyzerTest extends CrateDummyClusterSe
             "alter table parted partition (date=1395874800000) set (number_of_replicas='0-all')");
         assertThat(analysis.partitionName().isPresent(), is(true));
         assertThat(analysis.partitionName().get(), is(new PartitionName(
-            new RelationName("doc", "parted"), Collections.singletonList(new BytesRef("1395874800000")))));
-        assertThat(analysis.table().tableParameterInfo(), instanceOf(PartitionedTableParameterInfo.class));
-        PartitionedTableParameterInfo tableSettingsInfo = (PartitionedTableParameterInfo) analysis.table().tableParameterInfo();
-        assertThat(tableSettingsInfo.partitionTableSettingsInfo(), instanceOf(TableParameterInfo.class));
+            new RelationName("doc", "parted"), Collections.singletonList("1395874800000"))));
         assertEquals("0-all", analysis.tableParameter().settings().get(AutoExpandReplicas.SETTING.getKey()));
     }
 
@@ -310,15 +307,25 @@ public class CreateAlterPartitionedTableAnalyzerTest extends CrateDummyClusterSe
             "alter table parted set (number_of_shards=10)");
         assertThat(analysis.partitionName().isPresent(), is(false));
         assertThat(analysis.table().isPartitioned(), is(true));
-        assertThat(analysis.table().tableParameterInfo(), instanceOf(PartitionedTableParameterInfo.class));
         assertEquals("10", analysis.tableParameter().settings().get(TableParameterInfo.NUMBER_OF_SHARDS.getKey()));
     }
 
     @Test
-    public void testAlterTablePartitionWithNumberOfShardsIsInvalid() {
-        expectedException.expect(IllegalArgumentException.class);
-        expectedException.expectMessage("Invalid property \"number_of_shards\" passed to [ALTER | CREATE] TABLE statement");
-        e.analyze("alter table parted partition (date=1395874800000) set (number_of_shards=1)");
+    public void testAlterTablePartitionWithNumberOfShards() {
+        AlterTableAnalyzedStatement analysis = e.analyze(
+            "alter table parted partition (date=1395874800000) set (number_of_shards=1)");
+        assertThat(analysis.partitionName().isPresent(), is(true));
+        assertThat(analysis.table().isPartitioned(), is(true));
+        assertEquals("1", analysis.tableParameter().settings().get(TableParameterInfo.NUMBER_OF_SHARDS.getKey()));
+    }
+
+    @Test
+    public void testAlterTablePartitionResetShards() {
+        AlterTableAnalyzedStatement analysis = e.analyze(
+            "alter table parted partition (date=1395874800000) reset (number_of_shards)");
+        assertThat(analysis.partitionName().isPresent(), is(true));
+        assertThat(analysis.table().isPartitioned(), is(true));
+        assertEquals("5", analysis.tableParameter().settings().get(TableParameterInfo.NUMBER_OF_SHARDS.getKey()));
     }
 
     @Test

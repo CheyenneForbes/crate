@@ -30,13 +30,14 @@ import io.crate.action.sql.Option;
 import io.crate.action.sql.SessionContext;
 import io.crate.auth.user.User;
 import io.crate.data.Row;
-import io.crate.metadata.TransactionContext;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.sql.parser.SqlParser;
 import io.crate.sql.tree.Literal;
 import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
 import io.crate.testing.SQLExecutor;
 import io.crate.types.ArrayType;
 import io.crate.types.DataTypes;
+import io.crate.types.ObjectType;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -84,7 +85,7 @@ public class CreateFunctionAnalyzerTest extends CrateDummyClusterServiceUnitTest
         CreateFunctionAnalyzedStatement analysis = (CreateFunctionAnalyzedStatement) e.analyzer.boundAnalyze(
             SqlParser.createStatement("CREATE FUNCTION bar(long, long)" +
                 " RETURNS long LANGUAGE dummy_lang AS 'function(a, b) { return a + b; }'"),
-            new TransactionContext(new SessionContext(0, Option.NONE, User.CRATE_USER, s -> {}, t -> {}, "my_schema")),
+            new CoordinatorTxnCtx(new SessionContext(0, Option.NONE, User.CRATE_USER, s -> {}, t -> {}, "my_schema")),
             new ParameterContext(Row.EMPTY, Collections.emptyList())).analyzedStatement();
 
         assertThat(analysis.schema(), is("my_schema"));
@@ -96,7 +97,7 @@ public class CreateFunctionAnalyzerTest extends CrateDummyClusterServiceUnitTest
         CreateFunctionAnalyzedStatement analysis = (CreateFunctionAnalyzedStatement) e.analyzer.boundAnalyze(
             SqlParser.createStatement("CREATE FUNCTION my_other_schema.bar(long, long)" +
                 " RETURNS long LANGUAGE dummy_lang AS 'function(a, b) { return a + b; }'"),
-            new TransactionContext(new SessionContext(0, Option.NONE, User.CRATE_USER, s -> {}, t -> {}, "my_schema")),
+            new CoordinatorTxnCtx(new SessionContext(0, Option.NONE, User.CRATE_USER, s -> {}, t -> {}, "my_schema")),
             new ParameterContext(Row.EMPTY, Collections.emptyList())).analyzedStatement();
 
         assertThat(analysis.schema(), is("my_other_schema"));
@@ -144,7 +145,7 @@ public class CreateFunctionAnalyzerTest extends CrateDummyClusterServiceUnitTest
         assertThat(analysis.replace(), is(false));
         assertThat(analysis.returnType(), is(new ArrayType(DataTypes.GEO_POINT)));
         assertThat(analysis.arguments().get(0), is(FunctionArgumentDefinition.of(new ArrayType(DataTypes.INTEGER))));
-        assertThat(analysis.arguments().get(1), is(FunctionArgumentDefinition.of(DataTypes.OBJECT)));
+        assertThat(analysis.arguments().get(1), is(FunctionArgumentDefinition.of(ObjectType.untyped())));
         assertThat(analysis.arguments().get(2), is(FunctionArgumentDefinition.of(DataTypes.IP)));
         assertThat(analysis.arguments().get(3), is(FunctionArgumentDefinition.of(DataTypes.TIMESTAMP)));
         assertThat(analysis.language(), is(Literal.fromObject("dummy_lang")));

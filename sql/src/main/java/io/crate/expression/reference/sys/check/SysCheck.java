@@ -23,8 +23,6 @@
 package io.crate.expression.reference.sys.check;
 
 
-import org.apache.lucene.util.BytesRef;
-
 import javax.annotation.concurrent.ThreadSafe;
 import java.util.concurrent.CompletableFuture;
 
@@ -49,13 +47,19 @@ public interface SysCheck {
 
     /**
      * Returns the unique id of the check.
+     *
+     * We have a unique link per check (https://cr8.is/d-cluster-check-ID) which points to some documentation for users,
+     * so that they can get an idea on what to do about a warning or error.
+     *
+     * Currently we can't change the links to point something else, which is why new checks must use a new ID and not re-use old IDs
+     * (sometimes we delete sys checks when they're no longer appropriate)
      */
     int id();
 
     /**
      * Returns the message description relevant for the check.
      */
-    BytesRef description();
+    String description();
 
     /**
      * Returns the level of {@link Severity} for the check.

@@ -45,6 +45,7 @@ statement
     | SHOW SCHEMAS (LIKE pattern=stringLiteral | where)?                             #showSchemas
     | SHOW COLUMNS (FROM | IN) tableName=qname ((FROM | IN) schema=qname)?
         (LIKE pattern=stringLiteral | where)?                                        #showColumns
+    | SHOW (qname | ALL)                                                             #showSessionParameter
     | ALTER TABLE alterTableDefinition ADD COLUMN? addColumnDefinition               #addColumn
     | ALTER TABLE alterTableDefinition
         (SET '(' genericProperties ')' | RESET ('(' ident (',' ident)* ')')?)        #alterTableProperties
@@ -54,6 +55,9 @@ statement
     | ALTER (BLOB)? TABLE alterTableDefinition RENAME TO qname                       #alterTableRename
     | ALTER (BLOB)? TABLE alterTableDefinition REROUTE rerouteOption                 #alterTableReroute
     | ALTER CLUSTER REROUTE RETRY FAILED                                             #alterClusterRerouteRetryFailed
+    | ALTER CLUSTER SWAP TABLE source=qname TO target=qname withProperties?          #alterClusterSwapTable
+    | ALTER CLUSTER DECOMMISSION node=expr                                           #alterClusterDecommissionNode
+    | ALTER CLUSTER GC DANGLING ARTIFACTS                                            #alterClusterGCDanglingArtifacts
     | ALTER USER name=ident SET '(' genericProperties ')'                            #alterUser
     | RESET GLOBAL primaryExpression (',' primaryExpression)*                        #resetGlobal
     | SET SESSION CHARACTERISTICS AS TRANSACTION setExpr (setExpr)*                  #setSessionTransactionMode
@@ -61,9 +65,10 @@ statement
         (EQ | TO) (DEFAULT | setExpr (',' setExpr)*)                                 #set
     | SET GLOBAL (PERSISTENT | TRANSIENT)?
         setGlobalAssignment (',' setGlobalAssignment)*                               #setGlobal
+    | SET LICENSE stringLiteral                                                      #setLicense
     | KILL (ALL | jobId=parameterOrString)                                           #kill
     | INSERT INTO table ('(' ident (',' ident)* ')')? insertSource
-        (onDuplicate | onConflict)?                                                  #insert
+        onConflict?                                                                  #insert
     | RESTORE SNAPSHOT qname (ALL | TABLE tableWithPartitions) withProperties?       #restore
     | COPY tableWithPartition FROM path=expr withProperties? (RETURN SUMMARY)?       #copyFrom
     | COPY tableWithPartition columns? where?
@@ -76,8 +81,8 @@ statement
     | DROP FUNCTION (IF EXISTS)? name=qname
         '(' (functionArgument (',' functionArgument)*)? ')'                          #dropFunction
     | DROP USER (IF EXISTS)? name=ident                                              #dropUser
-    | DROP INGEST RULE (IF EXISTS)? rule_name=ident                                  #dropIngestRule
     | DROP VIEW (IF EXISTS)? names=qnames                                            #dropView
+    | DROP ANALYZER name=ident                                                       #dropAnalyzer
     | GRANT (priviliges=idents | ALL PRIVILEGES?)
         (ON clazz qnames)? TO users=idents                                           #grantPrivilege
     | DENY (priviliges=idents | ALL PRIVILEGES?)
@@ -214,9 +219,9 @@ valueExpression
 
 primaryExpression
     : parameterOrLiteral                                                             #defaultParamOrLiteral
-    | qname '(' ASTERISK ')'                                                         #functionCall
+    | qname '(' ASTERISK ')' over?                                                   #functionCall
     | ident                                                                          #columnReference
-    | qname '(' (setQuant? expr (',' expr)*)? ')'                                    #functionCall
+    | qname '(' (setQuant? expr (',' expr)*)? ')' over?                              #functionCall
     | subqueryExpression                                                             #subqueryExpressionDefault
     // This case handles a simple parenthesized expression.
     | '(' expr ')'                                                                   #nestedExpression
@@ -234,7 +239,7 @@ primaryExpression
     | EXTRACT '(' stringLiteralOrIdentifier FROM expr ')'                            #extract
     | CAST '(' expr AS dataType ')'                                                  #cast
     | TRY_CAST '(' expr AS dataType ')'                                              #cast
-    | CASE valueExpression whenClause+ (ELSE elseExpr=expr)? END                     #simpleCase
+    | CASE operand=expr whenClause+ (ELSE elseExpr=expr)? END                        #simpleCase
     | CASE whenClause+ (ELSE elseExpr=expr)? END                                     #searchedCase
     | IF '('condition=expr ',' trueValue=expr (',' falseValue=expr)? ')'             #ifCase
     | ARRAY subqueryExpression                                                       #arraySubquery
@@ -267,6 +272,7 @@ parameterOrLiteral
 
 parameterOrSimpleLiteral
     : nullLiteral
+    | escapedCharsStringLiteral
     | stringLiteral
     | numericLiteral
     | booleanLiteral
@@ -297,6 +303,10 @@ nullLiteral
     : NULL
     ;
 
+escapedCharsStringLiteral
+    : ESCAPED_STRING
+    ;
+
 stringLiteral
     : STRING
     ;
@@ -322,6 +332,28 @@ datetimeLiteral
 
 whenClause
     : WHEN condition=expr THEN result=expr
+    ;
+
+over
+    : OVER '('
+        (PARTITION BY partition+=expr (',' partition+=expr)*)?
+        (ORDER BY sortItem (',' sortItem)*)?
+        windowFrame?
+      ')'
+    ;
+
+windowFrame
+    : frameType=RANGE start=frameBound
+    | frameType=ROWS start=frameBound
+    | frameType=RANGE BETWEEN start=frameBound AND end=frameBound
+    | frameType=ROWS BETWEEN start=frameBound AND end=frameBound
+    ;
+
+frameBound
+    : UNBOUNDED boundType=PRECEDING                 #unboundedFrame
+    | UNBOUNDED boundType=FOLLOWING                 #unboundedFrame
+    | CURRENT ROW                                   #currentRowBound
+    | expr boundType=(PRECEDING | FOLLOWING)        #boundedFrame
     ;
 
 qnames
@@ -396,10 +428,6 @@ insertSource
    | '(' query ')'
    ;
 
-onDuplicate
-   : ON DUPLICATE KEY UPDATE assignment (',' assignment)*
-   ;
-
 onConflict
    : ON CONFLICT conflictTarget? DO NOTHING
    | ON CONFLICT conflictTarget DO UPDATE SET assignment (',' assignment)*
@@ -424,8 +452,8 @@ assignment
 createStmt
     : CREATE TABLE (IF NOT EXISTS)? table
         '(' tableElement (',' tableElement)* ')'
-         crateTableOption* withProperties?                                           #createTable
-    | CREATE BLOB TABLE table numShards=clusteredInto? withProperties?               #createBlobTable
+         partitionedByOrClusteredInto withProperties?                                #createTable
+    | CREATE BLOB TABLE table numShards=blobClusteredInto? withProperties?           #createBlobTable
     | CREATE REPOSITORY name=ident TYPE type=ident withProperties?                   #createRepository
     | CREATE SNAPSHOT qname (ALL | TABLE tableWithPartitions) withProperties?        #createSnapshot
     | CREATE ANALYZER name=ident (EXTENDS extendedName=ident)?
@@ -437,10 +465,6 @@ createStmt
         AS body=parameterOrString                                                    #createFunction
     | CREATE USER name=ident withProperties?                                         #createUser
     | CREATE ( OR REPLACE )? VIEW name=qname AS query                                #createView
-    | CREATE INGEST RULE rule_name=ident
-        ON source_ident=ident
-        (where)?
-        INTO table_ident=qname                                                       #createIngestRule
     ;
 
 functionArgument
@@ -452,14 +476,22 @@ alterTableDefinition
     | tableWithPartition                                                             #tableWithPartitionDefault
     ;
 
-crateTableOption
-    : PARTITIONED BY columns                                                         #partitionedBy
-    | CLUSTERED (BY '(' routing=primaryExpression ')')?
-        (INTO numShards=parameterOrInteger SHARDS)?                                  #clusteredBy
+partitionedByOrClusteredInto
+    : partitionedBy? clusteredBy?
+    | clusteredBy? partitionedBy?
     ;
 
-clusteredInto
-    : CLUSTERED INTO numShards=parameterOrSimpleLiteral SHARDS
+partitionedBy
+    : PARTITIONED BY columns
+    ;
+
+clusteredBy
+    : CLUSTERED (BY '(' routing=primaryExpression ')')?
+        (INTO numShards=parameterOrInteger SHARDS)?
+    ;
+
+blobClusteredInto
+    : CLUSTERED INTO numShards=parameterOrInteger SHARDS
     ;
 
 tableElement
@@ -495,19 +527,9 @@ rerouteOption
     ;
 
 dataType
-    : STRING_TYPE
-    | BOOLEAN
-    | BYTE
-    | SHORT
-    | INT
-    | INTEGER
-    | LONG
-    | FLOAT
-    | DOUBLE
-    | TIMESTAMP
-    | IP
-    | GEO_POINT
-    | GEO_SHAPE
+    : IDENTIFIER
+    | quotedIdentifier
+    | nonReserved
     | objectTypeDefinition
     | arrayTypeDefinition
     | setTypeDefinition
@@ -621,17 +643,19 @@ nonReserved
     : ALIAS | ANALYZE | ANALYZER | BERNOULLI | BLOB | CATALOGS | CHAR_FILTERS | CLUSTERED
     | COLUMNS | COPY | CURRENT | DATE | DAY | DEALLOCATE | DISTRIBUTED | DUPLICATE | DYNAMIC | EXPLAIN
     | EXTENDS | FOLLOWING | FORMAT | FULLTEXT | FUNCTIONS | GEO_POINT | GEO_SHAPE | GLOBAL
-    | GRAPHVIZ | HOUR | IGNORED | KEY | KILL | LOGICAL | LOCAL | MATERIALIZED | MINUTE
+    | GRAPHVIZ | HOUR | IGNORED | KEY | KILL | LICENSE | LOGICAL | LOCAL | MATERIALIZED | MINUTE
     | MONTH | OFF | ONLY | OVER | OPTIMIZE | PARTITION | PARTITIONED | PARTITIONS | PLAIN
     | PRECEDING | RANGE | REFRESH | ROW | ROWS | SCHEMAS | SECOND | SESSION
     | SHARDS | SHOW | STORAGE | STRICT | SYSTEM | TABLES | TABLESAMPLE | TEXT | TIME
     | TIMESTAMP | TO | TOKENIZER | TOKEN_FILTERS | TYPE | VALUES | VIEW | YEAR
     | REPOSITORY | SNAPSHOT | RESTORE | GENERATED | ALWAYS | BEGIN | COMMIT
     | ISOLATION | TRANSACTION | CHARACTERISTICS | LEVEL | LANGUAGE | OPEN | CLOSE | RENAME
-    | PRIVILEGES | SCHEMA | INGEST | RULE | PREPARE
+    | PRIVILEGES | SCHEMA | PREPARE
     | REROUTE | MOVE | SHARD | ALLOCATE | REPLICA | CANCEL | CLUSTER | RETRY | FAILED
     | DO | NOTHING | CONFLICT | TRANSACTION_ISOLATION | RETURN | SUMMARY
     | WORK | SERIALIZABLE | REPEATABLE | COMMITTED | UNCOMMITTED | READ | WRITE | DEFERRABLE
+    | STRING_TYPE | IP | DOUBLE | FLOAT | TIMESTAMP | LONG | INT | INTEGER | SHORT | BYTE | BOOLEAN
+    | REPLACE | SWAP | GC | DANGLING | ARTIFACTS | DECOMMISSION
     ;
 
 SELECT: 'SELECT';
@@ -715,6 +739,11 @@ RECURSIVE: 'RECURSIVE';
 CREATE: 'CREATE';
 BLOB: 'BLOB';
 TABLE: 'TABLE';
+SWAP: 'SWAP';
+GC: 'GC';
+DANGLING: 'DANGLING';
+ARTIFACTS: 'ARTIFACTS';
+DECOMMISSION: 'DECOMMISSION';
 CLUSTER: 'CLUSTER';
 REPOSITORY: 'REPOSITORY';
 SNAPSHOT: 'SNAPSHOT';
@@ -756,6 +785,7 @@ GEO_SHAPE: 'GEO_SHAPE';
 GLOBAL : 'GLOBAL';
 SESSION : 'SESSION';
 LOCAL : 'LOCAL';
+LICENSE : 'LICENSE';
 
 BEGIN: 'BEGIN';
 COMMIT: 'COMMIT';
@@ -866,9 +896,6 @@ REVOKE: 'REVOKE';
 PRIVILEGES: 'PRIVILEGES';
 SCHEMA: 'SCHEMA';
 
-INGEST: 'INGEST';
-RULE: 'RULE';
-
 RETURN: 'RETURN';
 SUMMARY: 'SUMMARY';
 
@@ -894,6 +921,10 @@ SEMICOLON: ';';
 
 STRING
     : '\'' ( ~'\'' | '\'\'' )* '\''
+    ;
+
+ESCAPED_STRING
+    : 'E' '\'' ( ~'\'' | '\'\'' | '\\\'' )* '\''
     ;
 
 INTEGER_VALUE

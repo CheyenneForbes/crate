@@ -29,10 +29,15 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Multimap;
 import io.crate.action.sql.Option;
 import io.crate.analyze.DataTypeAnalyzer;
+import io.crate.analyze.FrameBoundDefinition;
 import io.crate.analyze.NegateLiterals;
+import io.crate.analyze.OrderBy;
 import io.crate.analyze.SubscriptContext;
 import io.crate.analyze.SubscriptValidator;
+import io.crate.analyze.WindowDefinition;
+import io.crate.analyze.WindowFrameDefinition;
 import io.crate.analyze.relations.FieldProvider;
+import io.crate.analyze.relations.OrderyByAnalyzer;
 import io.crate.analyze.relations.QueriedRelation;
 import io.crate.exceptions.ColumnUnknownException;
 import io.crate.exceptions.ConversionException;
@@ -62,14 +67,15 @@ import io.crate.expression.symbol.Literal;
 import io.crate.expression.symbol.SelectSymbol;
 import io.crate.expression.symbol.Symbol;
 import io.crate.expression.symbol.Symbols;
+import io.crate.expression.symbol.WindowFunction;
 import io.crate.expression.symbol.format.SymbolFormatter;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.FunctionIdent;
 import io.crate.metadata.FunctionImplementation;
 import io.crate.metadata.FunctionInfo;
 import io.crate.metadata.Functions;
 import io.crate.metadata.Reference;
 import io.crate.metadata.Scalar;
-import io.crate.metadata.TransactionContext;
 import io.crate.metadata.table.Operation;
 import io.crate.sql.ExpressionFormatter;
 import io.crate.sql.parser.SqlParser;
@@ -86,8 +92,10 @@ import io.crate.sql.tree.Cast;
 import io.crate.sql.tree.ComparisonExpression;
 import io.crate.sql.tree.CurrentTime;
 import io.crate.sql.tree.DoubleLiteral;
+import io.crate.sql.tree.EscapedCharStringLiteral;
 import io.crate.sql.tree.Expression;
 import io.crate.sql.tree.Extract;
+import io.crate.sql.tree.FrameBound;
 import io.crate.sql.tree.FunctionCall;
 import io.crate.sql.tree.IfExpression;
 import io.crate.sql.tree.InListExpression;
@@ -114,9 +122,12 @@ import io.crate.sql.tree.SubqueryExpression;
 import io.crate.sql.tree.SubscriptExpression;
 import io.crate.sql.tree.TryCast;
 import io.crate.sql.tree.WhenClause;
+import io.crate.sql.tree.Window;
+import io.crate.sql.tree.WindowFrame;
 import io.crate.types.ArrayType;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
+import io.crate.types.ObjectType;
 import io.crate.types.UndefinedType;
 
 import javax.annotation.Nullable;
@@ -151,7 +162,7 @@ public class ExpressionAnalyzer {
             .put(ComparisonExpression.Type.LESS_THAN_OR_EQUAL, ComparisonExpression.Type.GREATER_THAN_OR_EQUAL)
             .build();
 
-    private final TransactionContext transactionContext;
+    private final CoordinatorTxnCtx coordinatorTxnCtx;
     private final java.util.function.Function<ParameterExpression, Symbol> convertParamFunction;
     private final FieldProvider<?> fieldProvider;
 
@@ -164,21 +175,21 @@ public class ExpressionAnalyzer {
     private static final Pattern SUBSCRIPT_SPLIT_PATTERN = Pattern.compile("^([^\\.\\[]+)(\\.*)([^\\[]*)(\\['.*'\\])");
 
     public ExpressionAnalyzer(Functions functions,
-                              TransactionContext transactionContext,
+                              CoordinatorTxnCtx coordinatorTxnCtx,
                               java.util.function.Function<ParameterExpression, Symbol> convertParamFunction,
                               FieldProvider fieldProvider,
                               @Nullable SubqueryAnalyzer subQueryAnalyzer) {
-        this(functions, transactionContext, convertParamFunction, fieldProvider, subQueryAnalyzer, Operation.READ);
+        this(functions, coordinatorTxnCtx, convertParamFunction, fieldProvider, subQueryAnalyzer, Operation.READ);
     }
 
     public ExpressionAnalyzer(Functions functions,
-                              TransactionContext transactionContext,
+                              CoordinatorTxnCtx coordinatorTxnCtx,
                               java.util.function.Function<ParameterExpression, Symbol> convertParamFunction,
                               FieldProvider fieldProvider,
                               @Nullable SubqueryAnalyzer subQueryAnalyzer,
                               Operation operation) {
         this.functions = functions;
-        this.transactionContext = transactionContext;
+        this.coordinatorTxnCtx = coordinatorTxnCtx;
         this.convertParamFunction = convertParamFunction;
         this.fieldProvider = fieldProvider;
         this.subQueryAnalyzer = subQueryAnalyzer;
@@ -228,6 +239,7 @@ public class ExpressionAnalyzer {
             name = parts.get(1);
         }
 
+        WindowDefinition windowDefinition = getWindowDefinition(node.getWindow(), context);
         if (node.isDistinct()) {
             if (arguments.size() > 1) {
                 throw new UnsupportedOperationException(String.format(Locale.ENGLISH,
@@ -242,20 +254,59 @@ public class ExpressionAnalyzer {
             String nodeName = "collection_" + name;
             List<Symbol> outerArguments = ImmutableList.of(collectSetFunction);
             try {
-                return allocateBuiltinOrUdfFunction(schema, nodeName, outerArguments, context);
+                return allocateBuiltinOrUdfFunction(schema, nodeName, outerArguments, windowDefinition, context);
             } catch (UnsupportedOperationException ex) {
                 throw new UnsupportedOperationException(String.format(Locale.ENGLISH,
                     "unknown function %s(DISTINCT %s)", name, arguments.get(0).valueType()), ex);
             }
         } else {
-            return allocateBuiltinOrUdfFunction(schema, name, arguments, context);
+            return allocateBuiltinOrUdfFunction(schema, name, arguments, windowDefinition, context);
         }
+    }
+
+    @Nullable
+    private WindowDefinition getWindowDefinition(Optional<Window> maybeWindow, ExpressionAnalysisContext context) {
+        if (!maybeWindow.isPresent()) {
+            return null;
+        }
+
+        Window window = maybeWindow.get();
+        List<Symbol> partitionSymbols = new ArrayList<>(window.getPartitions().size());
+        for (Expression partition : window.getPartitions()) {
+            partitionSymbols.add(convert(partition, context));
+        }
+
+        OrderBy orderBy = OrderyByAnalyzer.analyzeSortItems(window.getOrderBy(), sortKey -> convert(sortKey, context));
+
+        WindowFrameDefinition windowFrameDefinition = WindowDefinition.DEFAULT_WINDOW_FRAME;
+        if (window.getWindowFrame().isPresent()) {
+            WindowFrame windowFrame = window.getWindowFrame().get();
+            FrameBound start = windowFrame.getStart();
+            FrameBoundDefinition startBound = convertToAnalyzedFrameBound(context, start);
+
+            FrameBoundDefinition endBound = null;
+            if (windowFrame.getEnd().isPresent()) {
+                endBound = convertToAnalyzedFrameBound(context, windowFrame.getEnd().get());
+            }
+
+            windowFrameDefinition = new WindowFrameDefinition(windowFrame.getType(), startBound, endBound);
+        }
+
+        return new WindowDefinition(partitionSymbols, orderBy, windowFrameDefinition);
+    }
+
+    private FrameBoundDefinition convertToAnalyzedFrameBound(ExpressionAnalysisContext context, FrameBound frameBound) {
+        Symbol startBoundValue = null;
+        if (frameBound.getValue() != null) {
+            startBoundValue = convert(frameBound.getValue(), context);
+        }
+        return new FrameBoundDefinition(frameBound.getType(), startBoundValue);
     }
 
     public ExpressionAnalyzer copyForOperation(Operation operation) {
         return new ExpressionAnalyzer(
             functions,
-            transactionContext,
+            coordinatorTxnCtx,
             convertParamFunction,
             fieldProvider,
             subQueryAnalyzer,
@@ -579,7 +630,7 @@ public class ExpressionAnalyzer {
         }
 
         private Symbol createSubscript(Symbol name, Symbol index, ExpressionAnalysisContext context) {
-            String function = name.valueType().equals(DataTypes.OBJECT)
+            String function = name.valueType().id() == ObjectType.ID
                 ? SubscriptObjectFunction.NAME
                 : SubscriptFunction.NAME;
             return allocateFunction(function, ImmutableList.of(name, index), context);
@@ -629,7 +680,7 @@ public class ExpressionAnalyzer {
             Symbol left = process(node.getLeft(), context);
             Symbol right = process(node.getRight(), context);
 
-            Comparison comparison = new Comparison(functions, transactionContext, node.getType(), left, right);
+            Comparison comparison = new Comparison(functions, coordinatorTxnCtx, node.getType(), left, right);
             comparison.normalize(context);
             FunctionIdent ident = comparison.toFunctionIdent();
             return allocateFunction(ident.name(), comparison.arguments(), context);
@@ -715,7 +766,7 @@ public class ExpressionAnalyzer {
             try {
                 return fieldProvider.resolveField(node.getName(), null, operation);
             } catch (ColumnUnknownException exception) {
-                if (transactionContext.sessionContext().options().contains(Option.ALLOW_QUOTED_SUBSCRIPT)) {
+                if (coordinatorTxnCtx.sessionContext().options().contains(Option.ALLOW_QUOTED_SUBSCRIPT)) {
                     String quotedSubscriptLiteral = getQuotedSubscriptLiteral(node.getName().toString());
                     if (quotedSubscriptLiteral != null) {
                         return process(SqlParser.createExpression(quotedSubscriptLiteral), context);
@@ -735,6 +786,11 @@ public class ExpressionAnalyzer {
 
         @Override
         protected Symbol visitStringLiteral(StringLiteral node, ExpressionAnalysisContext context) {
+            return Literal.of(node.getValue());
+        }
+
+        @Override
+        protected Symbol visitEscapedCharStringLiteral(EscapedCharStringLiteral node, ExpressionAnalysisContext context) {
             return Literal.of(node.getValue());
         }
 
@@ -800,14 +856,14 @@ public class ExpressionAnalyzer {
             Symbol min = process(node.getMin(), context);
             Symbol max = process(node.getMax(), context);
 
-            Comparison gte = new Comparison(functions, transactionContext, ComparisonExpression.Type.GREATER_THAN_OR_EQUAL, value, min);
+            Comparison gte = new Comparison(functions, coordinatorTxnCtx, ComparisonExpression.Type.GREATER_THAN_OR_EQUAL, value, min);
             FunctionIdent gteIdent = gte.normalize(context).toFunctionIdent();
             Symbol gteFunc = allocateFunction(
                 gteIdent.name(),
                 gte.arguments(),
                 context);
 
-            Comparison lte = new Comparison(functions, transactionContext, ComparisonExpression.Type.LESS_THAN_OR_EQUAL, value, max);
+            Comparison lte = new Comparison(functions, coordinatorTxnCtx, ComparisonExpression.Type.LESS_THAN_OR_EQUAL, value, max);
             FunctionIdent lteIdent = lte.normalize(context).toFunctionIdent();
             Symbol lteFunc = allocateFunction(
                 lteIdent.name(),
@@ -878,28 +934,28 @@ public class ExpressionAnalyzer {
             }
             return new SelectSymbol(relation, dataType, resultType);
         }
-
     }
 
     private Symbol allocateBuiltinOrUdfFunction(String schema,
                                                 String functionName,
                                                 List<Symbol> arguments,
+                                                WindowDefinition windowDefinition,
                                                 ExpressionAnalysisContext context) {
-        return allocateBuiltinOrUdfFunction(schema, functionName, arguments, context, functions, transactionContext);
+        return allocateBuiltinOrUdfFunction(schema, functionName, arguments, context, functions, windowDefinition, coordinatorTxnCtx);
     }
 
     private Symbol allocateFunction(String functionName,
                                     List<Symbol> arguments,
                                     ExpressionAnalysisContext context) {
-        return allocateFunction(functionName, arguments, context, functions, transactionContext);
+        return allocateFunction(functionName, arguments, context, functions, coordinatorTxnCtx);
     }
 
     static Symbol allocateFunction(String functionName,
                                    List<Symbol> arguments,
                                    ExpressionAnalysisContext context,
                                    Functions functions,
-                                   TransactionContext transactionContext) {
-        return allocateBuiltinOrUdfFunction(null, functionName, arguments, context, functions, transactionContext);
+                                   CoordinatorTxnCtx coordinatorTxnCtx) {
+        return allocateBuiltinOrUdfFunction(null, functionName, arguments, context, functions, null, coordinatorTxnCtx);
     }
 
     /**
@@ -911,7 +967,8 @@ public class ExpressionAnalyzer {
      * @param arguments The arguments to provide to the {@link Function}.
      * @param context Context holding the state for the current translation.
      * @param functions The {@link Functions} to normalize constant expressions.
-     * @param transactionContext {@link TransactionContext} for this transaction.
+     * @param windowDefinition The definition of the window the allocated function will be executed against.
+     * @param coordinatorTxnCtx {@link CoordinatorTxnCtx} for this transaction.
      * @return The supplied {@link Function} or a {@link Literal} in case of constant folding.
      */
     private static Symbol allocateBuiltinOrUdfFunction(@Nullable String schema,
@@ -919,21 +976,33 @@ public class ExpressionAnalyzer {
                                                        List<Symbol> arguments,
                                                        ExpressionAnalysisContext context,
                                                        Functions functions,
-                                                       TransactionContext transactionContext) {
+                                                       @Nullable WindowDefinition windowDefinition,
+                                                       CoordinatorTxnCtx coordinatorTxnCtx) {
         FunctionImplementation funcImpl = functions.get(
             schema,
             functionName,
             arguments,
-            transactionContext.sessionContext().searchPath());
+            coordinatorTxnCtx.sessionContext().searchPath());
 
         FunctionInfo functionInfo = funcImpl.info();
-        if (functionInfo.type() == FunctionInfo.Type.AGGREGATE) {
-            context.indicateAggregates();
-        }
         List<Symbol> castArguments = cast(arguments, functionInfo.ident().argumentTypes());
-        Function newFunction = new Function(functionInfo, castArguments);
+        Function newFunction;
+        if (windowDefinition == null) {
+            if (functionInfo.type() == FunctionInfo.Type.AGGREGATE) {
+                context.indicateAggregates();
+            }
+            newFunction = new Function(functionInfo, castArguments);
+        } else {
+            if (functionInfo.type() != FunctionInfo.Type.WINDOW && functionInfo.type() != FunctionInfo.Type.AGGREGATE) {
+                throw new IllegalArgumentException(String.format(
+                    Locale.ENGLISH,
+                    "OVER clause was specified, but %s is neither a window nor an aggregate function.",
+                    functionName));
+            }
+            newFunction = new WindowFunction(functionInfo, castArguments, windowDefinition);
+        }
         if (functionInfo.isDeterministic() && Symbols.allLiterals(newFunction)) {
-            return funcImpl.normalizeSymbol(newFunction, transactionContext);
+            return funcImpl.normalizeSymbol(newFunction, coordinatorTxnCtx);
         }
         return newFunction;
     }
@@ -955,7 +1024,7 @@ public class ExpressionAnalyzer {
     private static class Comparison {
 
         private final Functions functions;
-        private final TransactionContext transactionContext;
+        private final CoordinatorTxnCtx coordinatorTxnCtx;
         private ComparisonExpression.Type comparisonExpressionType;
         private Symbol left;
         private Symbol right;
@@ -963,12 +1032,12 @@ public class ExpressionAnalyzer {
         private FunctionIdent functionIdent;
 
         private Comparison(Functions functions,
-                           TransactionContext transactionContext,
+                           CoordinatorTxnCtx coordinatorTxnCtx,
                            ComparisonExpression.Type comparisonExpressionType,
                            Symbol left,
                            Symbol right) {
             this.functions = functions;
-            this.transactionContext = transactionContext;
+            this.coordinatorTxnCtx = coordinatorTxnCtx;
             this.operatorName = Operator.PREFIX + comparisonExpressionType.getValue();
             this.comparisonExpressionType = comparisonExpressionType;
             this.left = left;
@@ -1028,7 +1097,7 @@ public class ExpressionAnalyzer {
                 ImmutableList.of(left, right),
                 context,
                 functions,
-                transactionContext);
+                coordinatorTxnCtx);
             right = null;
             functionIdent = NotPredicate.INFO.ident();
             operatorName = NotPredicate.NAME;

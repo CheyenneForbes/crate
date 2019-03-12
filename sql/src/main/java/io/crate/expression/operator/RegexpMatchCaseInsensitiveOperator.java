@@ -23,13 +23,13 @@ package io.crate.expression.operator;
 
 import io.crate.data.Input;
 import io.crate.metadata.FunctionInfo;
+import io.crate.metadata.TransactionContext;
 import io.crate.types.DataTypes;
-import org.apache.lucene.util.BytesRef;
 
 import java.util.regex.Pattern;
 
 
-public class RegexpMatchCaseInsensitiveOperator extends Operator<BytesRef> {
+public class RegexpMatchCaseInsensitiveOperator extends Operator<String> {
 
     public static final String NAME = "op_~*";
     public static final FunctionInfo INFO = generateInfo(NAME, DataTypes.STRING);
@@ -40,19 +40,19 @@ public class RegexpMatchCaseInsensitiveOperator extends Operator<BytesRef> {
 
 
     @Override
-    public Boolean evaluate(Input<BytesRef>... args) {
+    public Boolean evaluate(TransactionContext txnCtx, Input<String>... args) {
         assert args.length == 2 : "invalid number of arguments";
-        BytesRef source = args[0].value();
+        String source = args[0].value();
         if (source == null) {
             return null;
         }
-        BytesRef pattern = args[1].value();
+        String pattern = args[1].value();
         if (pattern == null) {
             return null;
         }
 
-        Pattern p = Pattern.compile(pattern.utf8ToString(), Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
-        return p.matcher(source.utf8ToString()).matches();
+        Pattern p = Pattern.compile(pattern, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+        return p.matcher(source).matches();
     }
 
     @Override

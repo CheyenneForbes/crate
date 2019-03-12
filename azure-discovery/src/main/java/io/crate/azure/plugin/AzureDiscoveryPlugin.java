@@ -26,11 +26,11 @@ import io.crate.azure.AzureConfiguration;
 import io.crate.azure.discovery.AzureUnicastHostsProvider;
 import io.crate.azure.management.AzureComputeService;
 import io.crate.azure.management.AzureComputeServiceImpl;
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
-import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.network.NetworkService;
 import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.settings.Settings;
@@ -40,10 +40,8 @@ import org.elasticsearch.env.Environment;
 import org.elasticsearch.env.NodeEnvironment;
 import org.elasticsearch.plugins.DiscoveryPlugin;
 import org.elasticsearch.plugins.Plugin;
-import org.elasticsearch.script.ScriptService;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
-import org.elasticsearch.watcher.ResourceWatcherService;
 
 import java.util.Arrays;
 import java.util.Collection;
@@ -67,7 +65,7 @@ public class AzureDiscoveryPlugin extends Plugin implements DiscoveryPlugin {
     private final Settings settings;
     private AzureComputeServiceImpl azureComputeService;
 
-    protected final Logger logger = Loggers.getLogger(AzureDiscoveryPlugin.class);
+    protected final Logger logger = LogManager.getLogger(AzureDiscoveryPlugin.class);
 
     public AzureDiscoveryPlugin(Settings settings) {
         this.settings = settings;
@@ -102,8 +100,6 @@ public class AzureDiscoveryPlugin extends Plugin implements DiscoveryPlugin {
     public Collection<Object> createComponents(Client client,
                                                ClusterService clusterService,
                                                ThreadPool threadPool,
-                                               ResourceWatcherService resourceWatcherService,
-                                               ScriptService scriptService,
                                                NamedXContentRegistry xContentRegistry,
                                                Environment environment,
                                                NodeEnvironment nodeEnvironment,
@@ -123,7 +119,7 @@ public class AzureDiscoveryPlugin extends Plugin implements DiscoveryPlugin {
                 if (AzureConfiguration.isDiscoveryReady(settings, logger)) {
                     return new AzureUnicastHostsProvider(settings, azureComputeService(), transportService, networkService);
                 } else {
-                    return Collections::emptyList;
+                    return hostsResolver -> Collections.emptyList();
                 }
             });
     }

@@ -32,8 +32,8 @@ import io.crate.execution.engine.pipeline.TopN;
 import io.crate.expression.symbol.FieldsVisitor;
 import io.crate.expression.symbol.SelectSymbol;
 import io.crate.expression.symbol.Symbol;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.Functions;
-import io.crate.metadata.TransactionContext;
 import io.crate.planner.ExecutionPlan;
 import io.crate.planner.Merge;
 import io.crate.planner.PlannerContext;
@@ -64,7 +64,7 @@ import static io.crate.planner.operators.Limit.limitAndOffset;
  */
 public class Union extends TwoInputPlan {
 
-    static Builder create(UnionSelect ttr, SubqueryPlanner subqueryPlanner, Functions functions, TransactionContext txnCtx) {
+    static Builder create(UnionSelect ttr, SubqueryPlanner subqueryPlanner, Functions functions, CoordinatorTxnCtx txnCtx) {
         return (tableStats, usedColsByParent) -> {
 
             QueriedRelation left = ttr.left();
@@ -166,8 +166,8 @@ public class Union extends TwoInputPlan {
     }
 
     @Override
-    public LogicalPlan tryOptimize(@Nullable LogicalPlan pushDown, SymbolMapper mapper) {
-        if (pushDown instanceof Order) {
+    public LogicalPlan tryOptimize(@Nullable LogicalPlan ancestor, SymbolMapper mapper) {
+        if (ancestor instanceof Order) {
             SymbolMapper symbolMapper = (newOutputs, x) -> {
                 x = mapper.apply(outputs, x);
                 int idx = outputs.indexOf(x);
@@ -176,13 +176,13 @@ public class Union extends TwoInputPlan {
                 }
                 return newOutputs.get(idx);
             };
-            LogicalPlan newLhs = lhs.tryOptimize(pushDown, symbolMapper);
-            LogicalPlan newRhs = rhs.tryOptimize(pushDown, symbolMapper);
+            LogicalPlan newLhs = lhs.tryOptimize(ancestor, symbolMapper);
+            LogicalPlan newRhs = rhs.tryOptimize(ancestor, symbolMapper);
             if (newLhs != null && newRhs != null) {
                 return updateSources(newLhs, newRhs);
             }
         }
-        return super.tryOptimize(pushDown, mapper);
+        return super.tryOptimize(ancestor, mapper);
     }
 
     @Override

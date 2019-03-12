@@ -21,16 +21,16 @@ package io.crate.operation.language;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import io.crate.analyze.FunctionArgumentDefinition;
+import io.crate.expression.scalar.AbstractScalarFunctionsTest;
 import io.crate.expression.symbol.Literal;
+import io.crate.expression.udf.UserDefinedFunctionMetaData;
+import io.crate.expression.udf.UserDefinedFunctionService;
 import io.crate.metadata.FunctionIdent;
 import io.crate.metadata.FunctionImplementation;
 import io.crate.metadata.Schemas;
-import io.crate.expression.scalar.AbstractScalarFunctionsTest;
-import io.crate.expression.udf.UserDefinedFunctionMetaData;
-import io.crate.expression.udf.UserDefinedFunctionService;
-import io.crate.types.ArrayType;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
+import io.crate.types.ObjectType;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.lucene.BytesRefs;
@@ -103,7 +103,7 @@ public class JavascriptUserDefinedFunctionTest extends AbstractScalarFunctionsTe
 
     @Test
     public void testObjectReturnType() throws Exception {
-        registerUserDefinedFunction("f", DataTypes.OBJECT, ImmutableList.of(),
+        registerUserDefinedFunction("f", ObjectType.untyped(), ImmutableList.of(),
             "function f() { return JSON.parse('{\"foo\": \"bar\"}'); }");
         assertEvaluate("f()", ImmutableMap.of("foo", "bar"));
     }
@@ -235,7 +235,7 @@ public class JavascriptUserDefinedFunctionTest extends AbstractScalarFunctionsTe
 
     @Test
     public void testNormalizeOnObjectInput() throws Exception {
-        registerUserDefinedFunction("f", DataTypes.OBJECT, ImmutableList.of(DataTypes.OBJECT),
+        registerUserDefinedFunction("f", ObjectType.untyped(), ImmutableList.of(ObjectType.untyped()),
             "function f(x) { return x; }");
         assertNormalize("f({})", isLiteral(new HashMap<>()));
     }
@@ -284,25 +284,6 @@ public class JavascriptUserDefinedFunctionTest extends AbstractScalarFunctionsTe
     public void testJavaScriptFunctionReturnsNull() throws Exception {
         registerUserDefinedFunction("f", DataTypes.STRING, ImmutableList.of(), "function f() { return null; }");
         assertEvaluate("f()", null);
-    }
-
-    @Test
-    public void testEvaluateBytesRefInObjectIsConvertedToString() throws Exception {
-        registerUserDefinedFunction("f", DataTypes.OBJECT, ImmutableList.of(DataTypes.OBJECT),
-            "function f(o) { return {'key1' : o['inner']['key1'][0], 'key2': o['inner']['key2']}; }");
-        // the map will be modified
-        Map<String, Object> inner = new HashMap<>();
-        inner.put("key1", new Object[]{new BytesRef("bar")});
-        inner.put("key2", new BytesRef("foo"));
-        assertEvaluate("f(obj)", ImmutableMap.of("key1", "bar", "key2", "foo"), Literal.of(ImmutableMap.of("inner", inner)));
-    }
-
-    @Test
-    public void testEvaluateBytesRefInArrayIsConvertedToString() throws Exception {
-        registerUserDefinedFunction("f", DataTypes.STRING, ImmutableList.of(new ArrayType(DataTypes.STRING_ARRAY)),
-            "function f(arr) { return arr[0][0]; }");
-        assertEvaluate("f(array_string_array)", "foo",
-            Literal.of(new Object[][]{new Object[]{new BytesRef("foo")}}, new ArrayType(DataTypes.STRING_ARRAY)));
     }
 
     @Test

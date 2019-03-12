@@ -22,23 +22,35 @@
 package io.crate.execution.dsl.projection.builder;
 
 import com.google.common.base.MoreObjects;
+import com.google.common.collect.ImmutableList;
+import io.crate.expression.scalar.SubscriptObjectFunction;
 import io.crate.expression.symbol.Aggregation;
 import io.crate.expression.symbol.DefaultTraversalSymbolVisitor;
 import io.crate.expression.symbol.FetchReference;
 import io.crate.expression.symbol.Function;
 import io.crate.expression.symbol.InputColumn;
+import io.crate.expression.symbol.Literal;
 import io.crate.expression.symbol.Symbol;
 import io.crate.expression.symbol.SymbolType;
+import io.crate.expression.symbol.WindowFunction;
+import io.crate.metadata.ColumnIdent;
+import io.crate.metadata.FunctionIdent;
+import io.crate.metadata.FunctionInfo;
 import io.crate.metadata.GeneratedReference;
 import io.crate.metadata.Reference;
 import io.crate.types.DataType;
+import io.crate.types.DataTypes;
+import io.crate.types.ObjectType;
 import org.elasticsearch.common.inject.Singleton;
 
+import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
+
+import static io.crate.expression.symbol.Symbols.lookupValueByColumn;
 
 /**
  * Provides functions to create {@link InputColumn}s
@@ -69,9 +81,10 @@ public final class InputColumns extends DefaultTraversalSymbolVisitor<InputColum
                 // only non-literals should be replaced with input columns.
                 // otherwise {@link io.crate.metadata.Scalar#compile} won't do anything which
                 // results in poor performance of some scalar implementations
-                if (!input.symbolType().isValueSymbol()) {
+                SymbolType symbolType = input.symbolType();
+                if (!symbolType.isValueSymbol()) {
                     DataType valueType = input.valueType();
-                    if (input.symbolType() == SymbolType.FUNCTION
+                    if ((symbolType == SymbolType.FUNCTION || symbolType == SymbolType.WINDOW_FUNCTION)
                         && !((Function) input).info().isDeterministic()) {
                         nonDeterministicFunctions.put(input, new InputColumn(i, valueType));
                     } else {
@@ -115,7 +128,7 @@ public final class InputColumns extends DefaultTraversalSymbolVisitor<InputColum
      * a {@link SourceSymbols} class.
      * <p>
      *     If {@code symbols} and the inputSymbols of the Context class are the same,
-     *     it's better to use {@link InputColumn#fromSymbols(Collection)} to create a 1:1 InputColumn mapping.
+     *     it's better to use {@link InputColumn#mapToInputColumns(Collection)} to create a 1:1 InputColumn mapping.
      * </p>
      */
     public static List<Symbol> create(Collection<? extends Symbol> symbols, SourceSymbols sourceSymbols) {
@@ -128,6 +141,16 @@ public final class InputColumns extends DefaultTraversalSymbolVisitor<InputColum
 
     @Override
     public Symbol visitFunction(Function symbol, final SourceSymbols sourceSymbols) {
+        Symbol replacement = getFunctionReplacementOrNull(symbol, sourceSymbols);
+        if (replacement != null) {
+            return replacement;
+        }
+        ArrayList<Symbol> replacedFunctionArgs = getProcessedArgs(symbol.arguments(), sourceSymbols);
+        return new Function(symbol.info(), replacedFunctionArgs);
+    }
+
+    @Nullable
+    private Symbol getFunctionReplacementOrNull(Function symbol, SourceSymbols sourceSymbols) {
         Symbol replacement;
         if (symbol.info().isDeterministic()) {
             replacement = sourceSymbols.inputs.get(symbol);
@@ -135,14 +158,25 @@ public final class InputColumns extends DefaultTraversalSymbolVisitor<InputColum
             replacement = sourceSymbols.nonDeterministicFunctions.get(symbol);
         }
 
+        return replacement;
+    }
+
+    private ArrayList<Symbol> getProcessedArgs(List<Symbol> arguments, SourceSymbols sourceSymbols) {
+        ArrayList<Symbol> args = new ArrayList<>(arguments.size());
+        for (Symbol arg : arguments) {
+            args.add(process(arg, sourceSymbols));
+        }
+        return args;
+    }
+
+    @Override
+    public Symbol visitWindowFunction(WindowFunction windowFunction, SourceSymbols sourceSymbols) {
+        Symbol replacement = getFunctionReplacementOrNull(windowFunction, sourceSymbols);
         if (replacement != null) {
             return replacement;
         }
-        ArrayList<Symbol> args = new ArrayList<>(symbol.arguments().size());
-        for (Symbol arg : symbol.arguments()) {
-            args.add(process(arg, sourceSymbols));
-        }
-        return new Function(symbol.info(), args);
+        ArrayList<Symbol> replacedFunctionArgs = getProcessedArgs(windowFunction.arguments(), sourceSymbols);
+        return new WindowFunction(windowFunction.info(), replacedFunctionArgs, windowFunction.windowDefinition());
     }
 
     @Override
@@ -157,7 +191,35 @@ public final class InputColumns extends DefaultTraversalSymbolVisitor<InputColum
                 sourceSymbols.inputs.get(ref),
                 visitSymbol(((GeneratedReference) ref).generatedExpression(), sourceSymbols));
         }
+        InputColumn inputColumn = sourceSymbols.inputs.get(ref);
+        if (inputColumn == null) {
+            Symbol subscriptOnRoot = tryCreateSubscriptOnRoot(ref, sourceSymbols.inputs);
+            return subscriptOnRoot == null ? ref : subscriptOnRoot;
+        }
         return visitSymbol(ref, sourceSymbols);
+    }
+
+    @Nullable
+    private static Symbol tryCreateSubscriptOnRoot(Reference ref, HashMap<Symbol, InputColumn> inputs) {
+        if (ref.column().isTopLevel()) {
+            return null;
+        }
+        ColumnIdent root = ref.column().getRoot();
+        InputColumn rootIC = lookupValueByColumn(inputs, root);
+        if (rootIC == null) {
+            return ref;
+        }
+        Symbol subscript = rootIC;
+        List<String> path = ref.column().path();
+        for (int i = 0; i < path.size(); i++) {
+            boolean lastPart = i + 1 == path.size();
+            DataType returnType = lastPart ? ref.valueType() : ObjectType.untyped();
+            subscript = new Function(
+                new FunctionInfo(new FunctionIdent(SubscriptObjectFunction.NAME, ImmutableList.of(ObjectType.untyped(), DataTypes.STRING)), returnType),
+                ImmutableList.of(subscript, Literal.of(path.get(i)))
+            );
+        }
+        return subscript;
     }
 
     @Override

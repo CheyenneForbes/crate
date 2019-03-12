@@ -30,7 +30,6 @@ import io.crate.exceptions.InvalidSchemaNameException;
 import io.crate.metadata.blob.BlobSchemaInfo;
 import io.crate.sql.Identifiers;
 import io.crate.sql.tree.QualifiedName;
-import io.crate.sql.tree.Table;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
@@ -44,10 +43,6 @@ public final class RelationName implements Writeable {
     private static final Set<String> INVALID_NAME_CHARACTERS = ImmutableSet.of(".");
     private final String schema;
     private final String name;
-
-    public static RelationName of(Table tableNode, String defaultSchema) {
-        return of(tableNode.getName(), defaultSchema);
-    }
 
     public static RelationName of(QualifiedName name, String defaultSchema) {
         List<String> parts = name.getParts();
@@ -96,7 +91,10 @@ public final class RelationName implements Writeable {
         return Identifiers.quoteIfNeeded(schema) + "." + Identifiers.quoteIfNeeded(name);
     }
 
-    public String indexName() {
+    /**
+     * @return The indexName for non-partitioned tables or the alias name for partitioned tables.
+     */
+    public String indexNameOrAlias() {
         if (schema.equalsIgnoreCase(Schemas.DOC_SCHEMA_NAME)) {
             return name;
         } else if (schema.equalsIgnoreCase(BlobSchemaInfo.NAME)) {

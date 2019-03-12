@@ -22,42 +22,54 @@
 
 package io.crate.metadata;
 
-import io.crate.action.sql.SessionContext;
 import org.joda.time.DateTimeUtils;
 
-import java.util.Objects;
+public interface TransactionContext {
 
-/**
- * TransactionContext is a context that is used to keep state which is valid during a transaction.
- *
- * In Crate a transaction is always bound to the lifecycle of a single query/statement execution as there is no
- * transaction support.
- */
-public class TransactionContext {
-
-    private final SessionContext sessionContext;
-    private Long currentTimeMillis = null;
-
-    public static TransactionContext systemTransactionContext() {
-        return new TransactionContext(SessionContext.systemSessionContext());
+    static TransactionContext of(String userName, SearchPath searchPath) {
+        return new StaticTransactionContext(userName, searchPath);
     }
 
-    public TransactionContext(SessionContext sessionContext) {
-        this.sessionContext = Objects.requireNonNull(sessionContext);
-    }
+    long currentTimeMillis();
 
-    /**
-     * @return current timestamp in ms. Subsequent calls will always return the same value. (Not thread-safe)
-     */
-    public long currentTimeMillis() {
-        if (currentTimeMillis == null) {
-            // no synchronization because StmtCtx is mostly used during single-threaded analysis phase
-            currentTimeMillis = DateTimeUtils.currentTimeMillis();
+    String userName();
+
+    String currentSchema();
+
+    SearchPath searchPath();
+
+    class StaticTransactionContext implements TransactionContext {
+
+        private final String userName;
+        private final SearchPath searchPath;
+        private Long currentTimeMillis;
+
+        StaticTransactionContext(String userName, SearchPath searchPath) {
+            this.userName = userName;
+            this.searchPath = searchPath;
         }
-        return currentTimeMillis;
-    }
 
-    public SessionContext sessionContext() {
-        return sessionContext;
+        @Override
+        public long currentTimeMillis() {
+            if (currentTimeMillis == null) {
+                currentTimeMillis = DateTimeUtils.currentTimeMillis();
+            }
+            return currentTimeMillis;
+        }
+
+        @Override
+        public String userName() {
+            return userName;
+        }
+
+        @Override
+        public String currentSchema() {
+            return searchPath.currentSchema();
+        }
+
+        @Override
+        public SearchPath searchPath() {
+            return searchPath;
+        }
     }
 }

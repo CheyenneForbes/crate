@@ -41,7 +41,7 @@ import io.netty.handler.codec.http.HttpUtil;
 import io.netty.handler.codec.http.HttpVersion;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.common.collect.Tuple;
-import org.elasticsearch.common.logging.Loggers;
+import org.apache.logging.log4j.LogManager;
 import org.elasticsearch.common.network.InetAddresses;
 import org.elasticsearch.common.settings.SecureString;
 import org.elasticsearch.common.settings.Settings;
@@ -60,11 +60,11 @@ import static io.netty.buffer.Unpooled.copiedBuffer;
 
 public class HttpAuthUpstreamHandler extends SimpleChannelInboundHandler<Object> {
 
-    private static final Logger LOGGER = Loggers.getLogger(HttpAuthUpstreamHandler.class);
+    private static final Logger LOGGER = LogManager.getLogger(HttpAuthUpstreamHandler.class);
     @VisibleForTesting
-    static final String WWW_AUTHENTICATE_REALM_MESSAGE = "Basic realm=\"Please provide credentials " +
-                                                         "(password maybe empty if trust authentication " +
-                                                         "is configured for your user)\")";
+
+    // realm-value should not contain any special characters
+    static final String WWW_AUTHENTICATE_REALM_MESSAGE = "Basic realm=\"CrateDB Authenticator\"";
     private final Authentication authService;
     private final Settings settings;
     private String authorizedUser = null;

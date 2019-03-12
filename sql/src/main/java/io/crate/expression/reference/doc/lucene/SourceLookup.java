@@ -23,14 +23,11 @@
 package io.crate.expression.reference.doc.lucene;
 
 
-import org.apache.lucene.index.FieldInfo;
 import org.apache.lucene.index.LeafReader;
 import org.apache.lucene.index.LeafReaderContext;
-import org.apache.lucene.index.StoredFieldVisitor;
-import org.elasticsearch.common.bytes.BytesArray;
+import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.xcontent.XContentHelper;
 import org.elasticsearch.common.xcontent.XContentType;
-import org.elasticsearch.index.mapper.SourceFieldMapper;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -40,10 +37,11 @@ import java.util.RandomAccess;
 
 public final class SourceLookup {
 
-    private final Visitor fieldsVisitor = new Visitor();
+    private final SourceFieldVisitor fieldsVisitor = new SourceFieldVisitor();
     private LeafReader reader;
     private int doc;
     private Map<String, Object> source;
+    private boolean docVisited = false;
 
     SourceLookup() {
     }
@@ -54,25 +52,48 @@ public final class SourceLookup {
             return;
         }
         fieldsVisitor.reset();
+        this.docVisited = false;
         this.source = null;
         this.reader = context.reader();
         this.doc = doc;
     }
 
     public Object get(List<String> path) {
-        if (source == null) {
-            try {
-                source = loadSource();
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
-        }
+        ensureSourceParsed();
         return extractValue(source, path, 0);
     }
 
-    private Map<String, Object> loadSource() throws IOException {
-        reader.document(doc, fieldsVisitor);
-        return XContentHelper.convertToMap(fieldsVisitor.source, false, XContentType.JSON).v2();
+    public Map<String, Object> sourceAsMap() {
+        ensureSourceParsed();
+        return source;
+    }
+
+    public BytesReference rawSource() {
+        ensureDocVisited();
+        return fieldsVisitor.source();
+    }
+
+    private Map<String, Object> loadSource() {
+        ensureDocVisited();
+        return XContentHelper.convertToMap(fieldsVisitor.source(), false, XContentType.JSON).v2();
+    }
+
+    private void ensureSourceParsed() {
+        if (source == null) {
+            source = loadSource();
+        }
+    }
+
+    private void ensureDocVisited() {
+        if (docVisited) {
+            return;
+        }
+        try {
+            reader.document(doc, fieldsVisitor);
+            docVisited = true;
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -103,31 +124,5 @@ public final class SourceLookup {
             }
         }
         return tmp;
-    }
-
-    private static class Visitor extends StoredFieldVisitor {
-
-        private boolean done = false;
-        private BytesArray source;
-
-        @Override
-        public Status needsField(FieldInfo fieldInfo) {
-            if (fieldInfo.name.equals(SourceFieldMapper.NAME)) {
-                done = true;
-                return Status.YES;
-            }
-            return done ? Status.STOP : Status.NO;
-        }
-
-        @Override
-        public void binaryField(FieldInfo fieldInfo, byte[] value) {
-            assert SourceFieldMapper.NAME.equals(fieldInfo.name) : "Must only receive a source field";
-            source = new BytesArray(value);
-        }
-
-        public void reset() {
-            done = false;
-            source = null;
-        }
     }
 }

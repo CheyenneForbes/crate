@@ -289,7 +289,8 @@ class Collect extends ZeroInputPlan {
                 functionArguments.add(
                     Literal.of(
                         arg.valueType(),
-                        SymbolEvaluator.evaluate(plannerContext.functions(), arg, params, subQueryResults)
+                        SymbolEvaluator.evaluate(
+                            plannerContext.transactionContext(), plannerContext.functions(), arg, params, subQueryResults)
                     )
                 );
             }
@@ -317,24 +318,23 @@ class Collect extends ZeroInputPlan {
             boundOutputs,
             Collections.emptyList(),
             where.queryOrFallback(),
-            DistributionInfo.DEFAULT_BROADCAST,
-            sessionContext.user()
+            DistributionInfo.DEFAULT_BROADCAST
         );
     }
 
     @Override
-    public LogicalPlan tryOptimize(@Nullable LogicalPlan pushDown, SymbolMapper mapper) {
-        if (pushDown instanceof Order) {
-            return ((Order) pushDown).updateSource(this, mapper);
+    public LogicalPlan tryOptimize(@Nullable LogicalPlan ancestor, SymbolMapper mapper) {
+        if (ancestor instanceof Order) {
+            return ((Order) ancestor).updateSource(this, mapper);
         }
-        if (pushDown instanceof Filter) {
-            Symbol ancestorQuery = mapper.apply(outputs, ((Filter) pushDown).query);
+        if (ancestor instanceof Filter) {
+            Symbol ancestorQuery = mapper.apply(outputs, ((Filter) ancestor).query);
             assert !SymbolVisitors.any(s -> s instanceof Field, ancestorQuery)
                 : "mapped ancestorQuery must not have any Field but only Reference symbols: " + ancestorQuery;
             return new Collect(
                 relation, outputs, where.add(ancestorQuery), numExpectedRows, estimatedRowSize);
         }
-        return super.tryOptimize(pushDown, mapper);
+        return super.tryOptimize(ancestor, mapper);
     }
 
     @Override
@@ -369,7 +369,7 @@ class Collect extends ZeroInputPlan {
         return visitor.visitCollect(this, context);
     }
 
-    private static final  class NoPredicateVisitor extends SymbolVisitor<Void, Void> {
+    private static final class NoPredicateVisitor extends SymbolVisitor<Void, Void> {
 
         private static final NoPredicateVisitor NO_PREDICATE_VISITOR = new NoPredicateVisitor();
 

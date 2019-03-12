@@ -262,25 +262,6 @@ nodes of the cluster:
 
      This option is ignored if there is only 1 node in a cluster!
 
-.. _cluster.graceful_stop.reallocate:
-
-**cluster.graceful_stop.reallocate**
-  | *Default:*   ``true``
-  | *Runtime:*  ``yes``
-
-  ``true``: The ``graceful stop`` command allows shards to be reallocated
-  before shutting down the node in order to ensure minimum data availability
-  set with ``min_availability``.
-
-  ``false``: The ``graceful stop`` command will fail if the cluster would need
-  to reallocate shards in order to ensure the minimum data availability set
-  with ``min_availability``.
-
-  .. WARNING::
-
-     Make sure you have enough nodes and enough disk space for the
-     reallocation.
-
 .. _cluster.graceful_stop.timeout:
 
 **cluster.graceful_stop.timeout**
@@ -338,15 +319,34 @@ Discovery
   operational within the cluster. It's recommended to set it to a higher value
   than 1 when running more than 2 nodes in the cluster.
 
+.. _discovery.zen.ping_interval:
+
+**discovery.zen.ping_interval**
+  | *Default:*   ``1s``
+  | *Runtime:*  ``yes``
+
+  How often to ping other nodes.
+
+  Nodes must remain responsive to pings or they will be marked as failed and
+  removed from the cluster.
+
 .. _discovery.zen.ping_timeout:
 
 **discovery.zen.ping_timeout**
   | *Default:*   ``3s``
   | *Runtime:*  ``yes``
 
-  Set the time to wait for ping responses from other nodes when discovering.
+  The time to wait for ping responses from other nodes when discovering.
   Set this option to a higher value on a slow or congested network to minimize
   discovery failures.
+
+.. _discovery.zen.ping_retries:
+
+**discovery.zen.ping_retries**
+  | *Default:*   ``3``
+  | *Runtime:*  ``yes``
+
+  How many ping failures (network timeouts) indicate that a node has failed.
 
 .. _discovery.zen.publish_timeout:
 
@@ -805,6 +805,14 @@ By default, the cluster will retrieve information about the disk usage of the
 nodes every 30 seconds. This can also be changed by setting the
 `cluster.info.update.interval`_ setting.
 
+.. NOTE::
+
+   The watermark settings are also used for the
+   :ref:`node_checks_watermark_low` and :ref:`node_checks_watermark_high` node
+   check. Setting ``cluster.routing.allocation.disk.threshold_enabled`` to
+   false will disable the allocation decider, but the node checks will still be
+   active and warn users about running low on disk space.
+
 Recovery
 --------
 
@@ -930,6 +938,26 @@ exception is raised.
   A constant that all request estimations are multiplied with to determine a
   final estimation.
 
+Accounting Circuit Breaker
+--------------------------
+
+Tracks things that are held in memory independent of queries. For example the
+memory used by Lucene for segments.
+
+**indices.breaker.accounting.limit**
+  | *Default:*  ``100%``
+  | *Runtime:*  ``yes``
+
+  Specifies the JVM heap limit for the accounting circuit breaker
+
+
+**indices.breaker.accounting.overhead**
+  | *Default:*  ``1.0``
+  | *Runtime:*  ``yes``
+
+  A constant that all accounting estimations are multiplied with to determine a
+  final estimation.
+
 .. _stats.breaker.log:
 
 Stats Circuit Breakers
@@ -972,11 +1000,10 @@ Thread Pools
 Every node holds several thread pools to improve how threads are managed within
 a node. There are several pools, but the important ones include:
 
-* ``index``: For index/delete operations, defaults to fixed
+* ``write``: For index, update and delete operations, defaults to fixed
 * ``search``: For count/search operations, defaults to fixed
 * ``get``: For queries that are optimized to do a direct lookup by primary key,
   defaults to fixed
-* ``bulk``: For bulk operations, defaults to fixed
 * ``refresh``: For refresh operations, defaults to cache
 
 **thread_pool.<name>.type**
@@ -1002,10 +1029,9 @@ settings.
   the number of available CPU cores.
 
 **thread_pool.<name>.queue_size**
-  | *Default index:*  ``200``
+  | *Default write:*  ``200``
   | *Default search:* ``1000``
   | *Default get:* ``1000``
-  | *Default bulk:* ``50``
   | *Runtime:*  ``no``
 
   Size of the queue for pending requests. A value of ``-1`` sets it to

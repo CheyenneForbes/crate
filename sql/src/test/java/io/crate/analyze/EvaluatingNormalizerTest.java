@@ -8,11 +8,11 @@ import io.crate.expression.operator.AndOperator;
 import io.crate.expression.operator.EqOperator;
 import io.crate.expression.operator.OrOperator;
 import io.crate.expression.predicate.NotPredicate;
-import io.crate.expression.reference.LiteralNestableInput;
 import io.crate.expression.symbol.Function;
 import io.crate.expression.symbol.Literal;
 import io.crate.expression.symbol.Symbol;
 import io.crate.metadata.ClusterReferenceResolver;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.FunctionIdent;
 import io.crate.metadata.FunctionInfo;
 import io.crate.metadata.Functions;
@@ -21,7 +21,6 @@ import io.crate.metadata.ReferenceIdent;
 import io.crate.metadata.RelationName;
 import io.crate.metadata.RowGranularity;
 import io.crate.metadata.Schemas;
-import io.crate.metadata.TransactionContext;
 import io.crate.test.integration.CrateUnitTest;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
@@ -32,6 +31,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
+import static io.crate.execution.engine.collect.NestableCollectExpression.constant;
 import static io.crate.testing.SymbolMatchers.isLiteral;
 import static io.crate.testing.TestingHelpers.getFunctions;
 import static org.hamcrest.CoreMatchers.instanceOf;
@@ -42,7 +42,7 @@ public class EvaluatingNormalizerTest extends CrateUnitTest {
     private Functions functions;
     private Reference dummyLoadInfo;
 
-    private final TransactionContext transactionContext = new TransactionContext(SessionContext.systemSessionContext());
+    private final CoordinatorTxnCtx coordinatorTxnCtx = new CoordinatorTxnCtx(SessionContext.systemSessionContext());
 
     @Before
     public void prepare() throws Exception {
@@ -51,7 +51,7 @@ public class EvaluatingNormalizerTest extends CrateUnitTest {
         ReferenceIdent dummyLoadIdent = new ReferenceIdent(new RelationName("test", "dummy"), "load");
         dummyLoadInfo = new Reference(dummyLoadIdent, RowGranularity.NODE, DataTypes.DOUBLE);
 
-        referenceImplementationMap.put(dummyLoadIdent, new LiteralNestableInput<>(0.08d));
+        referenceImplementationMap.put(dummyLoadIdent, constant(0.08d));
         functions = getFunctions();
         referenceResolver = new ClusterReferenceResolver(referenceImplementationMap);
     }
@@ -105,7 +105,7 @@ public class EvaluatingNormalizerTest extends CrateUnitTest {
 
         // the dummy reference load == 0.08 evaluates to true,
         // so the whole query can be normalized to a single boolean literal
-        Symbol query = visitor.normalize(op_or, transactionContext);
+        Symbol query = visitor.normalize(op_or, coordinatorTxnCtx);
         assertThat(query, isLiteral(true));
     }
 
@@ -114,7 +114,7 @@ public class EvaluatingNormalizerTest extends CrateUnitTest {
         EvaluatingNormalizer visitor = new EvaluatingNormalizer(functions, RowGranularity.CLUSTER, referenceResolver, null);
 
         Function op_or = prepareFunctionTree();
-        Symbol query = visitor.normalize(op_or, transactionContext);
+        Symbol query = visitor.normalize(op_or, coordinatorTxnCtx);
         assertThat(query, instanceOf(Function.class));
     }
 

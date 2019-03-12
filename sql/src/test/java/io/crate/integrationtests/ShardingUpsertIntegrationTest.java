@@ -21,7 +21,6 @@
 
 package io.crate.integrationtests;
 
-import io.crate.testing.UseJdbc;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.junit.Test;
@@ -35,12 +34,11 @@ public class ShardingUpsertIntegrationTest extends SQLTransportIntegrationTest {
     protected Settings nodeSettings(int nodeOrdinal) {
         return Settings.builder()
             .put(super.nodeSettings(nodeOrdinal))
-            .put("thread_pool.bulk.queue_size", 1)
+            .put("thread_pool.write.queue_size", 1)
             .build();
     }
 
     @Test
-    @UseJdbc(0) // copy has no rowcount
     public void testCopyFromWithLimitedBulkSize() throws Exception {
         execute("create table contributors (" +
             "id integer," +

@@ -153,6 +153,10 @@ public abstract class AstVisitor<R, C> {
         return visitLiteral(node, context);
     }
 
+    protected R visitEscapedCharStringLiteral(EscapedCharStringLiteral node, C context) {
+        return visitLiteral(node, context);
+    }
+
     protected R visitBooleanLiteral(BooleanLiteral node, C context) {
         return visitLiteral(node, context);
     }
@@ -389,6 +393,10 @@ public abstract class AstVisitor<R, C> {
         return visitStatement(node, context);
     }
 
+    public R visitDropAnalyzer(DropAnalyzer node, C context) {
+        return visitStatement(node, context);
+    }
+
     public R visitTokenizer(Tokenizer node, C context) {
         return visitNode(node, context);
     }
@@ -561,15 +569,11 @@ public abstract class AstVisitor<R, C> {
         return visitStatement(showTransaction, context);
     }
 
+    public R visitShowSessionParameter(ShowSessionParameter node, C context) {
+        return visitStatement(node, context);
+    }
+
     public R visitCreateUser(CreateUser node, C context) {
-        return visitStatement(node, context);
-    }
-
-    public R visitCreateIngestRule(CreateIngestRule node, C context) {
-        return visitStatement(node, context);
-    }
-
-    public R visitDropIngestRule(DropIngestRule node, C context) {
         return visitStatement(node, context);
     }
 
@@ -579,5 +583,29 @@ public abstract class AstVisitor<R, C> {
 
     public R visitDropView(DropView dropView, C context) {
         return visitStatement(dropView, context);
+    }
+
+    public R visitSwapTable(SwapTable swapTable, C context) {
+        return visitStatement(swapTable, context);
+    }
+
+    public R visitFrameBound(FrameBound frameBound, C context) {
+        return visitNode(frameBound, context);
+    }
+
+    public R visitWindow(Window window, C context) {
+        return visitNode(window, context);
+    }
+
+    public R visitWindowFrame(WindowFrame windowFrame, C context) {
+        return visitNode(windowFrame, context);
+    }
+
+    public R visitGCDanglingArtifacts(GCDanglingArtifacts gcDanglingArtifacts, C context) {
+        return visitStatement(gcDanglingArtifacts, context);
+    }
+
+    public R visitAlterClusterDecommissionNode(DecommissionNodeStatement decommissionNodeStatement, C context) {
+        return visitStatement(decommissionNodeStatement, context);
     }
 }

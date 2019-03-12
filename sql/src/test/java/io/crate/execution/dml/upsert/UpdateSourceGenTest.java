@@ -22,34 +22,39 @@
 
 package io.crate.execution.dml.upsert;
 
-import io.crate.Constants;
 import io.crate.analyze.AnalyzedUpdateStatement;
 import io.crate.expression.reference.Doc;
 import io.crate.expression.symbol.Assignments;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.PartitionName;
 import io.crate.metadata.RelationName;
+import io.crate.metadata.SearchPath;
+import io.crate.metadata.TransactionContext;
 import io.crate.metadata.doc.DocTableInfo;
 import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
 import io.crate.testing.SQLExecutor;
-import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.common.bytes.BytesArray;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.xcontent.XContentFactory;
-import org.elasticsearch.index.get.GetResult;
 import org.junit.Test;
 
+import java.io.IOException;
 import java.util.Collections;
+import java.util.Map;
 
 import static java.util.Collections.emptyMap;
+import static java.util.Collections.singletonMap;
 import static org.hamcrest.Matchers.is;
 
 public class UpdateSourceGenTest extends CrateDummyClusterServiceUnitTest {
+
+    private TransactionContext txnCtx = CoordinatorTxnCtx.systemTransactionContext();
 
     @Test
     public void testSetXBasedOnXAndPartitionedColumn() throws Exception {
         SQLExecutor e = SQLExecutor.builder(clusterService)
             .addPartitionedTable("create table t (x int, p int) partitioned by (p)",
-                new PartitionName(new RelationName("doc", "t"), Collections.singletonList(new BytesRef("1"))).asIndexName())
+                new PartitionName(new RelationName("doc", "t"), Collections.singletonList("1")).asIndexName())
             .build();
 
         AnalyzedUpdateStatement update = e.analyze("update t set x = x + p");
@@ -57,24 +62,25 @@ public class UpdateSourceGenTest extends CrateDummyClusterServiceUnitTest {
         DocTableInfo table = (DocTableInfo) update.table().tableInfo();
         UpdateSourceGen updateSourceGen = new UpdateSourceGen(
             e.functions(),
+            txnCtx,
             table,
             assignments.targetNames()
         );
 
-        BytesReference source = XContentFactory.jsonBuilder()
-            .startObject()
-            .field("x", 1)
-            .endObject()
-            .bytes();
+        Map<String, Object> source = singletonMap("x", 1);
         BytesReference updatedSource = updateSourceGen.generateSource(
-            Doc.fromGetResult(new GetResult(
+            new Doc(
                 table.concreteIndices()[0],
-                Constants.DEFAULT_MAPPING_TYPE,
                 "1",
                 1,
-                true,
                 source,
-                emptyMap())
+                () -> {
+                    try {
+                        return Strings.toString(XContentFactory.jsonBuilder().map(source));
+                    } catch (IOException e1) {
+                        throw new RuntimeException(e1);
+                    }
+                }
             ),
             assignments.sources(),
             new Object[0]
@@ -92,24 +98,22 @@ public class UpdateSourceGenTest extends CrateDummyClusterServiceUnitTest {
         DocTableInfo table = (DocTableInfo) update.table().tableInfo();
         UpdateSourceGen updateSourceGen = new UpdateSourceGen(
             e.functions(),
+            txnCtx,
             table,
             assignments.targetNames()
         );
 
-        BytesReference source = XContentFactory.jsonBuilder()
+        BytesReference source = BytesReference.bytes(XContentFactory.jsonBuilder()
             .startObject()
             .field("y", 100)
-            .endObject()
-            .bytes();
+            .endObject());
         BytesReference updatedSource = updateSourceGen.generateSource(
-            Doc.fromGetResult(new GetResult(
+            new Doc(
                 table.concreteIndices()[0],
-                Constants.DEFAULT_MAPPING_TYPE,
                 "4",
                 1,
-                true,
-                source,
-                emptyMap())
+                emptyMap(),
+                source::utf8ToString
             ),
             assignments.sources(),
             new Object[0]
@@ -127,22 +131,46 @@ public class UpdateSourceGenTest extends CrateDummyClusterServiceUnitTest {
         DocTableInfo table = (DocTableInfo) update.table().tableInfo();
         UpdateSourceGen updateSourceGen = new UpdateSourceGen(
             e.functions(),
+            txnCtx,
             table,
             assignments.targetNames()
         );
         BytesReference updatedSource = updateSourceGen.generateSource(
-            Doc.fromGetResult(new GetResult(
+            new Doc(
                 table.concreteIndices()[0],
-                Constants.DEFAULT_MAPPING_TYPE,
                 "1",
                 1,
-                true,
-                new BytesArray("{}"),
-                emptyMap()
-            )),
+                emptyMap(),
+                () -> "{}"
+            ),
             assignments.sources(),
             new Object[0]
         );
         assertThat(updatedSource.utf8ToString(), is("{\"obj\":{\"y\":5},\"x\":4}"));
+    }
+
+
+    @Test
+    public void testGeneratedColumnUsingFunctionDependingOnActiveTransaction() throws Exception {
+        SQLExecutor e = SQLExecutor.builder(clusterService)
+            .addTable("create table t (x int, gen as current_schema)")
+            .build();
+        AnalyzedUpdateStatement update = e.analyze("update t set x = 1");
+        Assignments assignments = Assignments.convert(update.assignmentByTargetCol());
+        DocTableInfo table = (DocTableInfo) update.table().tableInfo();
+        UpdateSourceGen sourceGen = new UpdateSourceGen(
+            e.functions(),
+            TransactionContext.of("dummyUser", SearchPath.createSearchPathFrom("dummySchema")),
+            table,
+            assignments.targetNames()
+        );
+
+        BytesReference source = sourceGen.generateSource(
+            new Doc(table.concreteIndices()[0], "1", 1, emptyMap(), () -> "{}"),
+            assignments.sources(),
+            new Object[0]
+        );
+
+        assertThat(source.utf8ToString(), is("{\"gen\":\"dummySchema\",\"x\":1}"));
     }
 }

@@ -22,7 +22,6 @@ import com.google.common.annotations.VisibleForTesting;
 import io.crate.metadata.UsersMetaData;
 import io.crate.metadata.UsersPrivilegesMetaData;
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.master.TransportMasterNodeAction;
 import org.elasticsearch.cluster.AckedClusterStateUpdateTask;
 import org.elasticsearch.cluster.ClusterState;
@@ -46,16 +45,15 @@ import java.util.List;
 @Singleton
 public class TransportPrivilegesAction extends TransportMasterNodeAction<PrivilegesRequest, PrivilegesResponse> {
 
-    private static final String ACTION_NAME = "crate/sql/grant_privileges";
+    private static final String ACTION_NAME = "internal:crate:sql/privileges/grant";
 
     @Inject
     public TransportPrivilegesAction(Settings settings,
                                      TransportService transportService,
                                      ClusterService clusterService,
                                      ThreadPool threadPool,
-                                     ActionFilters actionFilters,
                                      IndexNameExpressionResolver indexNameExpressionResolver) {
-        super(settings, ACTION_NAME, transportService, clusterService, threadPool, actionFilters, indexNameExpressionResolver, PrivilegesRequest::new);
+        super(settings, ACTION_NAME, transportService, clusterService, threadPool, indexNameExpressionResolver, PrivilegesRequest::new);
     }
 
     @Override

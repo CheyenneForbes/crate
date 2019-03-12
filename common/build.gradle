@@ -1,0 +1,21 @@
+apply from: "$rootDir/gradle/javaModule.gradle"
+
+
+archivesBaseName = 'crate-common'
+
+dependencies {
+    compile project(':es:es-server')
+    compile "com.google.guava:guava:${versions.guava}"
+    testCompile project(':integration-testing')
+}
+
+test {
+    outputs.upToDateWhen { false }
+
+    testLogging.exceptionFormat = 'full'
+    jacoco {
+        excludes = [
+                "*Test*"
+        ]
+    }
+}

@@ -26,7 +26,7 @@ import org.apache.logging.log4j.Logger;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.search.IndexSearcher;
 import org.elasticsearch.ElasticsearchException;
-import org.elasticsearch.common.logging.Loggers;
+import org.apache.logging.log4j.LogManager;
 import org.elasticsearch.index.IndexNotFoundException;
 import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.engine.Engine;
@@ -41,7 +41,7 @@ import java.util.function.UnaryOperator;
 @NotThreadSafe
 public class SharedShardContext {
 
-    private static final Logger LOGGER = Loggers.getLogger(SharedShardContext.class);
+    private static final Logger LOGGER = LogManager.getLogger(SharedShardContext.class);
 
     private final IndicesService indicesService;
     private final ShardId shardId;
@@ -99,7 +99,7 @@ public class SharedShardContext {
         }
 
         private RefCountSearcher(Engine.Searcher searcher, IndexSearcher indexSearcher) {
-            super(searcher.source(), indexSearcher);
+            super(searcher.source(), indexSearcher, () -> {});
             this.searcher = searcher;
         }
 

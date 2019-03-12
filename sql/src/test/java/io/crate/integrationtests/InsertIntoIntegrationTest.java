@@ -26,9 +26,7 @@ import io.crate.action.sql.SQLActionException;
 import io.crate.exceptions.VersionInvalidException;
 import io.crate.testing.SQLBulkResponse;
 import io.crate.testing.SQLResponse;
-import io.crate.testing.TestingHelpers;
 import io.crate.testing.UseJdbc;
-import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.common.collect.MapBuilder;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.hamcrest.core.IsNull;
@@ -318,8 +316,8 @@ public class InsertIntoIntegrationTest extends SQLTransportIntegrationTest {
         execute("insert into test (pk_col, message) values (?, ?)", args);
         refresh();
 
-        GetResponse response = client().prepareGet(getFqn("test"), "default", "1").execute().actionGet();
-        assertTrue(response.getSourceAsMap().containsKey("message"));
+        execute("select message from test where pk_col = '1'");
+        assertThat((String) response.rows()[0][0], containsString("A towel is about the most"));
     }
 
     @Test
@@ -349,8 +347,8 @@ public class InsertIntoIntegrationTest extends SQLTransportIntegrationTest {
         execute("insert into test (pk_col, message) values (?, ?), (?, ?)", args);
         refresh();
 
-        GetResponse response = client().prepareGet(getFqn("test"), "default", "1").execute().actionGet();
-        assertTrue(response.getSourceAsMap().containsKey("message"));
+        execute("select message from test where pk_col = '1'");
+        assertThat((String) response.rows()[0][0], containsString("All the doors"));
     }
 
     @Test
@@ -725,7 +723,7 @@ public class InsertIntoIntegrationTest extends SQLTransportIntegrationTest {
 
         // set all 'female' values to true
         execute("insert into t (id, name, female) (select id, name, female from characters) " +
-                "on duplicate key update female = ?",
+                "on conflict (id) do update set female = ?",
             new Object[]{true});
         assertThat(response.rowCount(), is(4L));
         refresh();
@@ -736,7 +734,7 @@ public class InsertIntoIntegrationTest extends SQLTransportIntegrationTest {
 
         // set all 'female' values back to their original values
         execute("insert into t (id, name, female) (select id, name, female from characters) " +
-                "on duplicate key update female = values(female)");
+                "on conflict (id) do update set female = excluded.female");
         assertThat(response.rowCount(), is(4L));
         refresh();
 
@@ -1031,7 +1029,7 @@ public class InsertIntoIntegrationTest extends SQLTransportIntegrationTest {
         refresh();
 
         execute("insert into test_generated_column (id, ts) values (?, ?)" +
-                "on duplicate key update ts = ?",
+                "on conflict (id) do update set ts = ?",
             new Object[]{1, "2015-11-18T11:11:00", "2015-11-23T14:43:00"});
         refresh();
 
@@ -1328,7 +1326,7 @@ public class InsertIntoIntegrationTest extends SQLTransportIntegrationTest {
         execute("refresh table t");
 
         expectedException.expectMessage("Object o is null, cannot write x = 5 into it");
-        execute("insert into t (id, i, o) values(1, 1, null) ON DUPLICATE KEY UPDATE o['x'] = 5");
+        execute("insert into t (id, i, o) values (1, 1, null) ON CONFLICT (id) DO UPDATE set o['x'] = 5");
     }
 
     @Test
@@ -1403,5 +1401,37 @@ public class InsertIntoIntegrationTest extends SQLTransportIntegrationTest {
         execute("refresh table t");
         execute("select x, obj['y'], obj['z'] from t");
         assertThat(printedTable(response.rows()), is("10| 11| 4\n"));
+    }
+
+    @Test
+    public void testInsertIntoTablePartitionedOnGeneratedColumnBasedOnColumnWithinObject() {
+        execute("create table t (" +
+                "   day as date_trunc('day', obj['ts'])," +
+                "   obj object (strict) as (" +
+                "       ts timestamp" +
+                "   )" +
+                ") partitioned by (day) clustered into 1 shards");
+        execute("insert into t (obj) (select {ts=1549966541034})");
+        execute("refresh table t");
+        assertThat(
+            printedTable(execute("select day, obj from t").rows()),
+            is("1549929600000| {ts=1549966541034}\n")
+        );
+    }
+
+    @Test
+    public void testInsertIntoPartitionedTableFromPartitionedTable() {
+        execute("create table tsrc (country string not null, name string not null) " +
+                "partitioned by (country) " +
+                "clustered into 1 shards");
+        execute("insert into tsrc (country, name) values ('AR', 'Felipe')");
+        execute("refresh table tsrc");
+
+        execute("create table tdst (country string not null, name string not null) " +
+                "partitioned by (country) " +
+                "clustered into 1 shards");
+
+        execute("insert into tdst (country, name) (select country, name from tsrc)");
+        assertThat(response.rowCount(), is(1L));
     }
 }

@@ -35,6 +35,7 @@ import io.crate.data.Row;
 import io.crate.exceptions.SQLExceptions;
 import io.crate.expression.symbol.Field;
 import io.crate.metadata.SearchPath;
+import io.crate.metadata.pgcatalog.PgCatalogSchemaInfo;
 import io.crate.protocols.postgres.types.PGType;
 import io.crate.protocols.postgres.types.PGTypes;
 import io.crate.shade.org.postgresql.util.PGobject;
@@ -43,6 +44,7 @@ import io.crate.shade.org.postgresql.util.ServerErrorMessage;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
 import io.netty.handler.codec.http.HttpResponseStatus;
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.ElasticsearchTimeoutException;
 import org.elasticsearch.action.ActionFuture;
@@ -54,8 +56,10 @@ import org.elasticsearch.client.Client;
 import org.elasticsearch.client.Requests;
 import org.elasticsearch.cluster.health.ClusterHealthStatus;
 import org.elasticsearch.common.Priority;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.common.xcontent.DeprecationHandler;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
@@ -99,7 +103,7 @@ public class SQLTransportExecutor {
     public static final TimeValue REQUEST_TIMEOUT = new TimeValue(Long.parseLong(
         MoreObjects.firstNonNull(System.getenv(SQL_REQUEST_TIMEOUT), "5")), TimeUnit.SECONDS);
 
-    private static final Logger LOGGER = Loggers.getLogger(SQLTransportExecutor.class);
+    private static final Logger LOGGER = LogManager.getLogger(SQLTransportExecutor.class);
 
     private static final TestExecutionConfig EXECUTION_FEATURES_DISABLED = new TestExecutionConfig(false, false, false);
 
@@ -156,7 +160,7 @@ public class SQLTransportExecutor {
                             // explicitly setting the pg catalog schema will make it the current schema so attempts to
                             // create un-fully-qualified relations will fail. we filter it out and will implicitly
                             // remain the first in the search path.
-                            .filter(s -> !s.equals(SearchPath.PG_CATALOG_SCHEMA))
+                            .filter(s -> !s.equals(PgCatalogSchemaInfo.NAME))
                             .collect(Collectors.joining(", "))
         );
 
@@ -293,13 +297,14 @@ public class SQLTransportExecutor {
                 for (String setSessionStmt : setSessionStatementsList) {
                     conn.createStatement().execute(setSessionStmt);
                 }
-                PreparedStatement preparedStatement = conn.prepareStatement(stmt);
-                if (args != null) {
-                    for (int i = 0; i < args.length; i++) {
-                        preparedStatement.setObject(i + 1, toJdbcCompatObject(conn, args[i]));
+                try (PreparedStatement preparedStatement = conn.prepareStatement(stmt)) {
+                    if (args != null) {
+                        for (int i = 0; i < args.length; i++) {
+                            preparedStatement.setObject(i + 1, toJdbcCompatObject(conn, args[i]));
+                        }
                     }
+                    return executeAndConvertResult(preparedStatement);
                 }
-                return executeAndConvertResult(preparedStatement);
             }
         } catch (PSQLException e) {
             LOGGER.error("Error executing stmt={} args={}", stmt, Arrays.toString(args));
@@ -383,7 +388,7 @@ public class SQLTransportExecutor {
         XContentBuilder builder = JsonXContent.contentBuilder();
         builder.map(value);
         builder.close();
-        return builder.bytes().utf8ToString();
+        return Strings.toString(builder);
     }
 
     private static String toJsonString(Collection values) throws IOException {
@@ -395,7 +400,7 @@ public class SQLTransportExecutor {
         }
         builder.endArray();
         builder.close();
-        return builder.bytes().utf8ToString();
+        return Strings.toString(builder);
     }
 
     private static PGobject toPGObjectJson(String json) throws SQLException {
@@ -494,7 +499,8 @@ public class SQLTransportExecutor {
         try {
             if (json != null) {
                 byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
-                XContentParser parser = JsonXContent.jsonXContent.createParser(NamedXContentRegistry.EMPTY, bytes);
+                XContentParser parser = JsonXContent.jsonXContent.createParser(
+                    NamedXContentRegistry.EMPTY, DeprecationHandler.THROW_UNSUPPORTED_OPERATION, bytes);
                 if (bytes.length >= 1 && bytes[0] == '[') {
                     parser.nextToken();
                     return recursiveListToArray(parser.list());
@@ -628,7 +634,6 @@ public class SQLTransportExecutor {
             }
 
             Object[][] rowsArr = rows.toArray(new Object[0][]);
-            BytesRefUtils.ensureStringTypesAreStrings(outputTypes, rowsArr);
             return new SQLResponse(
                 outputNames,
                 rowsArr,

@@ -26,7 +26,6 @@ import io.crate.metadata.PartitionName;
 import io.crate.metadata.RelationName;
 import io.crate.metadata.view.ViewsMetaData;
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.master.TransportMasterNodeAction;
 import org.elasticsearch.cluster.AckedClusterStateUpdateTask;
 import org.elasticsearch.cluster.ClusterState;
@@ -48,14 +47,12 @@ public final class TransportCreateViewAction extends TransportMasterNodeAction<C
                                      TransportService transportService,
                                      ClusterService clusterService,
                                      ThreadPool threadPool,
-                                     ActionFilters actionFilters,
                                      IndexNameExpressionResolver indexNameExpressionResolver) {
         super(settings,
-            "crate/sql/views/create",
+            "internal:crate:sql/views/create",
             transportService,
             clusterService,
             threadPool,
-            actionFilters,
             indexNameExpressionResolver,
             CreateViewRequest::new);
     }
@@ -107,7 +104,7 @@ public final class TransportCreateViewAction extends TransportMasterNodeAction<C
     }
 
     private static boolean conflictsWithTable(RelationName viewName, MetaData indexMetaData) {
-        return indexMetaData.hasIndex(viewName.indexName())
+        return indexMetaData.hasIndex(viewName.indexNameOrAlias())
                || indexMetaData.templates().containsKey(PartitionName.templateName(viewName.schema(), viewName.name()));
     }
 

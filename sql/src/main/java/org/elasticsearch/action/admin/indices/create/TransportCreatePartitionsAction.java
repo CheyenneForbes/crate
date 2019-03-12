@@ -24,7 +24,6 @@ package org.elasticsearch.action.admin.indices.create;
 import com.carrotsearch.hppc.cursors.ObjectCursor;
 import com.carrotsearch.hppc.cursors.ObjectObjectCursor;
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Charsets;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Maps;
 import io.crate.metadata.PartitionName;
@@ -33,8 +32,8 @@ import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.ResourceAlreadyExistsException;
 import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.ActiveShardCount;
+import org.elasticsearch.action.support.ActiveShardsObserver;
 import org.elasticsearch.action.support.master.TransportMasterNodeAction;
 import org.elasticsearch.cluster.AckedClusterStateUpdateTask;
 import org.elasticsearch.cluster.ClusterState;
@@ -60,20 +59,19 @@ import org.elasticsearch.common.UUIDs;
 import org.elasticsearch.common.compress.CompressedXContent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Singleton;
-import org.elasticsearch.common.io.Streams;
 import org.elasticsearch.common.regex.Regex;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.xcontent.DeprecationHandler;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentHelper;
 import org.elasticsearch.common.xcontent.XContentParser;
-import org.elasticsearch.env.Environment;
+import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.mapper.DocumentMapper;
 import org.elasticsearch.index.mapper.MapperParsingException;
 import org.elasticsearch.index.mapper.MapperService;
-import org.elasticsearch.index.query.QueryShardContext;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.indices.cluster.IndicesClusterStateService;
 import org.elasticsearch.threadpool.ThreadPool;
@@ -81,10 +79,7 @@ import org.elasticsearch.transport.TransportService;
 import org.joda.time.DateTime;
 import org.joda.time.DateTimeZone;
 
-import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -116,8 +111,7 @@ public class TransportCreatePartitionsAction
     private final IndicesService indicesService;
     private final AllocationService allocationService;
     private final NamedXContentRegistry xContentRegistry;
-    private final Environment environment;
-    private final BulkActiveShardsObserver activeShardsObserver;
+    private final ActiveShardsObserver activeShardsObserver;
     private final ClusterStateTaskExecutor<CreatePartitionsRequest> executor = (currentState, tasks) -> {
         ClusterStateTaskExecutor.ClusterTasksResult.Builder<CreatePartitionsRequest> builder = ClusterStateTaskExecutor.ClusterTasksResult.builder();
         for (CreatePartitionsRequest request : tasks) {
@@ -134,22 +128,20 @@ public class TransportCreatePartitionsAction
     @Inject
     public TransportCreatePartitionsAction(Settings settings,
                                            TransportService transportService,
-                                           Environment environment,
                                            ClusterService clusterService,
                                            ThreadPool threadPool,
                                            AliasValidator aliasValidator,
                                            IndicesService indicesService,
                                            AllocationService allocationService,
                                            NamedXContentRegistry xContentRegistry,
-                                           IndexNameExpressionResolver indexNameExpressionResolver,
-                                           ActionFilters actionFilters) {
-        super(settings, NAME, transportService, clusterService, threadPool, actionFilters, indexNameExpressionResolver, CreatePartitionsRequest::new);
-        this.environment = environment;
+                                           IndexNameExpressionResolver indexNameExpressionResolver
+                                           ) {
+        super(settings, NAME, transportService, clusterService, threadPool, indexNameExpressionResolver, CreatePartitionsRequest::new);
         this.aliasValidator = aliasValidator;
         this.indicesService = indicesService;
         this.allocationService = allocationService;
         this.xContentRegistry = xContentRegistry;
-        this.activeShardsObserver = new BulkActiveShardsObserver(settings, clusterService, threadPool);
+        this.activeShardsObserver = new ActiveShardsObserver(settings, clusterService, threadPool);
     }
 
     @Override
@@ -174,7 +166,7 @@ public class TransportCreatePartitionsAction
 
         createIndices(request, ActionListener.wrap(response -> {
             if (response.isAcknowledged()) {
-                activeShardsObserver.waitForActiveShards(request.indices(), ActiveShardCount.DEFAULT, request.ackTimeout(),
+                activeShardsObserver.waitForActiveShards(request.indices().toArray(new String[0]), ActiveShardCount.DEFAULT, request.ackTimeout(),
                     shardsAcked -> {
                         if (!shardsAcked && logger.isInfoEnabled()) {
                             String partitionTemplateName = PartitionName.templateName(request.indices().iterator().next());
@@ -211,22 +203,17 @@ public class TransportCreatePartitionsAction
                 return currentState;
             }
 
-            Map<String, IndexMetaData.Custom> customs = new HashMap<>();
             Map<String, Map<String, Object>> mappings = new HashMap<>();
             Map<String, AliasMetaData> templatesAliases = new HashMap<>();
             List<String> templateNames = new ArrayList<>();
 
             List<IndexTemplateMetaData> templates = findTemplates(request, currentState);
-            applyTemplates(customs, mappings, templatesAliases, templateNames, templates);
-            File mappingsDir = new File(environment.configFile().toFile(), "mappings");
-            if (mappingsDir.isDirectory()) {
-                addMappingFromMappingsFile(mappings, mappingsDir, request);
-            }
+            applyTemplates(mappings, templatesAliases, templateNames, templates);
 
             MetaData.Builder newMetaDataBuilder = MetaData.builder(currentState.metaData());
             for (String index : indicesToCreate) {
                 Settings indexSettings = createIndexSettings(currentState, templates);
-                int routingNumShards = IndexMetaData.INDEX_NUMBER_OF_SHARDS_SETTING.get(indexSettings);
+                int routingNumShards = IndexMetaData.INDEX_NUMBER_OF_ROUTING_SHARDS_SETTING.get(indexSettings);
 
                 String testIndex = indicesToCreate.get(0);
                 IndexMetaData.Builder tmpImdBuilder = IndexMetaData.builder(testIndex)
@@ -253,16 +240,6 @@ public class TransportCreatePartitionsAction
                     throw mpe;
                 }
 
-                // the context is only used for validation so it's fine to pass fake values for the shard id and the current
-                // timestamp
-                QueryShardContext queryShardContext = indexService.newQueryShardContext(0, null, () -> 0L, null);
-                for (AliasMetaData aliasMetaData : templatesAliases.values()) {
-                    if (aliasMetaData.filter() != null) {
-                        aliasValidator.validateAliasFilter(
-                            aliasMetaData.alias(), aliasMetaData.filter().uncompressed(), queryShardContext, xContentRegistry);
-                    }
-                }
-
                 // now, update the mappings with the actual source
                 Map<String, MappingMetaData> mappingsMetaData = Maps.newHashMap();
                 for (DocumentMapper mapper : mapperService.docMappers(true)) {
@@ -270,17 +247,15 @@ public class TransportCreatePartitionsAction
                     mappingsMetaData.put(mapper.type(), mappingMd);
                 }
 
-                final IndexMetaData.Builder indexMetaDataBuilder =
-                    IndexMetaData.builder(index).settings(indexSettings);
+                final IndexMetaData.Builder indexMetaDataBuilder = IndexMetaData.builder(index)
+                    .setRoutingNumShards(routingNumShards)
+                    .settings(indexSettings);
 
                 for (MappingMetaData mappingMd : mappingsMetaData.values()) {
                     indexMetaDataBuilder.putMapping(mappingMd);
                 }
                 for (AliasMetaData aliasMetaData : templatesAliases.values()) {
                     indexMetaDataBuilder.putAlias(aliasMetaData);
-                }
-                for (Map.Entry<String, IndexMetaData.Custom> customEntry : customs.entrySet()) {
-                    indexMetaDataBuilder.putCustom(customEntry.getKey(), customEntry.getValue());
                 }
                 indexMetaDataBuilder.state(IndexMetaData.State.OPEN);
 
@@ -307,9 +282,8 @@ public class TransportCreatePartitionsAction
             for (String index : indicesToCreate) {
                 routingTableBuilder.addAsNew(updatedState.metaData().index(index));
             }
-            updatedState = allocationService.reroute(
+            return allocationService.reroute(
                 ClusterState.builder(updatedState).routingTable(routingTableBuilder.build()).build(), "bulk-index-creation");
-            return updatedState;
         } finally {
             for (int i = 0; i < createdIndices.size(); i++) {
                 // Index was already partially created - need to clean up
@@ -344,22 +318,6 @@ public class TransportCreatePartitionsAction
         );
     }
 
-    private void addMappingFromMappingsFile(Map<String, Map<String, Object>> mappings, File mappingsDir, CreatePartitionsRequest request) {
-        for (String index : request.indices()) {
-            // first index level
-            File indexMappingsDir = new File(mappingsDir, index);
-            if (indexMappingsDir.isDirectory()) {
-                addMappings(mappings, indexMappingsDir);
-            }
-
-            // second is the _default mapping
-            File defaultMappingsDir = new File(mappingsDir, "_default");
-            if (defaultMappingsDir.isDirectory()) {
-                addMappings(mappings, defaultMappingsDir);
-            }
-        }
-    }
-
     private void validateAndFilterExistingIndices(ClusterState currentState,
                                                   List<String> indicesToCreate,
                                                   CreatePartitionsRequest request) {
@@ -379,61 +337,20 @@ public class TransportCreatePartitionsAction
         for (int i = templates.size() - 1; i >= 0; i--) {
             indexSettingsBuilder.put(templates.get(i).settings());
         }
-        if (indexSettingsBuilder.get(IndexMetaData.SETTING_NUMBER_OF_SHARDS) == null) {
-            indexSettingsBuilder.put(IndexMetaData.SETTING_NUMBER_OF_SHARDS,
-                settings.getAsInt(IndexMetaData.SETTING_NUMBER_OF_SHARDS, 5));
-        }
-        if (indexSettingsBuilder.get(IndexMetaData.SETTING_NUMBER_OF_REPLICAS) == null) {
-            indexSettingsBuilder.put(IndexMetaData.SETTING_NUMBER_OF_REPLICAS,
-                settings.getAsInt(IndexMetaData.SETTING_NUMBER_OF_REPLICAS, 1));
-        }
-        if (settings.get(IndexMetaData.SETTING_AUTO_EXPAND_REPLICAS) != null
-            && indexSettingsBuilder.get(IndexMetaData.SETTING_AUTO_EXPAND_REPLICAS) == null) {
-            indexSettingsBuilder.put(IndexMetaData.SETTING_AUTO_EXPAND_REPLICAS,
-                settings.get(IndexMetaData.SETTING_AUTO_EXPAND_REPLICAS));
-        }
-
         if (indexSettingsBuilder.get(IndexMetaData.SETTING_VERSION_CREATED) == null) {
             DiscoveryNodes nodes = currentState.nodes();
             final Version createdVersion = Version.min(Version.CURRENT, nodes.getSmallestNonClientNodeVersion());
             indexSettingsBuilder.put(IndexMetaData.SETTING_VERSION_CREATED, createdVersion);
         }
-
         if (indexSettingsBuilder.get(IndexMetaData.SETTING_CREATION_DATE) == null) {
             indexSettingsBuilder.put(IndexMetaData.SETTING_CREATION_DATE, new DateTime(DateTimeZone.UTC).getMillis());
         }
-
         indexSettingsBuilder.put(IndexMetaData.SETTING_INDEX_UUID, UUIDs.randomBase64UUID());
 
         return indexSettingsBuilder.build();
     }
 
-    private void addMappings(Map<String, Map<String, Object>> mappings, File mappingsDir) {
-        File[] mappingsFiles = mappingsDir.listFiles();
-        assert mappingsFiles != null : "file list of the mapping directory should not be null";
-        for (File mappingFile : mappingsFiles) {
-            if (mappingFile.isHidden()) {
-                continue;
-            }
-            int lastDotIndex = mappingFile.getName().lastIndexOf('.');
-            String mappingType =
-                lastDotIndex != -1 ? mappingFile.getName().substring(0, lastDotIndex) : mappingFile.getName();
-            try (InputStreamReader reader = new InputStreamReader(new FileInputStream(mappingFile), Charsets.UTF_8)) {
-                String mappingSource = Streams.copyToString(reader);
-                if (mappings.containsKey(mappingType)) {
-                    XContentHelper.mergeDefaults(mappings.get(mappingType), parseMapping(mappingSource));
-                } else {
-                    mappings.put(mappingType, parseMapping(mappingSource));
-                }
-            } catch (Exception e) {
-                logger.warn("failed to read / parse mapping [" + mappingType + "] from location [" + mappingFile +
-                            "], ignoring...", e);
-            }
-        }
-    }
-
-    private void applyTemplates(Map<String, IndexMetaData.Custom> customs,
-                                Map<String, Map<String, Object>> mappings,
+    private void applyTemplates(Map<String, Map<String, Object>> mappings,
                                 Map<String, AliasMetaData> templatesAliases,
                                 List<String> templateNames,
                                 List<IndexTemplateMetaData> templates) throws Exception {
@@ -445,18 +362,6 @@ public class TransportCreatePartitionsAction
                     XContentHelper.mergeDefaults(mappings.get(cursor.key), parseMapping(cursor.value.string()));
                 } else {
                     mappings.put(cursor.key, parseMapping(cursor.value.string()));
-                }
-            }
-            // handle custom
-            for (ObjectObjectCursor<String, IndexMetaData.Custom> cursor : template.customs()) {
-                String type = cursor.key;
-                IndexMetaData.Custom custom = cursor.value;
-                IndexMetaData.Custom existing = customs.get(type);
-                if (existing == null) {
-                    customs.put(type, custom);
-                } else {
-                    IndexMetaData.Custom merged = existing.mergeWith(custom);
-                    customs.put(type, merged);
                 }
             }
             //handle aliases
@@ -488,7 +393,8 @@ public class TransportCreatePartitionsAction
     }
 
     private Map<String, Object> parseMapping(String mappingSource) throws Exception {
-        try (XContentParser parser = XContentFactory.xContent(mappingSource).createParser(xContentRegistry, mappingSource)) {
+        try (XContentParser parser = XContentFactory.xContent(XContentType.JSON)
+            .createParser(xContentRegistry, DeprecationHandler.THROW_UNSUPPORTED_OPERATION, mappingSource)) {
             return parser.map();
         } catch (IOException e) {
             throw new ElasticsearchException("failed to parse mapping", e);

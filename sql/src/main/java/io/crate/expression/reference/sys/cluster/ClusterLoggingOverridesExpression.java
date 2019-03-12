@@ -22,16 +22,16 @@
 
 package io.crate.expression.reference.sys.cluster;
 
-import io.crate.expression.reference.LiteralNestableInput;
 import io.crate.expression.reference.NestedObjectExpression;
 import io.crate.expression.reference.sys.SysObjectArrayReference;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.settings.Settings;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+
+import static io.crate.execution.engine.collect.NestableCollectExpression.constant;
 
 public class ClusterLoggingOverridesExpression extends SysObjectArrayReference {
 
@@ -60,8 +60,8 @@ public class ClusterLoggingOverridesExpression extends SysObjectArrayReference {
         public static final String LEVEL = "level";
 
         ClusterLoggingOverridesChildExpression(String loggerName, String level) {
-            childImplementations.put(NAME, new LiteralNestableInput<>(new BytesRef(loggerName)));
-            childImplementations.put(LEVEL, new LiteralNestableInput<>(new BytesRef(level.toUpperCase(Locale.ENGLISH))));
+            childImplementations.put(NAME, constant(loggerName));
+            childImplementations.put(LEVEL, constant(level.toUpperCase(Locale.ENGLISH)));
         }
     }
 }

@@ -62,7 +62,6 @@ import static org.hamcrest.Matchers.startsWith;
 import static org.hamcrest.core.Is.is;
 
 @ESIntegTestCase.ClusterScope(numDataNodes = 2)
-@UseJdbc(0) // Copy has no row count
 public class CopyIntegrationTest extends SQLHttpIntegrationTest {
 
     private final String copyFilePath =
@@ -205,6 +204,10 @@ public class CopyIntegrationTest extends SQLHttpIntegrationTest {
         assertThat(response.rows()[1][0], is(2));
     }
 
+    /**
+     * Disable JDBC/PSQL as object values are streamed via JSON on the PSQL wire protocol which is not type safe.
+     */
+    @UseJdbc(0)
     @Test
     public void testCopyFromFileWithInvalidColumns() throws Exception {
         execute("create table foo (id integer primary key) clustered into 1 shards with (number_of_replicas=0)");
@@ -231,7 +234,9 @@ public class CopyIntegrationTest extends SQLHttpIntegrationTest {
         // Check data of column.
         assertThat(response.rows()[0][0], is(4));
         HashMap data = (HashMap)response.rows()[0][1];
-        assertThat(data.get("_valid"), is(4));
+        // The inner value will result in an Long type as we rely on ES mappers here and the dynamic ES parsing
+        // will define integers as longs (no concrete type was specified so use long to be safe)
+        assertThat(data.get("_valid"), is(4L));
     }
 
     @Test
@@ -700,6 +705,7 @@ public class CopyIntegrationTest extends SQLHttpIntegrationTest {
         assertThat(response.rowCount(), is(2L));
     }
 
+    @UseJdbc(0) // copy from returning does not support unbound analysis (prepared statements)
     @Test
     public void testCopyFromReturnSummaryWithFailedRows() throws Exception {
         execute("create table t1 (id int primary key, ts timestamp)");
@@ -733,11 +739,12 @@ public class CopyIntegrationTest extends SQLHttpIntegrationTest {
         // one of the first files will have a duplicate key error
         assertThat(result, containsString("| 1| 1| {A document with the same primary key exists already={count=1, line_numbers=["));
         // file `data3.json` has a invalid timestamp error
-        assertThat(result, containsString("data3.json| 1| 2| {failed to parse [ts]={count=2, line_numbers=["));
+        assertThat(result, containsString("data3.json| 1| 2| {failed to parse field [ts] of type [date]={count=2, line_numbers=["));
         // file `data4.json` has an invalid json item entry
         assertThat(result, containsString("data4.json| 1| 1| {JSON parser error: "));
     }
 
+    @UseJdbc(0) // copy from returning does not support unbound analysis (prepared statements)
     @Test
     public void testCopyFromReturnSummaryWithFailedURI() throws Exception {
         execute("create table t1 (id int primary key, ts timestamp)");

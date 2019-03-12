@@ -24,6 +24,7 @@ package io.crate.expression.symbol;
 import com.google.common.collect.Lists;
 import io.crate.Streamer;
 import io.crate.expression.symbol.format.SymbolPrinter;
+import io.crate.metadata.ColumnIdent;
 import io.crate.metadata.GeneratedReference;
 import io.crate.metadata.OutputName;
 import io.crate.metadata.Path;
@@ -37,6 +38,7 @@ import java.io.IOException;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Predicate;
 
 public class Symbols {
@@ -60,6 +62,16 @@ public class Symbols {
         return streamers;
     }
 
+    @Nullable
+    public static <V> V lookupValueByColumn(Map<? extends Symbol, V> valuesBySymbol, ColumnIdent column) {
+        for (Map.Entry<? extends Symbol, V> entry : valuesBySymbol.entrySet()) {
+            Symbol key = entry.getKey();
+            if (key instanceof Reference && ((Reference) key).column().equals(column)) {
+                return entry.getValue();
+            }
+        }
+        return null;
+    }
 
     /**
      * returns true if the symbol contains the given columnIdent.
@@ -96,6 +108,16 @@ public class Symbols {
         }
     }
 
+    public static void nullableToStream(@Nullable Symbol symbol, StreamOutput out) throws IOException {
+        if (symbol == null) {
+            out.writeBoolean(false);
+        } else {
+            out.writeBoolean(true);
+            out.writeVInt(symbol.symbolType().ordinal());
+            symbol.writeTo(out);
+        }
+    }
+
     public static void toStream(Symbol symbol, StreamOutput out) throws IOException {
         out.writeVInt(symbol.symbolType().ordinal());
         symbol.writeTo(out);
@@ -103,6 +125,15 @@ public class Symbols {
 
     public static List<Symbol> listFromStream(StreamInput in) throws IOException {
         return in.readList(Symbols::fromStream);
+    }
+
+    @Nullable
+    public static Symbol nullableFromStream(StreamInput in) throws IOException {
+        boolean valuePresent = in.readBoolean();
+        if (!valuePresent) {
+            return null;
+        }
+        return fromStream(in);
     }
 
     public static Symbol fromStream(StreamInput in) throws IOException {

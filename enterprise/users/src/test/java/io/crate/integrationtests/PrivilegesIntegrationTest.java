@@ -85,7 +85,7 @@ public class PrivilegesIntegrationTest extends BaseUsersIntegrationTest {
     @Test
     public void testNormalUserGrantsPrivilegeThrowsException() throws Exception {
         expectedException.expect(SQLActionException.class);
-        expectedException.expectMessage("UnauthorizedException: User \"normal\" is not authorized to execute statement");
+        expectedException.expectMessage("UnauthorizedException: User \"normal\" is not authorized to execute the statement");
         executeAsNormalUser("grant DQL to " + TEST_USERNAME);
     }
 
@@ -256,6 +256,17 @@ public class PrivilegesIntegrationTest extends BaseUsersIntegrationTest {
     }
 
     @Test
+    public void testPrivilegeIsSwappedWithSwapTable() {
+        executeAsSuperuser("create table doc.t1 (x int)");
+        executeAsSuperuser("create table doc.t2 (x int)");
+        executeAsSuperuser("grant dql on table doc.t1 to " + TEST_USERNAME);
+
+        executeAsSuperuser("alter cluster swap table doc.t1 to doc.t2 with (drop_source = true)");
+        execute("select * from doc.t2", null, testUserSession());
+        assertThat(response.rowCount(), is(0L));
+    }
+
+    @Test
     public void testRenamePartitionedTableTransfersPrivilegesToNewTable() {
         executeAsSuperuser("create table t1 (x int) partitioned by (x) clustered into 1 shards with (number_of_replicas = 0)");
         executeAsSuperuser("insert into t1 values (1)");
@@ -335,7 +346,7 @@ public class PrivilegesIntegrationTest extends BaseUsersIntegrationTest {
         assertThat(response.rowCount(), is (0L));
 
         expectedException.expect(SQLActionException.class);
-        expectedException.expectMessage(containsString("UnauthorizedException: User \"normal\" is not authorized to execute statement"));
+        expectedException.expectMessage(containsString("UnauthorizedException: User \"normal\" is not authorized to execute the statement"));
         executeAsNormalUser("alter cluster reroute retry failed");
     }
 
@@ -357,14 +368,14 @@ public class PrivilegesIntegrationTest extends BaseUsersIntegrationTest {
 
     @Test
     public void testPermissionsValidOnTableAlias() {
-        executeAsSuperuser("create table s.t1 (x int)");
+        executeAsSuperuser("create table test.test (x int)");
 
-        executeAsSuperuser("grant dql on schema s to " + TEST_USERNAME);
+        executeAsSuperuser("grant dql on schema test to " + TEST_USERNAME);
         executeAsSuperuser("deny dql on schema doc to " + TEST_USERNAME);
         assertThat(response.rowCount(), is(1L));
         ensureYellow();
 
-        execute("select t.x from t1 as t", null, testUserSession("s"));
+        execute("select t.x from test.test as t", null, testUserSession("s"));
         assertThat(response.rowCount(), is(0L));
     }
 

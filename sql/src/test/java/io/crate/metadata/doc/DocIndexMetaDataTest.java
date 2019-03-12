@@ -5,7 +5,6 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import io.crate.Constants;
-import io.crate.Version;
 import io.crate.action.sql.SessionContext;
 import io.crate.analyze.Analysis;
 import io.crate.analyze.CreateTableAnalyzedStatement;
@@ -15,14 +14,14 @@ import io.crate.analyze.ParamTypeHints;
 import io.crate.analyze.ParameterContext;
 import io.crate.expression.udf.UserDefinedFunctionService;
 import io.crate.metadata.ColumnIdent;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.FulltextAnalyzerResolver;
 import io.crate.metadata.Functions;
 import io.crate.metadata.GeneratedReference;
 import io.crate.metadata.IndexReference;
 import io.crate.metadata.Reference;
-import io.crate.metadata.Schemas;
 import io.crate.metadata.RelationName;
-import io.crate.metadata.TransactionContext;
+import io.crate.metadata.Schemas;
 import io.crate.metadata.table.ColumnPolicy;
 import io.crate.metadata.view.ViewInfoFactory;
 import io.crate.sql.parser.SqlParser;
@@ -32,10 +31,11 @@ import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
 import io.crate.types.ArrayType;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
-import org.elasticsearch.cluster.metadata.AliasMetaData;
+import io.crate.types.ObjectType;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.metadata.MappingMetaData;
+import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
@@ -75,29 +75,19 @@ public class DocIndexMetaDataTest extends CrateDummyClusterServiceUnitTest {
     private Functions functions;
     private UserDefinedFunctionService udfService;
 
-    private IndexMetaData getIndexMetaData(String indexName, XContentBuilder builder) throws IOException {
-        return getIndexMetaData(indexName, builder, Settings.EMPTY, null);
-    }
-
     private IndexMetaData getIndexMetaData(String indexName,
-                                           XContentBuilder builder,
-                                           Settings settings,
-                                           @Nullable AliasMetaData aliasMetaData) throws IOException {
-        Map<String, Object> mappingSource = XContentHelper.convertToMap(builder.bytes(), true, XContentType.JSON).v2();
+                                           XContentBuilder builder) throws IOException {
+        Map<String, Object> mappingSource = XContentHelper.convertToMap(BytesReference.bytes(builder), true, XContentType.JSON).v2();
         mappingSource = sortProperties(mappingSource);
 
         Settings.Builder settingsBuilder = Settings.builder()
             .put("index.number_of_shards", 1)
             .put("index.number_of_replicas", 0)
-            .put("index.version.created", org.elasticsearch.Version.CURRENT)
-            .put(settings);
+            .put("index.version.created", org.elasticsearch.Version.CURRENT);
 
         IndexMetaData.Builder mdBuilder = IndexMetaData.builder(indexName)
             .settings(settingsBuilder)
             .putMapping(new MappingMetaData(Constants.DEFAULT_MAPPING_TYPE, mappingSource));
-        if (aliasMetaData != null) {
-            mdBuilder.putAlias(aliasMetaData);
-        }
         return mdBuilder.build();
     }
 
@@ -718,7 +708,7 @@ public class DocIndexMetaDataTest extends CrateDummyClusterServiceUnitTest {
                 .endObject()
             .endObject();
 
-        IndexMetaData metaData = getIndexMetaData("test1", builder, Settings.EMPTY, null);
+        IndexMetaData metaData = getIndexMetaData("test1", builder);
         DocIndexMetaData md = newMeta(metaData, "test1");
 
         assertThat(md.columns().size(), is(2));
@@ -966,6 +956,7 @@ public class DocIndexMetaDataTest extends CrateDummyClusterServiceUnitTest {
                     emptyMap(),
                     emptyMap(),
                     emptyMap(),
+                    emptyMap(),
                     emptyMap()
                 )
             ),
@@ -973,7 +964,7 @@ public class DocIndexMetaDataTest extends CrateDummyClusterServiceUnitTest {
             new NumberOfShards(clusterService)
         );
 
-        Analysis analysis = new Analysis(new TransactionContext(SessionContext.systemSessionContext()), ParameterContext.EMPTY, ParamTypeHints.EMPTY);
+        Analysis analysis = new Analysis(new CoordinatorTxnCtx(SessionContext.systemSessionContext()), ParameterContext.EMPTY, ParamTypeHints.EMPTY);
         CreateTableAnalyzedStatement analyzedStatement = analyzer.analyze(
             (CreateTable) statement, analysis.parameterContext(), analysis.transactionContext());
 
@@ -1141,7 +1132,7 @@ public class DocIndexMetaDataTest extends CrateDummyClusterServiceUnitTest {
                                                                "  ))" +
                                                                ")");
         assertThat(md.references().get(ColumnIdent.fromPath("tags")).valueType(),
-            is(new ArrayType(DataTypes.OBJECT)));
+            is(new ArrayType(ObjectType.untyped())));
         assertThat(md.references().get(ColumnIdent.fromPath("tags")).columnPolicy(),
             is(ColumnPolicy.STRICT));
         assertThat(md.references().get(ColumnIdent.fromPath("tags.size")).valueType(),
@@ -1267,26 +1258,6 @@ public class DocIndexMetaDataTest extends CrateDummyClusterServiceUnitTest {
     }
 
     @Test
-    public void testSchemaEquals() throws Exception {
-        DocIndexMetaData md = getDocIndexMetaDataFromStatement("create table schema_equals1 (id byte, tags array(string))");
-        DocIndexMetaData mdSame = getDocIndexMetaDataFromStatement("create table schema_equals1 (id byte, tags array(string))");
-        DocIndexMetaData mdOther = getDocIndexMetaDataFromStatement("create table schema_equals2 (id byte, tags array(string))");
-        DocIndexMetaData mdWithPk = getDocIndexMetaDataFromStatement("create table schema_equals3 (id byte primary key, tags array(string))");
-        DocIndexMetaData mdWithStringCol = getDocIndexMetaDataFromStatement("create table schema_equals4 (id byte, tags array(string), col string)");
-        DocIndexMetaData mdWithStringColNotAnalyzed = getDocIndexMetaDataFromStatement("create table schema_equals5 (id byte, tags array(string), col string index off)");
-        DocIndexMetaData mdWithStringColNotAnalyzedAndIndex = getDocIndexMetaDataFromStatement("create table schema_equals6 (id byte, tags array(string), col string index off, index ft_index using fulltext(col))");
-        assertThat(md.schemaEquals(md), is(true));
-        assertThat(md == mdSame, is(false));
-        assertThat(md.schemaEquals(mdSame), is(true));   // same table name
-        assertThat(md.schemaEquals(mdOther), is(false)); // different table name
-        assertThat(md.schemaEquals(mdWithPk), is(false));
-        assertThat(md.schemaEquals(mdWithStringCol), is(false));
-        assertThat(mdWithPk.schemaEquals(mdWithStringCol), is(false));
-        assertThat(mdWithStringCol.schemaEquals(mdWithStringColNotAnalyzed), is(false));
-        assertThat(mdWithStringColNotAnalyzed.schemaEquals(mdWithStringColNotAnalyzedAndIndex), is(false));
-    }
-
-    @Test
     public void testSchemaWithGeneratedColumn() throws Exception {
         XContentBuilder builder = XContentFactory.jsonBuilder()
             .startObject()
@@ -1301,7 +1272,7 @@ public class DocIndexMetaDataTest extends CrateDummyClusterServiceUnitTest {
                 .endObject()
             .endObject();
 
-        IndexMetaData metaData = getIndexMetaData("test1", builder, Settings.EMPTY, null);
+        IndexMetaData metaData = getIndexMetaData("test1", builder);
         DocIndexMetaData md = newMeta(metaData, "test1");
 
         assertThat(md.columns().size(), is(2));
@@ -1330,44 +1301,11 @@ public class DocIndexMetaDataTest extends CrateDummyClusterServiceUnitTest {
             .endObject()
             .endObject();
 
-        IndexMetaData metaData = getIndexMetaData("test1", builder, Settings.EMPTY, null);
+        IndexMetaData metaData = getIndexMetaData("test1", builder);
         DocIndexMetaData md = newMeta(metaData, "test1");
 
         assertThat(md.indices().size(), is(1));
         assertThat(md.indices().keySet().iterator().next(), is(new ColumnIdent("description_ft")));
-    }
-
-    @Test
-    public void testVersionsRead() throws Exception {
-        // @formatter:off
-        XContentBuilder builder = XContentFactory.jsonBuilder()
-            .startObject()
-                .startObject("_meta")
-                    .startObject("version")
-                        .startObject(Version.Property.CREATED.toString())
-                            .field(Version.CRATEDB_VERSION_KEY, 560499)
-                            .field(Version.ES_VERSION_KEY, 2040299)
-                        .endObject()
-                        .startObject(Version.Property.UPGRADED.toString())
-                            .field(Version.CRATEDB_VERSION_KEY, Version.CURRENT.id)
-                            .field(Version.ES_VERSION_KEY, Version.CURRENT.esVersion.id)
-                        .endObject()
-                    .endObject()
-                .endObject()
-                .startObject("properties")
-                    .startObject("id")
-                        .field("type", "integer")
-                    .endObject()
-                .endObject()
-            .endObject();
-        // @formatter: on
-
-        IndexMetaData metaData = getIndexMetaData("test1", builder, Settings.EMPTY, null);
-        DocIndexMetaData md = newMeta(metaData, "test1");
-
-        assertThat(md.versionCreated().id, is(560499));
-        assertThat(md.versionCreated().esVersion.id, is(2040299));
-        assertThat(md.versionUpgraded(), is(Version.CURRENT));
     }
 
     @Test

@@ -23,6 +23,7 @@
 package io.crate.planner;
 
 import com.carrotsearch.hppc.IntIndexedContainer;
+import com.carrotsearch.randomizedtesting.RandomizedTest;
 import com.google.common.collect.Iterables;
 import io.crate.analyze.TableDefinitions;
 import io.crate.exceptions.UnsupportedFeatureException;
@@ -37,6 +38,7 @@ import io.crate.execution.dsl.projection.FetchProjection;
 import io.crate.execution.dsl.projection.FilterProjection;
 import io.crate.execution.dsl.projection.GroupProjection;
 import io.crate.execution.dsl.projection.MergeCountProjection;
+import io.crate.execution.dsl.projection.ProjectSetProjection;
 import io.crate.execution.dsl.projection.Projection;
 import io.crate.execution.dsl.projection.TopNProjection;
 import io.crate.execution.engine.NodeOperationTreeGenerator;
@@ -53,9 +55,6 @@ import io.crate.metadata.Reference;
 import io.crate.metadata.RelationName;
 import io.crate.metadata.Routing;
 import io.crate.metadata.RowGranularity;
-import io.crate.metadata.Schemas;
-import io.crate.metadata.doc.DocTableInfo;
-import io.crate.metadata.table.TestingTableInfo;
 import io.crate.planner.node.dql.Collect;
 import io.crate.planner.node.dql.CountPlan;
 import io.crate.planner.node.dql.QueryThenFetch;
@@ -65,9 +64,7 @@ import io.crate.planner.operators.LogicalPlan;
 import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
 import io.crate.testing.SQLExecutor;
 import io.crate.testing.T3;
-import io.crate.testing.TestingHelpers;
 import io.crate.types.DataTypes;
-import org.apache.lucene.util.BytesRef;
 import org.hamcrest.Matchers;
 import org.junit.After;
 import org.junit.Before;
@@ -76,8 +73,6 @@ import org.junit.Test;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -104,16 +99,21 @@ public class SelectPlannerTest extends CrateDummyClusterServiceUnitTest {
 
     @Before
     public void prepare() throws IOException {
-        e = SQLExecutor.builder(clusterService)
-            .addDocTable(TableDefinitions.USER_TABLE_INFO)
+        e = SQLExecutor.builder(clusterService, 2, RandomizedTest.getRandom())
+            .addTable(TableDefinitions.USER_TABLE_DEFINITION)
             .addDocTable(TableDefinitions.TEST_CLUSTER_BY_STRING_TABLE_INFO)
             .addDocTable(TableDefinitions.USER_TABLE_INFO_CLUSTERED_BY_ONLY)
             .addDocTable(TableDefinitions.PARTED_PKS_TI)
             .addDocTable(TableDefinitions.IGNORED_NESTED_TABLE_INFO)
-            .addDocTable(TableDefinitions.TEST_MULTIPLE_PARTITIONED_TABLE_INFO)
             .addDocTable(T3.T1_INFO)
             .addDocTable(T3.T2_INFO)
-            .addDocTable(bindGeneratedColumnTable())
+            .addTable(
+                "create table doc.gc_table (" +
+                "   revenue integer," +
+                "   cost integer," +
+                "   profit as revenue - cost" +
+                ")"
+            )
             .addTable("create table t_pk_part_generated (ts timestamp, p as date_trunc('day', ts), primary key (ts, p))")
             .addPartitionedTable(
                 "create table parted (" +
@@ -122,8 +122,8 @@ public class SelectPlannerTest extends CrateDummyClusterServiceUnitTest {
                 "   date timestamp," +
                 "   obj object" +
                 ") partitioned by (date) ",
-                new PartitionName(new RelationName("doc", "parted"), singletonList(new BytesRef("1395874800000"))).asIndexName(),
-                new PartitionName(new RelationName("doc", "parted"), singletonList(new BytesRef("1395961200000"))).asIndexName(),
+                new PartitionName(new RelationName("doc", "parted"), singletonList("1395874800000")).asIndexName(),
+                new PartitionName(new RelationName("doc", "parted"), singletonList("1395961200000")).asIndexName(),
                 new PartitionName(new RelationName("doc", "parted"), singletonList(null)).asIndexName()
             )
             .build();
@@ -132,16 +132,6 @@ public class SelectPlannerTest extends CrateDummyClusterServiceUnitTest {
     @After
     public void resetPlannerOptimizationFlags() {
         e.getSessionContext().setHashJoinEnabled(false);
-    }
-
-    private DocTableInfo bindGeneratedColumnTable() {
-        RelationName generatedColumnRelationName = new RelationName(Schemas.DOC_SCHEMA_NAME, "gc_table");
-        return new TestingTableInfo.Builder(
-            generatedColumnRelationName, new Routing(Collections.emptyMap()))
-            .add("revenue", DataTypes.INTEGER, null)
-            .add("cost", DataTypes.INTEGER, null)
-            .addGeneratedColumn("profit", DataTypes.INTEGER, "subtract(revenue, cost)", false)
-            .build(TestingHelpers.getFunctions());
     }
 
     @Test
@@ -177,7 +167,7 @@ public class SelectPlannerTest extends CrateDummyClusterServiceUnitTest {
         LogicalPlan plan = e.logicalPlan("select name from bystring where name = 'one'");
         assertThat(plan, isPlan(e.functions(),
             "RootBoundary[name]\n" +
-            "Get[doc.bystring | name | DocKeys{'one'}"
+            "Get[doc.bystring | name | DocKeys{one}"
         ));
     }
 
@@ -219,7 +209,8 @@ public class SelectPlannerTest extends CrateDummyClusterServiceUnitTest {
 
     @Test
     public void testShardSelectWithOrderBy() throws Exception {
-        Collect collect = e.plan("select id from sys.shards order by id limit 10");
+        Merge merge = e.plan("select id from sys.shards order by id limit 10");
+        Collect collect = (Collect) merge.subPlan();
         RoutedCollectPhase collectPhase = ((RoutedCollectPhase) collect.collectPhase());
 
         assertEquals(DataTypes.INTEGER, collectPhase.outputTypes().get(0));
@@ -238,7 +229,7 @@ public class SelectPlannerTest extends CrateDummyClusterServiceUnitTest {
         QueryThenFetch qtf = e.plan("select name from users where name = 'x' order by id limit 10");
         Merge merge = (Merge) qtf.subPlan();
         RoutedCollectPhase collectPhase = ((RoutedCollectPhase) ((Collect) merge.subPlan()).collectPhase());
-        assertThat(collectPhase.where().representation(), is("Ref{doc.users.name, string} = 'x'"));
+        assertThat(collectPhase.where().representation(), is("Ref{doc.users.name, string} = x"));
 
         TopNProjection topNProjection = (TopNProjection) collectPhase.projections().get(0);
         assertThat(topNProjection.limit(), is(10));
@@ -262,7 +253,7 @@ public class SelectPlannerTest extends CrateDummyClusterServiceUnitTest {
         Merge merge = e.plan("select name from users where name = 'x' order by name limit 10");
         Collect collect = (Collect) merge.subPlan();
         RoutedCollectPhase collectPhase = ((RoutedCollectPhase) collect.collectPhase());
-        assertThat(collectPhase.where().representation(), is("Ref{doc.users.name, string} = 'x'"));
+        assertThat(collectPhase.where().representation(), is("Ref{doc.users.name, string} = x"));
 
         MergePhase mergePhase = merge.mergePhase();
         assertThat(mergePhase.outputTypes().size(), is(1));
@@ -322,9 +313,9 @@ public class SelectPlannerTest extends CrateDummyClusterServiceUnitTest {
             indices.addAll(entry.getValue().keySet());
         }
         assertThat(indices, Matchers.contains(
-            new PartitionName(new RelationName("doc", "parted"), Arrays.asList(new BytesRef("123"))).asIndexName()));
+            new PartitionName(new RelationName("doc", "parted"), Arrays.asList("123")).asIndexName()));
 
-        assertThat(collectPhase.where().representation(), is("Ref{doc.parted_pks.name, string} = 'x'"));
+        assertThat(collectPhase.where().representation(), is("Ref{doc.parted_pks.name, string} = x"));
 
         MergePhase mergePhase = merge.mergePhase();
         assertThat(mergePhase.outputTypes().size(), is(3));
@@ -336,7 +327,7 @@ public class SelectPlannerTest extends CrateDummyClusterServiceUnitTest {
         Merge merge = (Merge) qtf.subPlan();
         RoutedCollectPhase collectPhase = ((RoutedCollectPhase) ((Collect) merge.subPlan()).collectPhase());
 
-        assertThat(collectPhase.where().representation(), is("Ref{doc.users.name, string} = 'x'"));
+        assertThat(collectPhase.where().representation(), is("Ref{doc.users.name, string} = x"));
 
         MergePhase mergePhase = merge.mergePhase();
         assertThat(mergePhase.outputTypes().size(), is(2));
@@ -416,7 +407,7 @@ public class SelectPlannerTest extends CrateDummyClusterServiceUnitTest {
         assertThat(
             plan.countPhase().routing().locations().entrySet().stream()
                 .flatMap(e -> e.getValue().keySet().stream())
-                .collect(Collectors.toList()),
+                .collect(Collectors.toSet()),
             Matchers.contains(
                 is(".partitioned.parted.04732cpp6ks3ed1o60o30c1g")
             )
@@ -450,16 +441,16 @@ public class SelectPlannerTest extends CrateDummyClusterServiceUnitTest {
 
     @Test
     public void testGlobalAggregateWithWhereOnPartitionColumn() throws Exception {
-        Collect globalAggregate = e.plan(
-            "select min(name) from parted where date >= 1395961100000");
-        Routing routing = ((RoutedCollectPhase) globalAggregate.collectPhase()).routing();
+        Merge merge = e.plan(
+            "select min(name) from parted where date >= 1395961200000");
+        Collect collect = (Collect) merge.subPlan();
+        Routing routing = ((RoutedCollectPhase) collect.collectPhase()).routing();
 
         assertThat(
             routing.locations().values()
                 .stream()
                 .flatMap(shardsByIndex -> shardsByIndex.keySet().stream())
-                .sorted(Comparator.naturalOrder())
-                .collect(Collectors.toList()),
+                .collect(Collectors.toSet()),
             contains(
                 is(".partitioned.parted.04732cpp6ksjcc9i60o30c1g")
             ));
@@ -577,7 +568,7 @@ public class SelectPlannerTest extends CrateDummyClusterServiceUnitTest {
     public void testOuterJoinToInnerJoinRewrite() throws Exception {
         // disable hash joins otherwise it will be a distributed join and the plan differs
         e.getSessionContext().setHashJoinEnabled(false);
-        QueryThenFetch qtf = e.plan("select u1.text, u2.text " +
+        QueryThenFetch qtf = e.plan("select u1.text, concat(u2.text, '_foo') " +
                                     "from users u1 left join users u2 on u1.id = u2.id " +
                                     "where u2.name = 'Arthur'" +
                                     "and u2.id > 1 ");
@@ -590,11 +581,15 @@ public class SelectPlannerTest extends CrateDummyClusterServiceUnitTest {
         // doesn't contain "name" because whereClause is pushed down,
         // but still contains "id" because it is in the joinCondition
         assertThat(rightCM.collectPhase().toCollect(), contains(isReference("_fetchid"), isReference("id")));
+
+        Collect left = (Collect) nl.left();
+        assertThat(left.collectPhase().toCollect(), contains(isReference("_fetchid"), isReference("id")));
     }
 
     @Test
     public void testShardSelect() throws Exception {
-        Collect collect = e.plan("select id from sys.shards");
+        Merge merge = e.plan("select id from sys.shards");
+        Collect collect = (Collect) merge.subPlan();
         RoutedCollectPhase collectPhase = ((RoutedCollectPhase) collect.collectPhase());
         assertThat(collectPhase.maxRowGranularity(), is(RowGranularity.SHARD));
     }
@@ -632,12 +627,16 @@ public class SelectPlannerTest extends CrateDummyClusterServiceUnitTest {
 
     @Test
     public void testAggregationOnGeneratedColumns() throws Exception {
-        Collect plan = e.plan("select sum(profit) from gc_table");
-        List<Projection> projections = plan.collectPhase().projections();
+        Merge merge = e.plan("select sum(profit) from gc_table");
+        Collect collect = (Collect) merge.subPlan();
+        List<Projection> projections = collect.collectPhase().projections();
         assertThat(projections, contains(
-            instanceOf(AggregationProjection.class), // iter-partial on shard level
-            instanceOf(AggregationProjection.class)  // partial-final on node level
+            instanceOf(AggregationProjection.class) // iter-partial on shard level
         ));
+        assertThat(
+            merge.mergePhase().projections(),
+            contains(instanceOf(AggregationProjection.class))
+        );
         assertThat(
             ((AggregationProjection)projections.get(0)).aggregations().get(0).inputs().get(0),
             isSQL("INPUT(0)"));
@@ -735,5 +734,89 @@ public class SelectPlannerTest extends CrateDummyClusterServiceUnitTest {
         e.getSessionContext().setHashJoinEnabled(true);
         Join join = e.plan("select t2.b, t1.a from t1 inner join t2 on t1.i = t2.i order by 1, 2");
         assertThat(join.joinPhase().type(), is(ExecutionPhase.Type.HASH_JOIN));
+    }
+
+    @Test
+    public void testUnnestInSelectListResultsInPlanWithProjectSetOperator() {
+        LogicalPlan plan = e.logicalPlan("select unnest([1, 2])");
+        assertThat(plan, isPlan(e.functions(),
+            "RootBoundary[unnest([1, 2])]\n" +
+            "ProjectSet[unnest([1, 2])]\n" +
+            "Collect[.empty_row | [] | All]\n"
+        ));
+        Symbol output = plan.outputs().get(0);
+        assertThat(output.valueType(), is(DataTypes.LONG));
+    }
+
+    @Test
+    public void testScalarCanBeUsedAroundTableGeneratingFunctionInSelectList() {
+        LogicalPlan plan = e.logicalPlan("select unnest([1, 2]) + 1");
+        assertThat(plan, isPlan(e.functions(),
+            "RootBoundary[(unnest([1, 2]) + 1)]\n" +
+            "FetchOrEval[(unnest([1, 2]) + 1)]\n" +
+            "ProjectSet[unnest([1, 2])]\n" +
+            "Collect[.empty_row | [] | All]\n"
+        ));
+    }
+
+    @Test
+    public void testAggregationOnTopOfTableFunctionIsNotPossibleWithoutSeparateSubQuery() {
+        expectedException.expectMessage("Cannot use table functions inside aggregates");
+        e.logicalPlan("select sum(unnest([1, 2]))");
+    }
+
+    @Test
+    public void testTableFunctionIsExecutedAfterAggregation() {
+        LogicalPlan plan = e.logicalPlan("select count(*), generate_series(1, 2) from users");
+        assertThat(plan, isPlan(e.functions(),
+            "RootBoundary[count(*), generate_series(1, 2)]\n" +
+            "FetchOrEval[count(*), generate_series(1, 2)]\n" +
+            "ProjectSet[generate_series(1, 2) | count(*)]\n" +
+            "Count[doc.users | All]\n"
+        ));
+    }
+
+    @Test
+    public void testAggregationCanBeUsedAsArgumentToTableFunction() {
+        LogicalPlan plan = e.logicalPlan("select count(name), generate_series(1, count(name)) from users");
+        assertThat(plan, isPlan(e.functions(),
+            "RootBoundary[count(name), generate_series(1, count(name))]\n" +
+            "FetchOrEval[count(name), generate_series(1, count(name))]\n" +
+            "ProjectSet[generate_series(1, count(name)) | count(name)]\n" +
+            "Aggregate[count(name)]\n" +
+            "Collect[doc.users | [name] | All]\n"
+        ));
+    }
+
+    @Test
+    public void testOrderByOnTableFunctionMustOrderAfterProjectSet() {
+        LogicalPlan plan = e.logicalPlan("select unnest([1, 2]) from sys.nodes order by 1");
+        assertThat(plan, isPlan(e.functions(),
+            "RootBoundary[unnest([1, 2])]\n" +
+            "OrderBy[unnest([1, 2]) ASC]\n" +
+            "ProjectSet[unnest([1, 2])]\n" +
+            "Collect[sys.nodes | [] | All]\n"
+        ));
+    }
+
+    @Test
+    public void testSelectingTableFunctionAndStandaloneColumnOnUserTablesCanDealWithFetchId() {
+        QueryThenFetch qtf = e.plan("select unnest([1, 2]), name from users");
+        Merge merge = (Merge) qtf.subPlan();
+        Collect collect = (Collect) merge.subPlan();
+        assertThat(
+            collect.collectPhase().projections(),
+            contains(instanceOf(ProjectSetProjection.class))
+        );
+        assertThat(
+            merge.mergePhase().projections(),
+            contains(instanceOf(FetchProjection.class))
+        );
+    }
+
+    @Test
+    public void testUnnestCannotReturnMultipleColumnsIfUsedInSelectList() {
+        expectedException.expectMessage("Table function used in select list must not return multiple columns");
+        e.logicalPlan("select unnest([1, 2], [3, 4])");
     }
 }

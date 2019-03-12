@@ -95,6 +95,8 @@ columns with a value each to identify the partition to alter.
 Arguments
 =========
 
+.. _alter_table_set_reset:
+
 ``SET/RESET``
 -------------
 
@@ -103,6 +105,12 @@ Using ``RESET`` will reset the parameter to its default value.
 
 :parameter:
   The name of the parameter that is set to a new value or its default.
+
+The supported parameters are listed in the :ref:`CREATE TABLE WITH CLAUSE
+<with_clause>` documentation. In addition to those, for dynamically
+changing the number of allocated shards, the parameter ``number_of_shards``
+can be used. For more more info on that, see :ref:`alter_change_number_of_shard`.
+
 
 ``ADD COLUMN``
 --------------
@@ -126,11 +134,13 @@ partitions will not produce an exception, but will have no effect. Similarly,
 like ``SELECT`` and ``INSERT`` on partitioned will exclude closed partitions and
 continue working.
 
+.. _alter_table_rename:
+
 ``RENAME TO``
 -------------
+
 Can be used to rename a table, while maintaining its schema and data. During
-this operation the table will be closed, and all operations upon the table will
-fail until the rename operation is completed.
+this operation the shards of the table will become temporarily unavailable.
 
 .. _alter_table_reroute:
 

@@ -23,8 +23,6 @@ package io.crate.integrationtests;
 
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
-import io.crate.Constants;
-import io.crate.Version;
 import io.crate.action.sql.SQLActionException;
 import io.crate.metadata.IndexMappings;
 import io.crate.metadata.PartitionName;
@@ -32,22 +30,20 @@ import io.crate.metadata.RelationName;
 import io.crate.metadata.Schemas;
 import io.crate.testing.SQLResponse;
 import io.crate.testing.TestingHelpers;
-import io.crate.testing.UseJdbc;
 import io.crate.testing.UseRandomizedSchema;
-import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.action.admin.indices.alias.exists.AliasesExistResponse;
-import org.elasticsearch.action.admin.indices.settings.get.GetSettingsResponse;
+import org.elasticsearch.Version;
 import org.elasticsearch.action.admin.indices.template.get.GetIndexTemplatesRequest;
 import org.elasticsearch.action.admin.indices.template.get.GetIndexTemplatesResponse;
+import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.metadata.IndexTemplateMetaData;
 import org.elasticsearch.cluster.metadata.MappingMetaData;
 import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.common.collect.MapBuilder;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.xcontent.DeprecationHandler;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.XContentFactory;
-import org.elasticsearch.index.query.MatchAllQueryBuilder;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.hamcrest.CoreMatchers;
 import org.hamcrest.Matchers;
@@ -63,24 +59,21 @@ import java.io.OutputStreamWriter;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
+import static com.carrotsearch.randomizedtesting.RandomizedTest.$;
+import static io.crate.Constants.DEFAULT_MAPPING_TYPE;
 import static io.crate.testing.TestingHelpers.printedTable;
-import static org.hamcrest.Matchers.arrayContaining;
 import static org.hamcrest.Matchers.both;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.isOneOf;
 import static org.hamcrest.Matchers.lessThanOrEqualTo;
-import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.core.Is.is;
 
@@ -102,7 +95,6 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
     }
 
     @Test
-    @UseJdbc(0) // no copy row count
     public void testCopyFromIntoPartitionedTableWithPARTITIONKeyword() throws Exception {
         execute("create table quotes (" +
                 "id integer primary key," +
@@ -142,7 +134,6 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
      * Otherwise the rowCount returned from the copy from statement is ambiguous.
      */
     @Test
-    @UseJdbc(0) // no copy rowcount
     public void testCopyFromIntoPartitionedTable() throws Exception {
         execute("create table quotes (" +
                 "  id integer primary key, " +
@@ -158,7 +149,7 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
         for (String id : ImmutableList.of("1", "2", "3")) {
             String partitionName = new PartitionName(
                 new RelationName(sqlExecutor.getCurrentSchema(), "quotes"),
-                ImmutableList.of(new BytesRef(id))).asIndexName();
+                ImmutableList.of(id)).asIndexName();
             assertNotNull(client().admin().cluster().prepareState().execute().actionGet()
                 .getState().metaData().indices().get(partitionName));
             assertNotNull(client().admin().cluster().prepareState().execute().actionGet()
@@ -171,7 +162,6 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
     }
 
     @Test
-    @UseJdbc(0) // copy from has no rowcount
     public void testCopyFromIntoPartitionedTableWithGeneratedColumnPK() throws Exception {
         execute("create table quotes (" +
                 "  id integer, " +
@@ -220,7 +210,6 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
     }
 
     @Test
-    @UseJdbc(0) // no copy rowcount
     public void testCopyFromPartitionedTableCustomSchema() throws Exception {
         execute("create table my_schema.parted (" +
                 "  id long, " +
@@ -302,17 +291,11 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
 
         String partitionName = new PartitionName(
             new RelationName(sqlExecutor.getCurrentSchema(), "parted"),
-            Collections.singletonList(new BytesRef(String.valueOf(13959981214861L)))
+            Collections.singletonList(String.valueOf(13959981214861L))
         ).asIndexName();
         MetaData metaData = client().admin().cluster().prepareState().execute().actionGet()
             .getState().metaData();
         assertNotNull(metaData.indices().get(partitionName).getAliases().get(getFqn("parted")));
-        assertThat(
-            client().prepareSearch(partitionName).setTypes(Constants.DEFAULT_MAPPING_TYPE)
-                .setSize(0).setQuery(new MatchAllQueryBuilder())
-                .execute().actionGet().getHits().getTotalHits(),
-            is(1L)
-        );
 
         execute("select id, name, date from parted");
         assertThat(response.rowCount(), is(1L));
@@ -322,56 +305,12 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
     }
 
     private void validateInsertPartitionedTable() {
-        Set<String> indexUUIDs = new HashSet<>(3);
-
-        String partitionName = new PartitionName(
-            new RelationName(sqlExecutor.getCurrentSchema(), "parted"),
-            Collections.singletonList(new BytesRef(String.valueOf(13959981214861L)))
-        ).asIndexName();
-        assertThat(internalCluster().clusterService().state().metaData().hasIndex(partitionName), is(true));
-        IndexMetaData indexMetaData = client().admin().cluster().prepareState().execute().actionGet()
-            .getState().metaData().indices().get(partitionName);
-        indexUUIDs.add(indexMetaData.getIndexUUID());
-        assertThat(indexMetaData.getAliases().get(getFqn("parted")), notNullValue());
+        execute("select table_name, partition_ident from information_schema.table_partitions order by 2 ");
         assertThat(
-            client().prepareSearch(partitionName).setTypes(Constants.DEFAULT_MAPPING_TYPE)
-                .setSize(0).setQuery(new MatchAllQueryBuilder())
-                .execute().actionGet().getHits().getTotalHits(),
-            is(1L)
-        );
-
-        partitionName = new PartitionName(
-            new RelationName(sqlExecutor.getCurrentSchema(), "parted"),
-            Collections.singletonList(new BytesRef(String.valueOf(0L)))).asIndexName();
-        assertThat(internalCluster().clusterService().state().metaData().hasIndex(partitionName), is(true));
-        indexMetaData = client().admin().cluster().prepareState().execute().actionGet()
-            .getState().metaData().indices().get(partitionName);
-        indexUUIDs.add(indexMetaData.getIndexUUID());
-        assertThat(indexMetaData.getAliases().get(getFqn("parted")), notNullValue());
-        assertThat(
-            client().prepareSearch(partitionName).setTypes(Constants.DEFAULT_MAPPING_TYPE)
-                .setSize(0).setQuery(new MatchAllQueryBuilder())
-                .execute().actionGet().getHits().getTotalHits(),
-            is(1L)
-        );
-
-        List<BytesRef> nullList = new ArrayList<>();
-        nullList.add(null);
-        partitionName = new PartitionName(
-            new RelationName(sqlExecutor.getCurrentSchema(), "parted"), nullList).asIndexName();
-        assertThat(internalCluster().clusterService().state().metaData().hasIndex(partitionName), is(true));
-        indexMetaData = client().admin().cluster().prepareState().execute().actionGet()
-            .getState().metaData().indices().get(partitionName);
-        indexUUIDs.add(indexMetaData.getIndexUUID());
-        assertThat(indexMetaData.getAliases().get(getFqn("parted")), notNullValue());
-        assertThat(
-            client().prepareSearch(partitionName).setTypes(Constants.DEFAULT_MAPPING_TYPE)
-                .setSize(0).setQuery(new MatchAllQueryBuilder())
-                .execute().actionGet().getHits().getTotalHits(),
-            is(1L)
-        );
-
-        assertThat(indexUUIDs.size(), is(3));
+            printedTable(response.rows()),
+            is("parted| 0400\n" +
+               "parted| 04130\n" +
+               "parted| 047j2cpp6ksjie1h68oj8e1m64\n"));
     }
 
     @Test
@@ -417,25 +356,23 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
         execute("insert into parted (name, date) values (?, ?)",
             new Object[]{"Ford", 13959981214861L});
         assertThat(response.rowCount(), is(1L));
-        ensureYellow();
-        refresh();
-        String partitionName = new PartitionName(
+
+        execute("refresh table parted");
+
+        PartitionName partitionName = new PartitionName(
             new RelationName(sqlExecutor.getCurrentSchema(), "parted"),
-            Arrays.asList(new BytesRef("Ford"), new BytesRef(String.valueOf(13959981214861L)))
-        ).asIndexName();
-        assertNotNull(client().admin().cluster().prepareState().execute().actionGet()
-            .getState().metaData().indices().get(partitionName).getAliases().get(getFqn("parted")));
-        assertThat(
-            client().prepareSearch(partitionName).setTypes(Constants.DEFAULT_MAPPING_TYPE)
-                .setSize(0).setQuery(new MatchAllQueryBuilder())
-                .execute().actionGet().getHits().getTotalHits(),
-            is(1L)
+            Arrays.asList("Ford", String.valueOf(13959981214861L))
         );
+
+        execute(
+            "select count(*) from information_schema.table_partitions where partition_ident = ?",
+            $(partitionName.ident()));
+        assertThat(response.rows()[0][0], is(1L));
+
         execute("select * from parted");
-        assertThat(response.rowCount(), is(1L));
-        assertThat(response.cols(), arrayContaining("date", "name"));
-        assertThat((Long) response.rows()[0][0], is(13959981214861L));
-        assertThat((String) response.rows()[0][1], is("Ford"));
+        assertThat(
+            printedTable(response.rows()),
+            is("13959981214861| Ford\n"));
     }
 
     @Test
@@ -501,7 +438,7 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
         refresh();
         String partitionName = new PartitionName(
             new RelationName(sqlExecutor.getCurrentSchema(), "parted"),
-            Arrays.asList(new BytesRef("Trillian"), null)).asIndexName();
+            Arrays.asList("Trillian", null)).asIndexName();
         assertNotNull(client().admin().cluster().prepareState().execute().actionGet()
             .getState().metaData().indices().get(partitionName).getAliases().get(getFqn("parted")));
 
@@ -526,7 +463,7 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
         refresh();
         String partitionName = new PartitionName(
             new RelationName(sqlExecutor.getCurrentSchema(), "parted"),
-            Arrays.asList(new BytesRef("Trillian"), new BytesRef(dateValue.toString()))).asIndexName();
+            Arrays.asList("Trillian", dateValue.toString())).asIndexName();
         assertNotNull(client().admin().cluster().prepareState().execute().actionGet()
             .getState().metaData().indices().get(partitionName).getAliases().get(getFqn("parted")));
     }
@@ -802,9 +739,9 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
                                        "order by partition_ident", new Object[]{defaultSchema});
         assertThat(response.rowCount(), is(2L));
         assertThat((String) response.rows()[0][0], is(new PartitionName(
-            new RelationName(defaultSchema, "parted"), ImmutableList.of(new BytesRef("1388534400000"))).ident()));
+            new RelationName(defaultSchema, "parted"), ImmutableList.of("1388534400000")).ident()));
         assertThat((String) response.rows()[1][0], is(new PartitionName(
-            new RelationName(defaultSchema, "parted"), ImmutableList.of(new BytesRef("1391212800000"))).ident()));
+            new RelationName(defaultSchema, "parted"), ImmutableList.of("1391212800000")).ident()));
 
         execute("delete from parted where date = '2014-03-01'");
         refresh();
@@ -824,9 +761,9 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
                                        "order by partition_ident", new Object[]{sqlExecutor.getCurrentSchema()});
         assertThat(response.rowCount(), is(2L));
         assertThat((String) response.rows()[0][0], is(new PartitionName(
-            new RelationName(defaultSchema, "parted"), ImmutableList.of(new BytesRef("1388534400000"))).ident()));
+            new RelationName(defaultSchema, "parted"), ImmutableList.of("1388534400000")).ident()));
         assertThat((String) response.rows()[1][0], is(new PartitionName(
-            new RelationName(defaultSchema, "parted"), ImmutableList.of(new BytesRef("1391212800000"))).ident()));
+            new RelationName(defaultSchema, "parted"), ImmutableList.of("1391212800000")).ident()));
 
         execute("delete from parted where o['dat'] = '2014-03-01'");
         refresh();
@@ -859,11 +796,11 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
                                        "order by partition_ident", new Object[]{defaultSchema});
         assertThat(response.rowCount(), is(3L));
         assertThat((String) response.rows()[0][0], is(new PartitionName(
-            new RelationName(defaultSchema, "parted"), ImmutableList.of(new BytesRef("1395874800000"))).ident()));
+            new RelationName(defaultSchema, "parted"), ImmutableList.of("1395874800000")).ident()));
         assertThat((String) response.rows()[1][0], is(new PartitionName(
-            new RelationName(defaultSchema, "parted"), ImmutableList.of(new BytesRef("1395961200000"))).ident()));
+            new RelationName(defaultSchema, "parted"), ImmutableList.of("1395961200000")).ident()));
         assertThat((String) response.rows()[2][0], is(new PartitionName(
-            new RelationName(defaultSchema, "parted"), ImmutableList.of(new BytesRef("1396303200000"))).ident()));
+            new RelationName(defaultSchema, "parted"), ImmutableList.of("1396303200000")).ident()));
 
         execute("delete from quotes where quote = 'Don''t panic'");
         refresh();
@@ -1098,7 +1035,6 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
     }
 
     @Test
-    @UseJdbc(0) // no drop table rowcount
     public void testDropPartitionedTable() throws Exception {
         execute("create table quotes (" +
                 "  id integer, " +
@@ -1119,11 +1055,9 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
             .prepareGetTemplates(PartitionName.templateName(Schemas.DOC_SCHEMA_NAME, "quotes")).execute().get();
         assertThat(getIndexTemplatesResponse.getIndexTemplates().size(), is(0));
 
-        assertThat(internalCluster().clusterService().state().metaData().indices().size(), is(0));
-
-        AliasesExistResponse aliasesExistResponse = client().admin().indices()
-            .prepareAliasesExist("quotes").execute().get();
-        assertFalse(aliasesExistResponse.exists());
+        ClusterState state = internalCluster().clusterService().state();
+        assertThat(state.metaData().indices().size(), is(0));
+        assertThat(state.metaData().hasAlias("quotes"), is(false));
     }
 
     @Test
@@ -1187,7 +1121,6 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
     }
 
     @Test
-    @UseJdbc(0) // no drop table rowcount
     public void testPartitionedTableAllConstraintsRoundTrip() throws Exception {
         execute("create table quotes (id integer primary key, quote string, " +
                 "date timestamp primary key, user_id string primary key) " +
@@ -1225,7 +1158,6 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
     }
 
     @Test
-    @UseJdbc(0) // no drop table rowcount
     public void testPartitionedTableSchemaAllConstraintsRoundTrip() throws Exception {
         execute("create table my_schema.quotes (id integer primary key, quote string, " +
                 "date timestamp primary key, user_id string primary key) " +
@@ -1288,7 +1220,6 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
     }
 
     @Test
-    @UseJdbc(0) // drop table has no row count
     public void testPartitionedTableNestedAllConstraintsRoundTrip() throws Exception {
         execute("create table quotes (" +
                 "id integer, " +
@@ -1366,21 +1297,17 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
         List<String> partitions = ImmutableList.of(
             new PartitionName(
                 new RelationName(defaultSchema, "quotes"),
-                Collections.singletonList(new BytesRef("1395874800000"))).asIndexName(),
+                Collections.singletonList("1395874800000")).asIndexName(),
             new PartitionName(
                 new RelationName(defaultSchema, "quotes"),
-                Collections.singletonList(new BytesRef("1395961200000"))).asIndexName()
+                Collections.singletonList("1395961200000")).asIndexName()
         );
 
-        GetSettingsResponse settingsResponse = client().admin().indices().prepareGetSettings(
-            partitions.get(0), partitions.get(1)
-        ).execute().get();
-
-        for (String index : partitions) {
-            Settings partitionSetting = settingsResponse.getIndexToSettings().get(index);
-            assertThat(partitionSetting.getAsInt(IndexMetaData.SETTING_NUMBER_OF_REPLICAS, 1), is(0));
-            assertThat(partitionSetting.getAsBoolean(IndexMetaData.SETTING_AUTO_EXPAND_REPLICAS, true), is(false));
-        }
+        execute("select number_of_replicas from information_schema.table_partitions");
+        assertThat(
+            printedTable(response.rows()),
+            is("0\n" +
+               "0\n"));
 
         execute("select number_of_replicas, number_of_shards from information_schema.tables where table_name = 'quotes'");
         assertEquals("0", response.rows()[0][0]);
@@ -1397,13 +1324,12 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
         templateSettings = templatesResponse.getIndexTemplates().get(0).getSettings();
         assertThat(templateSettings.get(IndexMetaData.SETTING_AUTO_EXPAND_REPLICAS), is("1-all"));
 
-        settingsResponse = client().admin().indices().prepareGetSettings(
-            partitions.get(0), partitions.get(1)
-        ).execute().get();
 
-        for (String index : partitions) {
-            assertThat(settingsResponse.getSetting(index, IndexMetaData.SETTING_AUTO_EXPAND_REPLICAS), is("1-all"));
-        }
+        execute("select number_of_replicas from information_schema.table_partitions");
+        assertThat(
+            printedTable(response.rows()),
+            is("1-all\n" +
+               "1-all\n"));
     }
 
     @Test
@@ -1453,25 +1379,13 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
         Settings templateSettings = templatesResponse.getIndexTemplates().get(0).getSettings();
         assertThat(templateSettings.getAsInt(IndexMetaData.SETTING_NUMBER_OF_REPLICAS, 0), is(0));
         assertThat(templateSettings.get(IndexMetaData.SETTING_AUTO_EXPAND_REPLICAS), is("0-1"));
-
-        List<String> partitions = ImmutableList.of(
-            new PartitionName(
-                new RelationName(sqlExecutor.getCurrentSchema(), "quotes"),
-                Collections.singletonList(new BytesRef("1395874800000"))).asIndexName(),
-            new PartitionName(
-                new RelationName(sqlExecutor.getCurrentSchema(), "quotes"),
-                Collections.singletonList(new BytesRef("1395961200000"))).asIndexName()
-        );
-        Thread.sleep(1000);
-        GetSettingsResponse settingsResponse = client().admin().indices().prepareGetSettings(
-            partitions.get(0), partitions.get(1)
-        ).execute().get();
-
-        for (String index : partitions) {
-            assertThat(settingsResponse.getSetting(index, IndexMetaData.SETTING_NUMBER_OF_REPLICAS), is("1"));
-            assertThat(settingsResponse.getSetting(index, IndexMetaData.SETTING_AUTO_EXPAND_REPLICAS), is("0-1"));
-        }
-
+        assertBusy(() -> {
+            execute("select number_of_replicas from information_schema.table_partitions");
+            assertThat(
+                printedTable(response.rows()),
+                is("0-1\n" +
+                   "0-1\n"));
+        });
     }
 
     @Test
@@ -1490,20 +1404,13 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
 
         execute("alter table quotes partition (date=1395874800000) set (number_of_replicas=1)");
         ensureYellow();
-        List<String> partitions = ImmutableList.of(
-            new PartitionName(
-                new RelationName(sqlExecutor.getCurrentSchema(), "quotes"),
-                Collections.singletonList(new BytesRef("1395874800000"))).asIndexName(),
-            new PartitionName(
-                new RelationName(sqlExecutor.getCurrentSchema(), "quotes"),
-                Collections.singletonList(new BytesRef("1395961200000"))).asIndexName()
-        );
 
-        GetSettingsResponse settingsResponse = client().admin().indices().prepareGetSettings(
-            partitions.get(0), partitions.get(1)
-        ).execute().get();
-        assertThat(settingsResponse.getSetting(partitions.get(0), IndexMetaData.SETTING_NUMBER_OF_REPLICAS), is("1"));
-        assertThat(settingsResponse.getSetting(partitions.get(1), IndexMetaData.SETTING_NUMBER_OF_REPLICAS), is("0"));
+        execute("select partition_ident, number_of_replicas from information_schema.table_partitions order by 1");
+        assertThat(
+            printedTable(response.rows()),
+            is("04732cpp6ks3ed1o60o30c1g| 1\n" +
+               "04732cpp6ksjcc9i60o30c1g| 0\n")
+        );
 
         String templateName = PartitionName.templateName(sqlExecutor.getCurrentSchema(), "quotes");
         GetIndexTemplatesResponse templatesResponse = client().admin().indices()
@@ -1524,7 +1431,7 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
         refresh();
         execute("select settings['routing']['allocation'] from information_schema.table_partitions where table_name='attrs'");
         HashMap<String, Object> routingAllocation = new HashMap<String, Object>() {{
-            put("enable", "ALL");
+            put("enable", "all");
             put("total_shards_per_node", 5);
         }};
         assertEquals(routingAllocation, response.rows()[0][0]);
@@ -1533,7 +1440,7 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
         execute("alter table attrs set (\"routing.allocation.total_shards_per_node\"=1)");
         execute("select settings['routing']['allocation'] from information_schema.table_partitions where table_name='attrs'");
         routingAllocation = new HashMap<String, Object>() {{
-            put("enable", "ALL");
+            put("enable", "all");
             put("total_shards_per_node", 1);
         }};
         assertEquals(routingAllocation, response.rows()[0][0]);
@@ -1569,7 +1476,6 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
     }
 
     @Test
-    @UseJdbc(0) // no refresh row count
     public void testRefreshPartitionedTableAllPartitions() throws Exception {
         execute("create table parted (id integer, name string, date timestamp) partitioned by (date) with (refresh_interval=0)");
         ensureYellow();
@@ -1608,7 +1514,6 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
     }
 
     @Test
-    @UseJdbc(0) // refresh has no row count
     public void testRefreshPartitionedTableSinglePartitions() throws Exception {
         execute("create table parted (id integer, name string, date timestamp) partitioned by (date) " +
                 "with (number_of_replicas=0, refresh_interval=-1)");
@@ -1652,7 +1557,6 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
     }
 
     @Test
-    @UseJdbc(0) // no refresh row count
     public void testRefreshMultipleTablesWithPartition() throws Exception {
         execute("create table t1 (" +
                 "  id integer, " +
@@ -1693,8 +1597,8 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
         MappingMetaData partitionMetaData = clusterService().state().metaData().indices()
             .get(new PartitionName(
                 new RelationName(sqlExecutor.getCurrentSchema(), "dynamic_table"),
-                Collections.singletonList(new BytesRef("10.0"))).asIndexName())
-            .getMappings().get(Constants.DEFAULT_MAPPING_TYPE);
+                Collections.singletonList("10.0")).asIndexName())
+            .getMappings().get(DEFAULT_MAPPING_TYPE);
         Map<String, Object> metaMap = (Map) partitionMetaData.getSourceAsMap().get("_meta");
         assertThat(String.valueOf(metaMap.get("partitioned_by")), Matchers.is("[[score, double]]"));
         execute("alter table dynamic_table set (column_policy= 'dynamic')");
@@ -1702,8 +1606,8 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
         partitionMetaData = clusterService().state().metaData().indices()
             .get(new PartitionName(
                 new RelationName(sqlExecutor.getCurrentSchema(), "dynamic_table"),
-                Collections.singletonList(new BytesRef("10.0"))).asIndexName())
-            .getMappings().get(Constants.DEFAULT_MAPPING_TYPE);
+                Collections.singletonList("10.0")).asIndexName())
+            .getMappings().get(DEFAULT_MAPPING_TYPE);
         metaMap = (Map) partitionMetaData.getSourceAsMap().get("_meta");
         assertThat(String.valueOf(metaMap.get("partitioned_by")), Matchers.is("[[score, double]]"));
     }
@@ -1748,11 +1652,11 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
 
         GetIndexTemplatesResponse templatesResponse = client().admin().indices().getTemplates(new GetIndexTemplatesRequest(".partitioned.t.")).actionGet();
         IndexTemplateMetaData metaData = templatesResponse.getIndexTemplates().get(0);
-        String mappingSource = metaData.mappings().get(Constants.DEFAULT_MAPPING_TYPE).toString();
+        String mappingSource = metaData.mappings().get(DEFAULT_MAPPING_TYPE).toString();
         Map mapping = (Map) XContentFactory.xContent(mappingSource)
-            .createParser(NamedXContentRegistry.EMPTY, mappingSource)
+            .createParser(NamedXContentRegistry.EMPTY, DeprecationHandler.THROW_UNSUPPORTED_OPERATION, mappingSource)
             .map()
-            .get(Constants.DEFAULT_MAPPING_TYPE);
+            .get(DEFAULT_MAPPING_TYPE);
         assertNotNull(((Map) mapping.get("properties")).get("name"));
         assertNotNull(((Map) mapping.get("properties")).get("ft_name"));
     }
@@ -1776,10 +1680,10 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
 
         GetIndexTemplatesResponse templatesResponse = client().admin().indices().getTemplates(new GetIndexTemplatesRequest(".partitioned.t.")).actionGet();
         IndexTemplateMetaData metaData = templatesResponse.getIndexTemplates().get(0);
-        String mappingSource = metaData.mappings().get(Constants.DEFAULT_MAPPING_TYPE).toString();
+        String mappingSource = metaData.mappings().get(DEFAULT_MAPPING_TYPE).toString();
         Map mapping = (Map) XContentFactory.xContent(mappingSource)
-            .createParser(NamedXContentRegistry.EMPTY, mappingSource)
-            .map().get(Constants.DEFAULT_MAPPING_TYPE);
+            .createParser(NamedXContentRegistry.EMPTY, DeprecationHandler.THROW_UNSUPPORTED_OPERATION, mappingSource)
+            .map().get(DEFAULT_MAPPING_TYPE);
         assertNotNull(((Map) mapping.get("properties")).get("name"));
         // template order must not be touched
         assertThat(metaData.order(), is(100));
@@ -1891,34 +1795,17 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
         assertEquals("0-all", response.rows()[0][0]);
         assertEquals(2, response.rows()[0][1]);
 
-        execute("select number_of_shards from information_schema.table_partitions where table_name='quotes' order by number_of_shards ASC");
-        assertThat(response.rowCount(), is(2L));
-        assertThat((Integer) response.rows()[0][0], is(2));
-        assertThat((Integer) response.rows()[1][0], is(6));
-
+        execute("select partition_ident, number_of_shards from information_schema.table_partitions " +
+                "where table_name = 'quotes' order by number_of_shards ASC");
+        assertThat(
+            printedTable(response.rows()),
+            is("04732cpp6ksjcc9i60o30c1g| 2\n" +
+               "04732cpp6ks3ed1o60o30c1g| 6\n")
+        );
         templatesResponse = client().admin().indices()
             .prepareGetTemplates(templateName).execute().actionGet();
         templateSettings = templatesResponse.getIndexTemplates().get(0).getSettings();
         assertThat(templateSettings.getAsInt(IndexMetaData.SETTING_NUMBER_OF_SHARDS, 0), is(2));
-
-        List<String> partitions = ImmutableList.of(
-            new PartitionName(
-                new RelationName(sqlExecutor.getCurrentSchema(), "quotes"),
-                Collections.singletonList(new BytesRef("1395874800000"))).asIndexName(),
-            new PartitionName(
-                new RelationName(sqlExecutor.getCurrentSchema(), "quotes"),
-                Collections.singletonList(new BytesRef("1395961200000"))).asIndexName()
-        );
-        Thread.sleep(1000);
-        GetSettingsResponse settingsResponse = client().admin().indices().prepareGetSettings(
-            partitions.get(0), partitions.get(1)
-        ).execute().get();
-
-        String index = partitions.get(0);
-        assertThat(settingsResponse.getSetting(index, IndexMetaData.SETTING_NUMBER_OF_SHARDS), is("6"));
-
-        index = partitions.get(1);
-        assertThat(settingsResponse.getSetting(index, IndexMetaData.SETTING_NUMBER_OF_SHARDS), is("2"));
     }
 
     @Test
@@ -2002,7 +1889,7 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
                 "order by number");
         assertThat(response.rowCount(), is(2L));
         assertThat(printedTable(response.rows()), is(
-            "{sessionid=null}\n" +
+            "{sessionid=NULL}\n" +
             "NULL\n"));
 
         execute("select data " +
@@ -2189,7 +2076,6 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
     }
 
     @Test
-    @UseJdbc(0) // requires rowcount for refresh
     public void testRefreshIgnoresClosedPartitions() {
         execute("create table t (x int, p int) " +
                 "partitioned by (p) clustered into 1 shards with (number_of_replicas = 0, refresh_interval = 0)");
@@ -2297,5 +2183,15 @@ public class PartitionedTableIntegrationTest extends SQLTransportIntegrationTest
         assertThat(response.rowCount(), Matchers.is(both(greaterThanOrEqualTo(2L)).and(lessThanOrEqualTo(5L))));
         //cleaning up
         execute("alter table my_table partition (par=1) set (\"blocks.write\"=false)");
+    }
+
+    @Test
+    public void testCurrentVersionsAreSetOnPartitionCreation() throws Exception {
+        execute("create table doc.p1 (id int, p int) partitioned by (p)");
+
+        execute("insert into doc.p1 (id, p) values (1, 2)");
+        execute("select version['created'] from information_schema.table_partitions where table_name='p1'");
+
+        assertThat(response.rows()[0][0], is(Version.CURRENT.externalNumber()));
     }
 }

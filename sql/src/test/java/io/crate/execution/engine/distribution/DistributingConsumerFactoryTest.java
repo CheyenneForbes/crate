@@ -27,7 +27,7 @@ import com.carrotsearch.hppc.IntIndexedContainer;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import io.crate.analyze.WhereClause;
-import io.crate.core.collections.TreeMapBuilder;
+import io.crate.common.collections.TreeMapBuilder;
 import io.crate.data.Paging;
 import io.crate.data.RowConsumer;
 import io.crate.execution.dsl.phases.MergePhase;
@@ -79,8 +79,7 @@ public class DistributingConsumerFactoryTest extends CrateDummyClusterServiceUni
             ImmutableList.of(),
             ImmutableList.of(),
             WhereClause.MATCH_ALL.queryOrFallback(),
-            DistributionInfo.DEFAULT_MODULO,
-            null
+            DistributionInfo.DEFAULT_MODULO
         );
         MergePhase mergePhase = new MergePhase(
             jobId,

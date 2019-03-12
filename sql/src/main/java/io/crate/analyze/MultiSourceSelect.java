@@ -30,9 +30,9 @@ import io.crate.analyze.relations.RelationSplitter;
 import io.crate.expression.symbol.Field;
 import io.crate.expression.symbol.FieldReplacer;
 import io.crate.expression.symbol.Symbol;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.Functions;
 import io.crate.metadata.Path;
-import io.crate.metadata.TransactionContext;
 import io.crate.metadata.table.Operation;
 import io.crate.sql.tree.QualifiedName;
 
@@ -51,6 +51,7 @@ public class MultiSourceSelect implements QueriedRelation {
     private final Map<QualifiedName, AnalyzedRelation> sources;
     private final Fields fields;
     private final List<JoinPair> joinPairs;
+    private final boolean isDistinct;
     private QualifiedName qualifiedName;
     private QuerySpec querySpec;
 
@@ -70,7 +71,7 @@ public class MultiSourceSelect implements QueriedRelation {
      */
     public static MultiSourceSelect createWithPushDown(RelationNormalizer relationNormalizer,
                                                        Functions functions,
-                                                       TransactionContext transactionContext,
+                                                       CoordinatorTxnCtx coordinatorTxnCtx,
                                                        MultiSourceSelect mss,
                                                        QuerySpec querySpec) {
         RelationSplitter splitter = new RelationSplitter(
@@ -84,7 +85,7 @@ public class MultiSourceSelect implements QueriedRelation {
         for (Map.Entry<QualifiedName, AnalyzedRelation> entry : mss.sources.entrySet()) {
             AnalyzedRelation relation = entry.getValue();
             QuerySpec spec = splitter.getSpec(relation);
-            QueriedRelation queriedRelation = Relations.applyQSToRelation(relationNormalizer, functions, transactionContext, relation, spec);
+            QueriedRelation queriedRelation = Relations.applyQSToRelation(relationNormalizer, functions, coordinatorTxnCtx, relation, spec);
             Function<Field, Field> convertField = f -> mapFieldToNewRelation(f, relation, queriedRelation);
             querySpec = querySpec.copyAndReplace(FieldReplacer.bind(convertField));
             entry.setValue(queriedRelation);
@@ -112,6 +113,7 @@ public class MultiSourceSelect implements QueriedRelation {
         }).collect(Collectors.toList());
 
         return new MultiSourceSelect(
+            mss.isDistinct,
             mss.qualifiedName,
             newSources,
             mss.fields(),
@@ -130,10 +132,12 @@ public class MultiSourceSelect implements QueriedRelation {
         return f;
     }
 
-    public MultiSourceSelect(Map<QualifiedName, AnalyzedRelation> sources,
+    public MultiSourceSelect(boolean isDistinct,
+                             Map<QualifiedName, AnalyzedRelation> sources,
                              Collection<? extends Path> outputNames,
                              QuerySpec querySpec,
                              List<JoinPair> joinPairs) {
+        this.isDistinct = isDistinct;
         assert sources.size() > 1 : "MultiSourceSelect requires at least 2 relations";
         this.qualifiedName = generateName(sources.keySet());
         this.sources = sources;
@@ -159,11 +163,13 @@ public class MultiSourceSelect implements QueriedRelation {
         return new QualifiedName(sb.toString());
     }
 
-    private MultiSourceSelect(QualifiedName relName,
+    private MultiSourceSelect(boolean isDistinct,
+                              QualifiedName relName,
                               Map<QualifiedName, AnalyzedRelation> sources,
                               Collection<Field> fields,
                               QuerySpec querySpec,
                               List<JoinPair> joinPairs) {
+        this.isDistinct = isDistinct;
         this.qualifiedName = relName;
         this.sources = sources;
         this.joinPairs = joinPairs;
@@ -213,6 +219,11 @@ public class MultiSourceSelect implements QueriedRelation {
     @Override
     public QuerySpec querySpec() {
         return querySpec;
+    }
+
+    @Override
+    public boolean isDistinct() {
+        return isDistinct;
     }
 
     @Override

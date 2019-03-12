@@ -22,10 +22,12 @@
 
 package io.crate.analyze;
 
+import io.crate.action.sql.SessionContext;
 import io.crate.analyze.relations.QueriedRelation;
 import io.crate.exceptions.ColumnUnknownException;
 import io.crate.expression.symbol.Function;
 import io.crate.expression.symbol.Symbol;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.Reference;
 import io.crate.metadata.ReferenceIdent;
 import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
@@ -66,13 +68,16 @@ public class GroupByAnalyzerTest extends CrateDummyClusterServiceUnitTest {
     }
 
     private <T extends AnalyzedStatement> T analyze(String statement) {
-        return sqlExecutor.analyze(statement);
+        //noinspection unchecked
+        return (T) sqlExecutor.normalize(
+            sqlExecutor.analyze(statement),
+            new CoordinatorTxnCtx(SessionContext.systemSessionContext()));
     }
 
     @Test
     public void testGroupBySubscriptMissingOutput() throws Exception {
         expectedException.expect(IllegalArgumentException.class);
-        expectedException.expectMessage("column 'load['5']' must appear in the GROUP BY clause or be used in an aggregation function");
+        expectedException.expectMessage("'load['5']' must appear in the GROUP BY clause");
         analyze("select load['5'] from sys.nodes group by load['1']");
     }
 
@@ -118,7 +123,7 @@ public class GroupByAnalyzerTest extends CrateDummyClusterServiceUnitTest {
     public void testGroupByScalarAliasedWithRealColumnNameFailsIfScalarColumnIsNotGrouped() {
         expectedException.expect(IllegalArgumentException.class);
         expectedException.expectMessage(
-            "column 'height' must appear in the GROUP BY clause or be used in an aggregation function");
+            "'(1 / height)' must appear in the GROUP BY clause");
         analyze("select 1/height as age from foo.users group by age");
     }
 
@@ -219,16 +224,14 @@ public class GroupByAnalyzerTest extends CrateDummyClusterServiceUnitTest {
     @Test
     public void testSelectAggregationMissingGroupBy() {
         expectedException.expect(IllegalArgumentException.class);
-        expectedException.expectMessage(
-            "column 'name' must appear in the GROUP BY clause or be used in an aggregation function");
+        expectedException.expectMessage("'name' must appear in the GROUP BY clause");
         analyze("select name, count(id) from users");
     }
 
     @Test
     public void testSelectGlobalDistinctAggregationMissingGroupBy() {
         expectedException.expect(IllegalArgumentException.class);
-        expectedException.expectMessage(
-            "column 'name' must appear in the GROUP BY clause or be used in an aggregation function");
+        expectedException.expectMessage("'name' must appear in the GROUP BY clause");
         analyze("select distinct name, count(id) from users");
     }
 
@@ -236,27 +239,19 @@ public class GroupByAnalyzerTest extends CrateDummyClusterServiceUnitTest {
     @Test
     public void testSelectDistinctWithGroupBy() {
         QueriedRelation relation = analyze("select distinct max(id) from users group by name order by 1");
-        assertThat(relation, instanceOf(QueriedSelectRelation.class));
+        assertThat(relation.isDistinct(), is(true));
         assertThat(relation.querySpec(),
-            isSQL("SELECT \"doc.users\".max(id) GROUP BY \"doc.users\".max(id) ORDER BY \"doc.users\".max(id)"));
-        QueriedSelectRelation outerRelation = (QueriedSelectRelation) relation;
-        assertThat(outerRelation.subRelation(), instanceOf(QueriedTable.class));
-        assertThat(outerRelation.subRelation().querySpec(),
-            isSQL("SELECT max(doc.users.id) GROUP BY doc.users.name"));
+            isSQL("SELECT max(doc.users.id) GROUP BY doc.users.name ORDER BY max(doc.users.id)"));
     }
 
     @Test
     public void testSelectDistinctWithGroupByLimitAndOffset() {
         QueriedRelation relation =
             analyze("select distinct max(id) from users group by name order by 1 limit 5 offset 10");
-        assertThat(relation, instanceOf(QueriedSelectRelation.class));
+        assertThat(relation.isDistinct(), is(true));
         assertThat(relation.querySpec(),
-            isSQL("SELECT \"doc.users\".max(id) GROUP BY \"doc.users\".max(id) " +
-                  "ORDER BY \"doc.users\".max(id) LIMIT 5 OFFSET 10"));
-        QueriedSelectRelation outerRelation = (QueriedSelectRelation) relation;
-        assertThat(outerRelation.subRelation(), instanceOf(QueriedTable.class));
-        assertThat(outerRelation.subRelation().querySpec(),
-            isSQL("SELECT max(doc.users.id) GROUP BY doc.users.name"));
+            isSQL("SELECT max(doc.users.id) GROUP BY doc.users.name " +
+                  "ORDER BY max(doc.users.id) LIMIT 5 OFFSET 10"));
     }
 
     @Test
@@ -265,15 +260,10 @@ public class GroupByAnalyzerTest extends CrateDummyClusterServiceUnitTest {
             analyze("select DISTINCT max(users.id) from users " +
                     "  inner join users_multi_pk on users.id = users_multi_pk.id " +
                     "group by users.name order by 1");
-        assertThat(relation, instanceOf(QueriedSelectRelation.class));
+        assertThat(relation, instanceOf(MultiSourceSelect.class));
+        assertThat(relation.isDistinct(), is(true));
         assertThat(relation.querySpec(),
-            isSQL("SELECT MultiSourceSelect.max(id) " +
-                  "GROUP BY MultiSourceSelect.max(id) " +
-                  "ORDER BY MultiSourceSelect.max(id)"));
-        QueriedSelectRelation outerRelation = (QueriedSelectRelation) relation;
-        assertThat(outerRelation.subRelation(), instanceOf(MultiSourceSelect.class));
-        assertThat(outerRelation.subRelation().querySpec(),
-            isSQL("SELECT max(doc.users.id) GROUP BY doc.users.name"));
+            isSQL("SELECT max(doc.users.id) GROUP BY doc.users.name ORDER BY max(doc.users.id)"));
     }
 
     @Test
@@ -281,15 +271,11 @@ public class GroupByAnalyzerTest extends CrateDummyClusterServiceUnitTest {
         QueriedRelation relation = analyze("select distinct max(id) from (" +
                                                    "  select * from users order by name limit 10" +
                                                    ") t group by name order by 1");
-        assertThat(relation, instanceOf(QueriedSelectRelation.class));
+        assertThat(relation.isDistinct(), is(true));
         assertThat(relation.querySpec(),
-            isSQL("SELECT t.max(id) " +
-                  "GROUP BY t.max(id) " +
-                  "ORDER BY t.max(id)"));
-        QueriedSelectRelation outerRelation = (QueriedSelectRelation) relation;
-        assertThat(outerRelation.subRelation(), instanceOf(QueriedSelectRelation.class));
-        assertThat(outerRelation.subRelation().querySpec(),
-            isSQL("SELECT max(t.id) GROUP BY t.name"));
+            isSQL("SELECT max(t.id) " +
+                  "GROUP BY t.name " +
+                  "ORDER BY max(t.id)"));
     }
 
     @Test
@@ -305,19 +291,9 @@ public class GroupByAnalyzerTest extends CrateDummyClusterServiceUnitTest {
         assertThat(outerRelation.groupBy(), Matchers.empty());
         assertThat(outerRelation.orderBy().orderBySymbols(), contains(isField("id")));
 
-        assertThat(outerRelation.subRelation(), instanceOf(QueriedSelectRelation.class));
-        QueriedSelectRelation subRelation = (QueriedSelectRelation) outerRelation.subRelation();
-        assertThat(subRelation.groupBy(), contains(isField("id")));
-
-        assertThat(subRelation.subRelation().groupBy(), contains(isReference("id"), isReference("name")));
-
-    }
-
-    @Test
-    public void testGroupByValidationWhenRewritingDistinct() throws Exception {
-        expectedException.expect(IllegalArgumentException.class);
-        expectedException.expectMessage("Cannot use DISTINCT on 'friends': invalid data type 'object_array'");
-        analyze("select distinct(friends) from users");
+        QueriedRelation innerRelation = outerRelation.subRelation();
+        assertThat(innerRelation.isDistinct(), is(true));
+        assertThat(innerRelation.groupBy(), contains(isReference("id"), isReference("name")));
     }
 
     @Test
@@ -362,13 +338,6 @@ public class GroupByAnalyzerTest extends CrateDummyClusterServiceUnitTest {
         expectedException.expect(IllegalArgumentException.class);
         expectedException.expectMessage("Cannot use NULL in GROUP BY clause");
         analyze("select max(id) from users u group by NULL");
-    }
-
-    @Test
-    public void testPositionalArgumentGroupByArrayType() throws Exception {
-        expectedException.expect(IllegalArgumentException.class);
-        expectedException.expectMessage("Cannot GROUP BY 'friends': invalid data type 'object_array'");
-        analyze("SELECT sum(id), friends FROM users GROUP BY 2");
     }
 
     @Test
@@ -463,26 +432,5 @@ public class GroupByAnalyzerTest extends CrateDummyClusterServiceUnitTest {
         expectedException.expect(ColumnUnknownException.class);
         expectedException.expectMessage("Column _docid unknown");
         analyze("select count(*) from users group by _docid");
-    }
-
-    @Test
-    public void testGroupByGeoShape() throws Exception {
-        expectedException.expect(IllegalArgumentException.class);
-        expectedException.expectMessage("Cannot GROUP BY 'shape': invalid data type 'geo_shape'");
-        analyze("select count(*) from users group by shape");
-    }
-
-    @Test
-    public void testGroupByCastedArray() throws Exception {
-        expectedException.expect(IllegalArgumentException.class);
-        expectedException.expectMessage("Cannot GROUP BY 'to_double_array(loc)': invalid data type 'double_array'");
-        analyze("select count(*) from locations group by cast(loc as array(double))");
-    }
-
-    @Test
-    public void testGroupByCastedArrayByIndex() throws Exception {
-        expectedException.expect(IllegalArgumentException.class);
-        expectedException.expectMessage("Cannot GROUP BY 'to_double_array(loc)': invalid data type 'double_array'");
-        analyze("select cast(loc as array(double)) from locations group by 1");
     }
 }

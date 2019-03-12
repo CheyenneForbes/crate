@@ -36,14 +36,14 @@ import io.crate.expression.symbol.Symbol;
 import io.crate.metadata.ColumnIdent;
 import io.crate.metadata.Functions;
 import io.crate.metadata.Reference;
+import io.crate.metadata.TransactionContext;
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.action.admin.indices.create.TransportCreatePartitionsAction;
 import org.elasticsearch.action.bulk.BulkRequestExecutor;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.stream.BytesStreamOutput;
-import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.xcontent.XContentBuilder;
@@ -68,9 +68,11 @@ public class IndexWriterProjector implements Projector {
                                 NodeJobsCounter nodeJobsCounter,
                                 ScheduledExecutorService scheduler,
                                 Executor executor,
+                                TransactionContext txnCtx,
                                 Functions functions,
                                 Settings settings,
-                                Settings tableSettings,
+                                int targetTableNumShards,
+                                int targetTableNumReplicas,
                                 TransportCreatePartitionsAction transportCreatePartitionsAction,
                                 BulkRequestExecutor<ShardUpsertRequest> shardUpsertAction,
                                 Supplier<String> indexNameResolver,
@@ -88,16 +90,19 @@ public class IndexWriterProjector implements Projector {
                                 boolean overwriteDuplicates,
                                 UUID jobId,
                                 UpsertResultContext upsertResultContext) {
-        Input<BytesRef> source;
+        Input<String> source;
         if (includes == null && excludes == null) {
             //noinspection unchecked
-            source = (Input<BytesRef>) sourceInput;
+            source = (Input<String>) sourceInput;
         } else {
             //noinspection unchecked
             source = new MapInput((Input<Map<String, Object>>) sourceInput, includes, excludes);
         }
-        RowShardResolver rowShardResolver = new RowShardResolver(functions, primaryKeyIdents, primaryKeySymbols, clusteredByColumn, routingSymbol);
+        RowShardResolver rowShardResolver = new RowShardResolver(
+            txnCtx, functions, primaryKeyIdents, primaryKeySymbols, clusteredByColumn, routingSymbol);
         ShardUpsertRequest.Builder builder = new ShardUpsertRequest.Builder(
+            txnCtx.userName(),
+            txnCtx.currentSchema(),
             ShardingUpsertExecutor.BULK_REQUEST_TIMEOUT_SETTING.setting().get(settings),
             overwriteDuplicates ? DuplicateKeyAction.OVERWRITE : DuplicateKeyAction.UPDATE_OR_FAIL,
             true,
@@ -105,9 +110,6 @@ public class IndexWriterProjector implements Projector {
             new Reference[]{rawSourceReference},
             jobId,
             false);
-
-        //noinspection unchecked
-        Input<BytesRef> sourceUri = upsertResultContext.getSourceUriInput();
 
         Function<String, ShardUpsertRequest.Item> itemFactory = id ->
             new ShardUpsertRequest.Item(id, null, new Object[]{source.value()}, null);
@@ -127,7 +129,8 @@ public class IndexWriterProjector implements Projector {
             autoCreateIndices,
             shardUpsertAction,
             transportCreatePartitionsAction,
-            tableSettings,
+            targetTableNumShards,
+            targetTableNumReplicas,
             upsertResultContext
         );
     }
@@ -135,7 +138,7 @@ public class IndexWriterProjector implements Projector {
 
     @Override
     public BatchIterator<Row> apply(BatchIterator<Row> batchIterator) {
-        return CollectingBatchIterator.newInstance(batchIterator, shardingUpsertExecutor);
+        return CollectingBatchIterator.newInstance(batchIterator, shardingUpsertExecutor, batchIterator.involvesIO());
     }
 
     @Override
@@ -143,12 +146,12 @@ public class IndexWriterProjector implements Projector {
         return false;
     }
 
-    private static class MapInput implements Input<BytesRef> {
+    private static class MapInput implements Input<String> {
 
         private final Input<Map<String, Object>> sourceInput;
         private final String[] includes;
         private final String[] excludes;
-        private static final Logger logger = Loggers.getLogger(MapInput.class);
+        private static final Logger logger = LogManager.getLogger(MapInput.class);
         private int lastSourceSize;
 
         private MapInput(Input<Map<String, Object>> sourceInput, String[] includes, String[] excludes) {
@@ -159,17 +162,17 @@ public class IndexWriterProjector implements Projector {
         }
 
         @Override
-        public BytesRef value() {
+        public String value() {
             Map<String, Object> value = sourceInput.value();
             if (value == null) {
                 return null;
             }
             Map<String, Object> filteredMap = XContentMapValues.filter(value, includes, excludes);
             try {
-                BytesReference bytes = new XContentBuilder(XContentType.JSON.xContent(),
-                    new BytesStreamOutput(lastSourceSize)).map(filteredMap).bytes();
+                BytesReference bytes = BytesReference.bytes(new XContentBuilder(XContentType.JSON.xContent(),
+                    new BytesStreamOutput(lastSourceSize)).map(filteredMap));
                 lastSourceSize = bytes.length();
-                return bytes.toBytesRef();
+                return bytes.utf8ToString();
             } catch (IOException ex) {
                 logger.error("could not parse xContent", ex);
             }

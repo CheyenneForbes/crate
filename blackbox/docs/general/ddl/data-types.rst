@@ -186,6 +186,8 @@ Example::
     ... values ('localhost', 'not.a.real.ip');
     SQLActionException[ColumnValidationException: Validation failed for ip_addr: Cannot cast 'not.a.real.ip' to type ip]
 
+.. _data-type-timestamp:
+
 ``timestamp``
 =============
 
@@ -299,6 +301,8 @@ Thus it is possible to store e.g. ``LineString`` and ``MultiPolygon`` shapes in
 the same column.
 
 .. NOTE::
+
+    3D coordinates are not supported.
 
     Empty ``Polygon`` and ``LineString`` geo shapes are not supported.
 
@@ -768,7 +772,7 @@ converting an array of integer values to a boolean array.
 
 .. NOTE::
 
-   It is not possible to cast to or from ``object``, ``geopoint``, and
+   It is not possible to cast to or from ``object`` and ``geopoint``, or to
    ``geoshape`` data type.
 
 ``TRY_CAST``
@@ -807,11 +811,49 @@ Trying to cast a ``string`` to ``integer``, will fail with ``cast`` if
     +---------------------------+
     SELECT 1 row in set (... sec)
 
+Type aliases
+============
+
+For compatibility with PostgreSQL we include some type aliases which can be
+used instead of the CrateDB specific type names.
+
+For example, in a type cast::
+
+  cr> select 10::int2;
+  +------------------+
+  | CAST(10 AS int2) |
+  +------------------+
+  |               10 |
+  +------------------+
+  SELECT 1 row in set (... sec)
+
+
+See the table below for a full list of aliases:
+
++----------+------------+
+| Alias    | Crate Type |
++==========+============+
+| int2     | short      |
++----------+------------+
+| int      | integer    |
++----------+------------+
+| int4     | integer    |
++----------+------------+
+| int8     | long       |
++----------+------------+
+| smallint | short      |
++----------+------------+
+| bigint   | long       |
++----------+------------+
+| name     | string     |
++----------+------------+
+
+
 .. _dateOptionalTime: http://joda-time.sourceforge.net/apidocs/org/joda/time/format/ISODateTimeFormat.html#dateOptionalTimeParser()
 .. _Java types: http://docs.oracle.com/javase/tutorial/java/nutsandbolts/datatypes.html
 .. _WKT: http://en.wikipedia.org/wiki/Well-known_text
 .. _GeoJSON: http://geojson.org/
-.. _GeoJSON geometry objects: http://geojson.org/geojson-spec.html#geometry-objects
+.. _GeoJSON geometry objects: https://tools.ietf.org/html/rfc7946#section-3.1
 .. _Geohash: https://en.wikipedia.org/wiki/Geohash
 .. _Quadtree: https://en.wikipedia.org/wiki/Quadtree
 .. _Trie: https://en.wikipedia.org/wiki/Trie

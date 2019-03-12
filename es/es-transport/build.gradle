@@ -1,5 +1,5 @@
 dependencies {
-    compile project(':es:es-core')
+    compile project(':es:es-server')
     compile "io.netty:netty-buffer:${versions.netty4}"
     compile "io.netty:netty-codec:${versions.netty4}"
     compile "io.netty:netty-codec-http:${versions.netty4}"
@@ -7,21 +7,4 @@ dependencies {
     compile "io.netty:netty-handler:${versions.netty4}"
     compile "io.netty:netty-resolver:${versions.netty4}"
     compile "io.netty:netty-transport:${versions.netty4}"
-}
-
-def moduleDir = file('../upstream/modules/transport-netty4')
-
-sourceSets {
-    main {
-        java {
-            srcDir "$moduleDir/src/main/java"
-        }
-    }
-}
-
-idea {
-    module {
-        contentRoot = moduleDir
-        excludeDirs += files('build')
-    }
 }

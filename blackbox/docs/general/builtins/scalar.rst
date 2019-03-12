@@ -25,7 +25,7 @@ Returns: ``string``
 
 ::
 
-    cr> select concat('foo', null, 'bar') from sys.cluster;
+    cr> select concat('foo', null, 'bar');
     +----------------------------+
     | concat('foo', NULL, 'bar') |
     +----------------------------+
@@ -35,7 +35,7 @@ Returns: ``string``
 
 You can also use the ``||`` operator::
 
-    cr> select 'foo' || 'bar' from sys.cluster;
+    cr> select 'foo' || 'bar';
     +----------------------+
     | concat('foo', 'bar') |
     +----------------------+
@@ -86,13 +86,12 @@ Returns: ``string``
 
 ::
 
-    cr> select substr(name, 3, 2) from sys.nodes
-    ... limit 1;
-    +--------------------+
-    | substr(name, 3, 2) |
-    +--------------------+
-    | at                 |
-    +--------------------+
+    cr> select substr('crate.io', 3, 2);
+    +--------------------------+
+    | substr('crate.io', 3, 2) |
+    +--------------------------+
+    | at                       |
+    +--------------------------+
     SELECT 1 row in set (... sec)
 
 .. _scalar_char_length:
@@ -106,7 +105,7 @@ Returns: ``integer``
 
 ::
 
-    cr> select char_length('crate.io') from sys.cluster;
+    cr> select char_length('crate.io');
     +-------------------------+
     | char_length('crate.io') |
     +-------------------------+
@@ -118,7 +117,7 @@ Each character counts only once, regardless of its byte size.
 
 ::
 
-    cr> select char_length('©rate.io') from sys.cluster;
+    cr> select char_length('©rate.io');
     +-------------------------+
     | char_length('©rate.io') |
     +-------------------------+
@@ -142,7 +141,7 @@ Returns: ``integer``
 
 ::
 
-    cr> select bit_length('crate.io') from sys.cluster;
+    cr> select bit_length('crate.io');
     +------------------------+
     | bit_length('crate.io') |
     +------------------------+
@@ -152,7 +151,7 @@ Returns: ``integer``
 
 ::
 
-    cr> select bit_length('©rate.io') from sys.cluster;
+    cr> select bit_length('©rate.io');
     +------------------------+
     | bit_length('©rate.io') |
     +------------------------+
@@ -171,7 +170,7 @@ Returns: ``integer``
 
 ::
 
-    cr> select octet_length('crate.io') from sys.cluster;
+    cr> select octet_length('crate.io');
     +--------------------------+
     | octet_length('crate.io') |
     +--------------------------+
@@ -181,7 +180,7 @@ Returns: ``integer``
 
 ::
 
-    cr> select octet_length('©rate.io') from sys.cluster;
+    cr> select octet_length('©rate.io');
     +--------------------------+
     | octet_length('©rate.io') |
     +--------------------------+
@@ -199,8 +198,7 @@ Returns: ``string``
 
 ::
 
-    cr> select lower('TransformMe') from sys.nodes
-    ... limit 1;
+    cr> select lower('TransformMe');
     +----------------------+
     | lower('TransformMe') |
     +----------------------+
@@ -218,13 +216,32 @@ Returns: ``string``
 
 ::
 
-    cr> select upper('TransformMe') from sys.nodes
-    ... limit 1;
+    cr> select upper('TransformMe');
     +----------------------+
     | upper('TransformMe') |
     +----------------------+
     | TRANSFORMME          |
     +----------------------+
+    SELECT 1 row in set (... sec)
+
+.. _scalar-initcap:
+
+``initcap('string')``
+---------------------
+
+Converts the first letter of each word to upper case and the rest to lower case
+(*capitalize letters*).
+
+Returns: ``string``
+
+::
+
+   cr> select initcap('heLlo WORLD');
+    +------------------------+
+    | initcap('heLlo WORLD') |
+    +------------------------+
+    | Hello World            |
+    +------------------------+
     SELECT 1 row in set (... sec)
 
 .. _sha1:
@@ -255,6 +272,24 @@ Computes the MD5 checksum of the given string.
 
 See :ref:`sha1 <sha1>` for an example.
 
+.. _scalar-replace:
+
+``replace(text, from, to)``
+---------------------------
+
+Replaces all occurrences of ``from`` in ``text`` with ``to``.
+
+::
+
+   cr> select replace('Hello World', 'World', 'Stranger');
+   +---------------------------------------------+
+   | replace('Hello World', 'World', 'Stranger') |
+   +---------------------------------------------+
+   | Hello Stranger                              |
+   +---------------------------------------------+
+   SELECT 1 row in set (... sec)
+
+
 Date and Time Functions
 =======================
 
@@ -269,21 +304,21 @@ Limits a timestamps precision to a given interval.
 
 Valid intervals are:
 
-* second
+* ``second``
 
-* minute
+* ``minute``
 
-* hour
+* ``hour``
 
-* day
+* ``day``
 
-* week
+* ``week``
 
-* month
+* ``month``
 
-* quarter
+* ``quarter``
 
-* year
+* ``year``
 
 Valid values for ``timezone`` are either the name of a time zone (for example
 'Europe/Vienna') or the UTC offset of a time zone (for example '+01:00'). To
@@ -347,7 +382,7 @@ Synopsis
 
 ::
 
-    cr> select extract(day from '2014-08-23') from sys.cluster;
+    cr> select extract(day from '2014-08-23');
     +--------------------------------+
     | EXTRACT(DAY FROM '2014-08-23') |
     +--------------------------------+
@@ -362,7 +397,7 @@ an implicit cast will be attempted.
 ``field`` is an identifier that selects which part of the timestamp to extract.
 The following fields are supported:
 
-**CENTURY**
+``CENTURY``
   | *Return type:* ``integer``
   | century of era
 
@@ -371,65 +406,68 @@ The following fields are supported:
   Year 2000 century 20 and year 2001 is also century 20. This is different to
   the GregorianJulian (GJ) calendar system where 2001 would be century 21.
 
-**YEAR**
+``YEAR``
   | *Return type:* ``integer``
   | the year field
 
-**QUARTER**
+``QUARTER``
   | *Return type:* ``integer``
   | the quarter of the year (1 - 4)
 
-**MONTH**
+``MONTH``
   | *Return type:* ``integer``
   | the month of the year
 
-**WEEK**
+``WEEK``
   | *Return type:* ``integer``
   | the week of the year
 
-**DAY**
+``DAY``
   | *Return type:* ``integer``
   | the day of the month
 
-**DAY_OF_MONTH**
+``DAY_OF_MONTH``
   | *Return type:* ``integer``
   | same as ``day``
 
-**DAY_OF_WEEK**
+``DAY_OF_WEEK``
   | *Return type:* ``integer``
   | day of the week. Starting with Monday (1) to Sunday (7)
 
-**DOW**
+``DOW``
   | *Return type:* ``integer``
   | same as ``day_of_week``
 
-**DAY_OF_YEAR**
+``DAY_OF_YEAR``
   | *Return type:* ``integer``
   | the day of the year (1 - 365 / 366)
 
-**DOY**
+``DOY``
   | *Return type:* ``integer``
   | same as ``day_of_year``
 
-**HOUR**
+``HOUR``
   | *Return type:* ``integer``
   | the hour field
 
-**MINUTE**
+``MINUTE``
   | *Return type:* ``integer``
   | the minute field
 
-**SECOND**
+``SECOND``
   | *Return type:* ``integer``
   | the second field
 
-**EPOCH**
+``EPOCH``
   | *Return type:* ``double``
   | The number of seconds since Jan 1, 1970.
   | Can be negative if earlier than Jan 1, 1970.
 
 .. _`available time zones`: http://www.joda.org/joda-time/timezones.html
 .. _`Joda-Time`: http://www.joda.org/joda-time/
+
+
+.. _current_timestamp:
 
 ``CURRENT_TIMESTAMP``
 ---------------------
@@ -488,39 +526,39 @@ below [#MySQL-Docs]_:
 .. csv-table:: date_format Format
    :header: "Format Specifier", "Description"
 
-   %a,	"Abbreviated weekday name (Sun..Sat)"
-   %b,	"Abbreviated month name (Jan..Dec)"
-   %c,	"Month in year, numeric (0..12)"
-   %D,	"Day of month as ordinal number (1st, 2nd, ... 24th)"
-   %d,	"Day of month, padded to 2 digits (00..31)"
-   %e,	"Day of month (0..31)"
-   %f,	"Microseconds, padded to 6 digits (000000..999999)"
-   %H,	"Hour in 24-hour clock, padded to 2 digits (00..23)"
-   %h,	"Hour in 12-hour clock, padded to 2 digits (01..12)"
-   %I,	"Hour in 12-hour clock, padded to 2 digits (01..12)"
-   %i,	"Minutes, numeric (00..59)"
-   %j,	"Day of year, padded to 3 digits (001..366)"
-   %k,	"Hour in 24-hour clock (0..23)"
-   %l,	"Hour in 12-hour clock (1..12)"
-   %M,	"Month name (January..December)"
-   %m,	"Month in year, numeric, padded to 2 digits (00..12)"
-   %p,	"AM or PM"
-   %r,	"Time, 12-hour (hh:mm:ss followed by AM or PM)"
-   %S,	"Seconds, padded to 2 digits (00..59)"
-   %s,	"Seconds, padded to 2 digits (00..59)"
-   %T,	"Time, 24-hour (hh:mm:ss)"
-   %U,	"Week number, sunday as first day of the week, first week of the year (01) is the one starting in this year, week 00 starts in last year (00..53)"
-   %u,	"Week number, monday as first day of the week, first week of the year (01) is the one with at least 4 days in this year (00..53)"
-   %V,	"Week number, sunday as first day of the week, first week of the year (01) is the one starting in this year, uses the week number of the last year, if the week started in last year (01..53)"
-   %v,	"Week number, monday as first day of the week, first week of the year (01) is the one with at least 4 days in this year, uses the week number of the last year, if the week started in last year (01..53)"
-   %W,	"Weekday name (Sunday..Saturday)"
-   %w,	"Day of the week (0=Sunday..6=Saturday)"
-   %X,	"weekyear, sunday as first day of the week, numeric, four digits; used with %V"
-   %x,	"weekyear, monday as first day of the week, numeric, four digits; used with %v"
-   %Y,	"Year, numeric, four digits"
-   %y,	"Year, numeric, two digits"
-   %%,	"A literal '%' character"
-   %x,	"x, for any 'x' not listed above"
+   ``%a``,	"Abbreviated weekday name (Sun..Sat)"
+   ``%b``,	"Abbreviated month name (Jan..Dec)"
+   ``%c``,	"Month in year, numeric (0..12)"
+   ``%D``,	"Day of month as ordinal number (1st, 2nd, ... 24th)"
+   ``%d``,	"Day of month, padded to 2 digits (00..31)"
+   ``%e``,	"Day of month (0..31)"
+   ``%f``,	"Microseconds, padded to 6 digits (000000..999999)"
+   ``%H``,	"Hour in 24-hour clock, padded to 2 digits (00..23)"
+   ``%h``,	"Hour in 12-hour clock, padded to 2 digits (01..12)"
+   ``%I``,	"Hour in 12-hour clock, padded to 2 digits (01..12)"
+   ``%i``,	"Minutes, numeric (00..59)"
+   ``%j``,	"Day of year, padded to 3 digits (001..366)"
+   ``%k``,	"Hour in 24-hour clock (0..23)"
+   ``%l``,	"Hour in 12-hour clock (1..12)"
+   ``%M``,	"Month name (January..December)"
+   ``%m``,	"Month in year, numeric, padded to 2 digits (00..12)"
+   ``%p``,	"AM or PM"
+   ``%r``,	"Time, 12-hour (hh:mm:ss followed by AM or PM)"
+   ``%S``,	"Seconds, padded to 2 digits (00..59)"
+   ``%s``,	"Seconds, padded to 2 digits (00..59)"
+   ``%T``,	"Time, 24-hour (hh:mm:ss)"
+   ``%U``,	"Week number, sunday as first day of the week, first week of the year (01) is the one starting in this year, week 00 starts in last year (00..53)"
+   ``%u``,	"Week number, monday as first day of the week, first week of the year (01) is the one with at least 4 days in this year (00..53)"
+   ``%V``,	"Week number, sunday as first day of the week, first week of the year (01) is the one starting in this year, uses the week number of the last year, if the week started in last year (01..53)"
+   ``%v``,	"Week number, monday as first day of the week, first week of the year (01) is the one with at least 4 days in this year, uses the week number of the last year, if the week started in last year (01..53)"
+   ``%W``,	"Weekday name (Sunday..Saturday)"
+   ``%w``,	"Day of the week (0=Sunday..6=Saturday)"
+   ``%X``,	"weekyear, sunday as first day of the week, numeric, four digits; used with %V"
+   ``%x``,	"weekyear, monday as first day of the week, numeric, four digits; used with %v"
+   ``%Y``,	"Year, numeric, four digits"
+   ``%y``,	"Year, numeric, two digits"
+   ``%%``,	"A literal '%' character"
+   ``%x``,	"x, for any 'x' not listed above"
 
 If no ``format_string`` is given the default format will be used::
 
@@ -528,7 +566,7 @@ If no ``format_string`` is given the default format will be used::
 
 ::
 
-    cr> select date_format('1970-01-01') as epoque from sys.cluster;
+    cr> select date_format('1970-01-01') as epoque;
     +-----------------------------+
     | epoque                      |
     +-----------------------------+
@@ -546,7 +584,7 @@ time zones`_ supported by `Joda-Time`_.
 
 The ``timezone`` will be ``UTC`` if not provided::
 
-    cr> select date_format('%W the %D of %M %Y %H:%i %p', 0) as epoque from sys.cluster;
+    cr> select date_format('%W the %D of %M %Y %H:%i %p', 0) as epoque;
     +-------------------------------------------+
     | epoque                                    |
     +-------------------------------------------+
@@ -556,7 +594,7 @@ The ``timezone`` will be ``UTC`` if not provided::
 
 ::
 
-    cr> select date_format('%Y/%m/%d %H:%i', 'EST',  0) as est_epoque from sys.cluster;
+    cr> select date_format('%Y/%m/%d %H:%i', 'EST',  0) as est_epoque;
     +------------------+
     | est_epoque       |
     +------------------+
@@ -584,7 +622,7 @@ Below is an example of the distance function where both points are specified
 using WKT. See :ref:`geo_point_data_type` for more information on the implicit
 type casting of geo points::
 
-    cr> select distance('POINT (10 20)', 'POINT (11 21)') from sys.cluster;
+    cr> select distance('POINT (10 20)', 'POINT (11 21)');
     +--------------------------------------------+
     | distance('POINT (10 20)', 'POINT (11 21)') |
     +--------------------------------------------+
@@ -626,7 +664,7 @@ casting from strings to geo point and geo shapes::
     cr> select within(
     ...   'POINT (10 10)',
     ...   'POLYGON ((5 5, 10 5, 10 10, 5 10, 5 5))'
-    ... ) from sys.cluster;
+    ... );
     +--------------------------------------------------------------------+
     | within('POINT (10 10)', 'POLYGON ((5 5, 10 5, 10 10, 5 10, 5 5))') |
     +--------------------------------------------------------------------+
@@ -664,8 +702,7 @@ Example::
     ...         [[13.4252, 52.7096],[13.9416, 52.0997],
     ...          [12.7221, 52.1334],[13.4252, 52.7096]]]},
     ...   'LINESTRING (11.0742 49.4538, 11.5686 48.1367)'
-    ... ) as disjoint
-    ... from sys.cluster;
+    ... ) as disjoint;
     +------------+----------+
     | intersects | disjoint |
     +------------+----------+
@@ -745,7 +782,7 @@ clauses.
 Returns the absolute value of the given number in the datatype of the given
 number::
 
-    cr> select abs(214748.0998), abs(0), abs(-214748) from sys.cluster;
+    cr> select abs(214748.0998), abs(0), abs(-214748);
     +------------------+--------+---------------+
     | abs(214748.0998) | abs(0) | abs(- 214748) |
     +------------------+--------+---------------+
@@ -766,7 +803,7 @@ Return value will be of type integer if the input value is an integer or float.
 If the input value is of type long or double the return value will be of type
 long::
 
-    cr> select ceil(29.9) from sys.cluster;
+    cr> select ceil(29.9);
     +------------+
     | ceil(29.9) |
     +------------+
@@ -790,7 +827,7 @@ long.
 
 See below for an example::
 
-    cr> select floor(29.9) from sys.cluster;
+    cr> select floor(29.9);
     +-------------+
     | floor(29.9) |
     +-------------+
@@ -807,7 +844,7 @@ Returns: ``double``
 
 See below for an example::
 
-    cr> SELECT ln(1) FROM sys.cluster;
+    cr> SELECT ln(1);
     +-------+
     | ln(1) |
     +-------+
@@ -830,7 +867,7 @@ Returns: ``double``
 
 See below for an example, which essentially is the same as above::
 
-    cr> SELECT log(100, 10) FROM sys.cluster;
+    cr> SELECT log(100, 10);
     +--------------+
     | log(100, 10) |
     +--------------+
@@ -840,7 +877,7 @@ See below for an example, which essentially is the same as above::
 
 The second argument (``b``) is optional. If not present, base 10 is used::
 
-    cr> SELECT log(100) FROM sys.cluster;
+    cr> SELECT log(100);
     +----------+
     | log(100) |
     +----------+
@@ -870,7 +907,7 @@ negative exponents (which will yield decimal types)
 
 See below for an example::
 
-    cr> SELECT power(2,3) FROM sys.cluster;
+    cr> SELECT power(2,3);
     +-------------+
     | power(2, 3) |
     +-------------+
@@ -904,7 +941,7 @@ Returns: ``long`` or ``integer``
 
 See below for an example::
 
-    cr> select round(42.2) from sys.cluster;
+    cr> select round(42.2);
     +-------------+
     | round(42.2) |
     +-------------+
@@ -921,7 +958,7 @@ Returns: ``double``
 
 See below for an example::
 
-    cr> select sqrt(25.0) from sys.cluster;
+    cr> select sqrt(25.0);
     +------------+
     | sqrt(25.0) |
     +------------+
@@ -938,7 +975,7 @@ Returns: ``double``
 
 See below for an example::
 
-    cr> SELECT sin(1) FROM sys.cluster;
+    cr> SELECT sin(1);
     +--------------------+
     |             sin(1) |
     +--------------------+
@@ -955,7 +992,7 @@ Returns: ``double``
 
 See below for an example::
 
-    cr> SELECT asin(1) FROM sys.cluster;
+    cr> SELECT asin(1);
     +--------------------+
     |            asin(1) |
     +--------------------+
@@ -972,7 +1009,7 @@ Returns: ``double``
 
 See below for an example::
 
-    cr> SELECT cos(1) FROM sys.cluster;
+    cr> SELECT cos(1);
     +--------------------+
     |             cos(1) |
     +--------------------+
@@ -989,7 +1026,7 @@ Returns: ``double``
 
 See below for an example::
 
-    cr> SELECT acos(-1) FROM sys.cluster;
+    cr> SELECT acos(-1);
     +-------------------+
     |         acos(- 1) |
     +-------------------+
@@ -1006,7 +1043,7 @@ Returns: ``double``
 
 See below for an example::
 
-    cr> SELECT tan(1) FROM sys.cluster;
+    cr> SELECT tan(1);
     +--------------------+
     |             tan(1) |
     +--------------------+
@@ -1023,7 +1060,7 @@ Returns: ``double``
 
 See below for an example::
 
-    cr> SELECT atan(1) FROM sys.cluster;
+    cr> SELECT atan(1);
     +--------------------+
     |            atan(1) |
     +--------------------+
@@ -1080,7 +1117,7 @@ For example matching the regular expression ``([Aa](.+)z)`` against
 
 The ``regexp_matches`` function will return all groups as a string array::
 
-    cr> select regexp_matches('alcatraz', '(a(.+)z)') as matched from sys.cluster;
+    cr> select regexp_matches('alcatraz', '(a(.+)z)') as matched;
     +------------------------+
     | matched                |
     +------------------------+
@@ -1090,7 +1127,7 @@ The ``regexp_matches`` function will return all groups as a string array::
 
 ::
 
-    cr> select regexp_matches('alcatraz', 'traz') as matched from sys.cluster;
+    cr> select regexp_matches('alcatraz', 'traz') as matched;
     +----------+
     | matched  |
     +----------+
@@ -1103,7 +1140,7 @@ See :ref:`sql_dql_object_arrays_select` for details.
 
 ::
 
-    cr> select regexp_matches('alcatraz', '(a(.+)z)')[2] as second_group from sys.cluster;
+    cr> select regexp_matches('alcatraz', '(a(.+)z)')[2] as second_group;
     +--------------+
     | second_group |
     +--------------+
@@ -1123,20 +1160,20 @@ not matter.
 +-------+---------------------------------------------------------------------+
 | Flag  | Description                                                         |
 +=======+=====================================================================+
-| i     | enable case insensitive matching                                    |
+| ``i`` | enable case insensitive matching                                    |
 +-------+---------------------------------------------------------------------+
-| u     | enable unicode case folding when used together with ``i``           |
+| ``u`` | enable unicode case folding when used together with ``i``           |
 +-------+---------------------------------------------------------------------+
-| U     | enable unicode support for character classes like ``\W``            |
+| ``U`` | enable unicode support for character classes like ``\W``            |
 +-------+---------------------------------------------------------------------+
-| s     | make ``.`` match line terminators, too                              |
+| ``s`` | make ``.`` match line terminators, too                              |
 +-------+---------------------------------------------------------------------+
-| m     | make ``^`` and ``$`` match on the beginning or end of a line        |
+| ``m`` | make ``^`` and ``$`` match on the beginning or end of a line        |
 |       | too.                                                                |
 +-------+---------------------------------------------------------------------+
-| x     | permit whitespace and line comments starting with ``#``             |
+| ``x`` | permit whitespace and line comments starting with ``#``             |
 +-------+---------------------------------------------------------------------+
-| d     | only ``\n`` is considered a line-terminator when using ``^``, ``$`` |
+| ``d`` | only ``\n`` is considered a line-terminator when using ``^``, ``$`` |
 |       | and ``.``                                                           |
 +-------+---------------------------------------------------------------------+
 
@@ -1145,7 +1182,7 @@ Examples
 
 ::
 
-    cr> select regexp_matches('foobar', '^(a(.+)z)$') as matched from sys.cluster;
+    cr> select regexp_matches('foobar', '^(a(.+)z)$') as matched;
     +---------+
     | matched |
     +---------+
@@ -1156,7 +1193,7 @@ Examples
 ::
 
     cr> select regexp_matches('99 bottles of beer on the wall', '\d{2}\s(\w+).*', 'ixU')
-    ... as matched from sys.cluster;
+    ... as matched;
     +-------------+
     | matched     |
     +-------------+
@@ -1195,7 +1232,7 @@ Flags
 +-------+---------------------------------------------------------------------+
 | Flag  | Description                                                         |
 +=======+=====================================================================+
-| g     | replace all occurrences of a subsequence matching ``pattern``,      |
+| ``g`` | replace all occurrences of a subsequence matching ``pattern``,      |
 |       | not only the first                                                  |
 +-------+---------------------------------------------------------------------+
 
@@ -1219,8 +1256,7 @@ Examples
 
 ::
 
-   cr> select regexp_replace('alcatraz', '(foo)(bar)+', '$1baz') as replaced
-   ... from sys.cluster;
+   cr> select regexp_replace('alcatraz', '(foo)(bar)+', '$1baz') as replaced;
     +----------+
     | replaced |
     +----------+
@@ -1255,7 +1291,7 @@ Returns: ``array``
 
 ::
 
-    cr> select array_cat([1,2,3],[3,4,5,6]) from sys.cluster;
+    cr> select array_cat([1,2,3],[3,4,5,6]);
     +------------------------------------+
     | array_cat([1, 2, 3], [3, 4, 5, 6]) |
     +------------------------------------+
@@ -1312,7 +1348,7 @@ You can also use the concat operator ``||`` with arrays
 
 ::
 
-    cr> select [1,2,3] || [4,5,6] || [7,8,9] from sys.cluster;
+    cr> select [1,2,3] || [4,5,6] || [7,8,9];
     +-------------------------------------------------+
     | concat(concat([1, 2, 3], [4, 5, 6]), [7, 8, 9]) |
     +-------------------------------------------------+
@@ -1330,7 +1366,7 @@ Returns: ``array``
 
 ::
 
-    cr> select array_unique([1, 2, 3], [3, 4, 4]) from sys.cluster;
+    cr> select array_unique([1, 2, 3], [3, 4, 4]);
     +------------------------------------+
     | array_unique([1, 2, 3], [3, 4, 4]) |
     +------------------------------------+
@@ -1341,7 +1377,7 @@ Returns: ``array``
 If the arrays have different types all elements will be cast to the element
 type of the first array with a defined type::
 
-    cr> select array_unique([10, 20], [10.2, 20.3]) from sys.cluster;
+    cr> select array_unique([10, 20], [10.2, 20.3]);
     +--------------------------------------+
     | array_unique([10, 20], [10.2, 20.3]) |
     +--------------------------------------+
@@ -1359,7 +1395,7 @@ Returns: ``array``
 
 ::
 
-    cr> select array_difference([1,2,3,4,5,6,7,8,9,10],[2,3,6,9,15]) from sys.cluster;
+    cr> select array_difference([1,2,3,4,5,6,7,8,9,10],[2,3,6,9,15]);
     +---------------------------------------------------------------------+
     | array_difference([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], [2, 3, 6, 9, 15]) |
     +---------------------------------------------------------------------+
@@ -1416,6 +1452,65 @@ Returns: ``array``
 .. SEEALSO::
 
     :ref:`Array construction with subquery <sql_expressions_array_subquery>`
+
+.. _scalar-array-upper:
+
+``array_upper(anyarray, dimension)``
+------------------------------------
+The ``array_upper`` function returns the number of elements in the requested
+array dimmension (the upper bound of the dimension).
+
+Returns: ``integer``
+
+::
+
+    cr> select array_upper([[1, 4], [3]], 1);
+    +-------------------------------+
+    | array_upper([[1, 4], [3]], 1) |
+    +-------------------------------+
+    | 2                             |
+    +-------------------------------+
+    SELECT 1 row in set (... sec)
+
+.. _scalar-array-length:
+
+``array_length(anyarray, dimension)``
+-------------------------------------
+
+The ``array_length`` function returns the number of elements in the requested
+array dimmension.
+
+Returns: ``integer``
+
+::
+
+    cr> select array_length([[1, 4], [3]], 1);
+    +--------------------------------+
+    | array_length([[1, 4], [3]], 1) |
+    +--------------------------------+
+    | 2                              |
+    +--------------------------------+
+    SELECT 1 row in set (... sec)
+
+.. _scalar-array-lower:
+
+``array_lower(anyarray, dimension)``
+------------------------------------
+The ``array_lower`` function returns the lower bound of the requested array
+dimension (which is ``1`` if the dimension is valid and has at least one
+element).
+
+Returns: ``integer``
+
+::
+
+    cr> select array_lower([[1, 4], [3]], 1);
+    +-------------------------------+
+    | array_lower([[1, 4], [3]], 1) |
+    +-------------------------------+
+    | 1                             |
+    +-------------------------------+
+    SELECT 1 row in set (... sec)
 
 
 Conditional Functions and Expressions
@@ -1581,8 +1676,7 @@ Returns: same type as arguments
 
 ::
 
-    cr> select greatest(1, 2)
-    ...   from sys.cluster;
+    cr> select greatest(1, 2);
     +----------------+
     | greatest(1, 2) |
     +----------------+
@@ -1601,8 +1695,7 @@ Returns: same type as arguments
 
 ::
 
-    cr> select least(1, 2)
-    ...   from sys.cluster;
+    cr> select least(1, 2);
     +-------------+
     | least(1, 2) |
     +-------------+
@@ -1632,6 +1725,8 @@ Returns: same type as arguments
 
 System Information Functions
 ============================
+
+.. _scalar_current_schema:
 
 ``CURRENT_SCHEMA``
 ------------------
@@ -1665,6 +1760,34 @@ Example::
     +----------------+
     |            doc |
     +----------------+
+    SELECT 1 row in set (... sec)
+
+.. _current_schemas:
+
+``CURRENT_SCHEMAS(boolean)``
+----------------------------
+
+The ``CURRENT_SCHEMAS()`` system information function returns the current stored
+schemas inside the :ref:`search_path <conf-session-search-path>` session
+state, optionally including implicit schemas (e.g. ``pg_catalog``). If no custom
+:ref:`search_path <conf-session-search-path>` is set, this function will return
+the default :ref:`search_path <conf-session-search-path>` schemas.
+
+
+Returns: ``array(string)``
+
+Synopsis::
+
+    CURRENT_SCHEMAS ( boolean )
+
+Example::
+
+    cr> SELECT CURRENT_SCHEMAS(true);
+    +-----------------------+
+    | current_schemas(true) |
+    +-----------------------+
+    | ["pg_catalog", "doc"] |
+    +-----------------------+
     SELECT 1 row in set (... sec)
 
 .. _current_user:
@@ -1788,6 +1911,21 @@ Example::
     +------------------+
     SELECT 1 row in set (... sec)
 
+.. _scalar_current_database:
+
+``current_database()``
+----------------------
+
+The ``current_database`` function returns the name of the current database,
+which in CrateDB will always be ``crate``::
+
+    cr> select current_database();
+    +--------------------+
+    | current_database() |
+    +--------------------+
+    | crate              |
+    +--------------------+
+    SELECT 1 row in set (... sec)
 
 
 Special Functions
@@ -1877,7 +2015,7 @@ Synopsis::
 
 Example::
 
-    cr> SELECT ignore3vl(true) as v1, ignore3vl(false) as v2, ignore3vl(null) as v3 FROM sys.cluster
+    cr> SELECT ignore3vl(true) as v1, ignore3vl(false) as v2, ignore3vl(null) as v3;
     +------+-------+-------+
     | v1   | v2    | v3    |
     +------+-------+-------+

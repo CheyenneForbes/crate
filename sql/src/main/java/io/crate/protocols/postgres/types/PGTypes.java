@@ -29,6 +29,7 @@ import io.crate.types.ArrayType;
 import io.crate.types.CollectionType;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
+import io.crate.types.ObjectType;
 import io.crate.types.SetType;
 
 import java.util.HashSet;
@@ -42,7 +43,7 @@ public class PGTypes {
         .put(DataTypes.BYTE, CharType.INSTANCE)
         .put(DataTypes.STRING, VarCharType.INSTANCE)
         .put(DataTypes.BOOLEAN, BooleanType.INSTANCE)
-        .put(DataTypes.OBJECT, JsonType.INSTANCE)
+        .put(ObjectType.untyped(), JsonType.INSTANCE)
         .put(DataTypes.SHORT, SmallIntType.INSTANCE)
         .put(DataTypes.INTEGER, IntegerType.INSTANCE)
         .put(DataTypes.LONG, BigIntType.INSTANCE)
@@ -64,7 +65,7 @@ public class PGTypes {
         .put(new ArrayType(DataTypes.STRING), PGArray.VARCHAR_ARRAY)
         .put(new ArrayType(DataTypes.GEO_POINT), PGArray.FLOAT8_ARRAY)
         .put(new ArrayType(DataTypes.GEO_SHAPE), PGArray.JSON_ARRAY)
-        .put(new ArrayType(DataTypes.OBJECT), JsonType.INSTANCE)
+        .put(new ArrayType(ObjectType.untyped()), JsonType.INSTANCE)
         .put(new SetType(DataTypes.BYTE), PGArray.CHAR_ARRAY) // postgres has no Set type, so map it to array
         .put(new SetType(DataTypes.SHORT), PGArray.INT2_ARRAY)
         .put(new SetType(DataTypes.INTEGER), PGArray.INT4_ARRAY)
@@ -76,11 +77,13 @@ public class PGTypes {
         .put(new SetType(DataTypes.STRING), PGArray.VARCHAR_ARRAY)
         .put(new SetType(DataTypes.GEO_POINT), PGArray.FLOAT8_ARRAY)
         .put(new SetType(DataTypes.GEO_SHAPE), PGArray.JSON_ARRAY)
-        .put(new SetType(DataTypes.OBJECT), JsonType.INSTANCE)
+        .put(new SetType(ObjectType.untyped()), JsonType.INSTANCE)
         .build();
 
     private static final IntObjectMap<DataType> PG_TYPES_TO_CRATE_TYPE = new IntObjectHashMap<>();
     private static final Set<PGType> TYPES;
+    private static final int TEXT_OID = 25;
+    private static final int TEXT_ARRAY_OID = 1009;
 
     static {
         for (Map.Entry<DataType, PGType> e : CRATE_TO_PG_TYPES.entrySet()) {
@@ -91,9 +94,10 @@ public class PGTypes {
             }
         }
         PG_TYPES_TO_CRATE_TYPE.put(0, DataTypes.UNDEFINED);
+        PG_TYPES_TO_CRATE_TYPE.put(TEXT_OID, DataTypes.STRING);
+        PG_TYPES_TO_CRATE_TYPE.put(TEXT_ARRAY_OID, new ArrayType(DataTypes.STRING));
         TYPES = new HashSet<>(CRATE_TO_PG_TYPES.values()); // some pgTypes are used multiple times, de-dup them
     }
-
 
     public static Iterable<PGType> pgTypes() {
         return TYPES;

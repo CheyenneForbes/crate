@@ -40,7 +40,6 @@ import io.crate.planner.ExecutionPlan;
 import io.crate.planner.PlannerContext;
 import io.crate.planner.TableStats;
 import io.crate.planner.node.dql.Collect;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.common.lucene.uid.Versions;
 import org.elasticsearch.index.IndexNotFoundException;
@@ -81,14 +80,16 @@ public class Get extends ZeroInputPlan {
         List<Symbol> boundOutputs = Lists2.map(
             outputs, s -> SubQueryAndParamBinder.convert(s, params, subQueryResults));
         for (DocKeys.DocKey docKey : docKeys) {
-            String id = docKey.getId(plannerContext.functions(), params, subQueryResults);
+            String id = docKey.getId(plannerContext.transactionContext(), plannerContext.functions(), params, subQueryResults);
             if (id == null) {
                 continue;
             }
-            List<BytesRef> partitionValues = docKey.getPartitionValues(plannerContext.functions(), params, subQueryResults);
+            List<String> partitionValues = docKey.getPartitionValues(
+                plannerContext.transactionContext(), plannerContext.functions(), params, subQueryResults);
             String indexName = indexName(docTableInfo, partitionValues);
 
-            String routing = docKey.getRouting(plannerContext.functions(), params, subQueryResults);
+            String routing = docKey.getRouting(
+                plannerContext.transactionContext(), plannerContext.functions(), params, subQueryResults);
             ShardRouting shardRouting;
             try {
                 shardRouting = plannerContext.resolveShard(indexName, id, routing);
@@ -118,7 +119,7 @@ public class Get extends ZeroInputPlan {
                 idsByShard.put(shardRouting.shardId(), pkAndVersions);
             }
             long version = docKey
-                .version(plannerContext.functions(), params, subQueryResults)
+                .version(plannerContext.transactionContext(), plannerContext.functions(), params, subQueryResults)
                 .orElse(Versions.MATCH_ANY);
             pkAndVersions.add(new PKAndVersion(id, version));
         }
@@ -153,13 +154,13 @@ public class Get extends ZeroInputPlan {
         return visitor.visitGet(this, context);
     }
 
-    public static String indexName(DocTableInfo tableInfo, @Nullable List<BytesRef> partitionValues) {
+    public static String indexName(DocTableInfo tableInfo, @Nullable List<String> partitionValues) {
         RelationName relation = tableInfo.ident();
         if (tableInfo.isPartitioned()) {
             assert partitionValues != null : "values must not be null";
             return IndexParts.toIndexName(relation, PartitionName.encodeIdent(partitionValues));
         } else {
-            return relation.indexName();
+            return relation.indexNameOrAlias();
         }
     }
 }

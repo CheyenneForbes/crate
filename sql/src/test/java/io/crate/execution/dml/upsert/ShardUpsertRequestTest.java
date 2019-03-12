@@ -32,10 +32,10 @@ import io.crate.metadata.RowGranularity;
 import io.crate.metadata.Schemas;
 import io.crate.test.integration.CrateUnitTest;
 import io.crate.types.DataTypes;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.UUIDs;
 import org.elasticsearch.common.io.stream.BytesStreamOutput;
 import org.elasticsearch.common.io.stream.StreamInput;
+import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.index.shard.ShardId;
 import org.junit.Test;
 
@@ -59,6 +59,9 @@ public class ShardUpsertRequestTest extends CrateUnitTest {
         UUID jobId = UUID.randomUUID();
         Reference[] missingAssignmentColumns = new Reference[]{ID_REF, NAME_REF};
         ShardUpsertRequest request = new ShardUpsertRequest.Builder(
+            "dummyUser",
+            "dummySchema",
+            TimeValue.timeValueSeconds(30),
             DuplicateKeyAction.UPDATE_OR_FAIL,
             false,
             assignmentColumns,
@@ -71,12 +74,12 @@ public class ShardUpsertRequestTest extends CrateUnitTest {
         request.add(123, new ShardUpsertRequest.Item(
             "99",
             null,
-            new Object[]{99, new BytesRef("Marvin")},
+            new Object[]{99, "Marvin"},
             null));
         request.add(42, new ShardUpsertRequest.Item(
             "99",
             new Symbol[0],
-            new Object[]{99, new BytesRef("Marvin")},
+            new Object[]{99, "Marvin"},
             null));
         request.add(5, new ShardUpsertRequest.Item(
             "42",

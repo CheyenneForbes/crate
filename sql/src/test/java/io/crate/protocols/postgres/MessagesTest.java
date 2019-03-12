@@ -22,20 +22,64 @@
 
 package io.crate.protocols.postgres;
 
+import io.crate.data.Buckets;
+import io.crate.data.Row;
 import io.crate.data.RowN;
+import io.crate.test.integration.CrateUnitTest;
 import io.crate.types.DataTypes;
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufAllocator;
+import io.netty.buffer.Unpooled;
+import io.netty.channel.Channel;
 import io.netty.channel.embedded.EmbeddedChannel;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.Collections;
 
 import static com.carrotsearch.randomizedtesting.RandomizedTest.$;
-import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.Is.is;
+import static org.junit.Assert.fail;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
-public class MessagesTest {
+public class MessagesTest extends CrateUnitTest {
+
+    @Test
+    public void testBufferInSendDataRowIsReleasedIfGetValueFromRowFails() {
+        Channel channel = mock(Channel.class);
+        ByteBufAllocator byteBufAllocator = mock(ByteBufAllocator.class);
+        ByteBuf buf = Unpooled.buffer();
+        when(byteBufAllocator.buffer()).thenReturn(buf);
+        when(channel.alloc()).thenReturn(byteBufAllocator);
+        try {
+            Messages.sendDataRow(
+                channel,
+                new Row() {
+                    @Override
+                    public int numColumns() {
+                        return 1;
+                    }
+
+                    @Override
+                    public Object get(int index) {
+                        throw new IllegalArgumentException("Dummy");
+                    }
+
+                    @Override
+                    public Object[] materialize() {
+                        return Buckets.materialize(this);
+                    }
+                },
+                Collections.singletonList(DataTypes.INTEGER),
+                null
+            );
+            fail("sendDataRow should raise an exception");
+        } catch (Exception ignored) {
+        }
+        assertThat(buf.refCnt(), is(0));
+    }
 
     @Test
     public void testNullValuesAddToLength() throws Exception {
@@ -48,36 +92,49 @@ public class MessagesTest {
         channel.flush();
         ByteBuf buffer = channel.readOutbound();
 
-        // message type
-        assertThat((char) buffer.readByte(), is('D'));
+        try {
+            // message type
+            assertThat((char) buffer.readByte(), is('D'));
 
-        // size of the message
-        assertThat(buffer.readInt(), is(16));
-        assertThat(buffer.readableBytes(), is(12)); // 16 - INT4 because the size was already read
+            // size of the message
+            assertThat(buffer.readInt(), is(16));
+            assertThat(buffer.readableBytes(), is(12)); // 16 - INT4 because the size was already read
+        } finally {
+            buffer.release();
+            channel.finishAndReleaseAll();
+        }
     }
 
     @Test
     public void testCommandCompleteWithWhitespace() throws Exception {
         final EmbeddedChannel channel = new EmbeddedChannel();
-        final String response = "SELECT 42";
+        try {
+            final String response = "SELECT 42";
 
-        Messages.sendCommandComplete(channel, "Select 1", 42);
-        verifyResponse(channel, response);
-        Messages.sendCommandComplete(channel, " Select 1", 42);
-        verifyResponse(channel, response);
-        Messages.sendCommandComplete(channel, "  Select 1 ", 42);
-        verifyResponse(channel, response);
-        Messages.sendCommandComplete(channel, "\n  Select 1", 42);
-        verifyResponse(channel, response);
+            Messages.sendCommandComplete(channel, "Select 1", 42);
+            verifyResponse(channel, response);
+            Messages.sendCommandComplete(channel, " Select 1", 42);
+            verifyResponse(channel, response);
+            Messages.sendCommandComplete(channel, "  Select 1 ", 42);
+            verifyResponse(channel, response);
+            Messages.sendCommandComplete(channel, "\n  Select 1", 42);
+            verifyResponse(channel, response);
+        } finally {
+            channel.finishAndReleaseAll();
+        }
     }
 
     private static void verifyResponse(EmbeddedChannel channel, String response) {
         byte[] responseBytes = response.getBytes(StandardCharsets.UTF_8);
         ByteBuf buffer = (ByteBuf) channel.outboundMessages().poll();
-        assertThat(buffer.readByte(), is((byte) 'C'));
-        assertThat(buffer.readInt(), is(responseBytes.length + 4 + 1));
-        byte[] string = new byte[9];
-        buffer.readBytes(string);
-        assertThat(string, is(responseBytes));
+        try {
+            assertThat(buffer.readByte(), is((byte) 'C'));
+            assertThat(buffer.readInt(), is(responseBytes.length + 4 + 1));
+            byte[] string = new byte[9];
+            buffer.readBytes(string);
+            assertThat(string, is(responseBytes));
+        } finally {
+            buffer.release();
+        }
     }
 }

@@ -36,6 +36,7 @@ import io.crate.expression.operator.OrOperator;
 import io.crate.expression.operator.any.AnyOperator;
 import io.crate.expression.operator.any.AnyOperators;
 import io.crate.expression.predicate.NotPredicate;
+import io.crate.expression.symbol.Field;
 import io.crate.expression.symbol.FuncReplacer;
 import io.crate.expression.symbol.Function;
 import io.crate.expression.symbol.Literal;
@@ -43,10 +44,10 @@ import io.crate.expression.symbol.RefReplacer;
 import io.crate.expression.symbol.SelectSymbol;
 import io.crate.expression.symbol.Symbol;
 import io.crate.expression.symbol.SymbolVisitor;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.FunctionIdent;
 import io.crate.metadata.FunctionInfo;
 import io.crate.metadata.Functions;
-import io.crate.metadata.TransactionContext;
 import io.crate.metadata.table.Operation;
 import io.crate.planner.node.dql.join.JoinType;
 import io.crate.sql.tree.QualifiedName;
@@ -60,6 +61,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 
+import static com.google.common.collect.Lists.transform;
 import static io.crate.analyze.expressions.ExpressionAnalyzer.cast;
 import static io.crate.expression.operator.Operators.LOGICAL_OPERATORS;
 import static io.crate.expression.scalar.cast.CastFunctionResolver.isCastFunction;
@@ -91,7 +93,7 @@ final class SemiJoins {
      * @return the rewritten relation or null if a rewrite wasn't possible.
      */
     @Nullable
-    QueriedRelation tryRewrite(QueriedRelation rel, TransactionContext transactionCtx) {
+    QueriedRelation tryRewrite(QueriedRelation rel, CoordinatorTxnCtx transactionCtx) {
         WhereClause where = rel.where();
         if (!where.hasQuery()) {
             return null;
@@ -139,8 +141,9 @@ final class SemiJoins {
         // normalize is done to rewrite  SELECT * from t1, t2 to SELECT * from (select ... t1) t1, (select ... t2) t2
         // because planner logic expects QueriedRelation in the sources
         MultiSourceSelect mss = new MultiSourceSelect(
+            rel.isDistinct(),
             sources,
-            rel.fields(),
+            transform(rel.fields(), Field::path),
             newTopQS,
             semiJoinPairs
         );

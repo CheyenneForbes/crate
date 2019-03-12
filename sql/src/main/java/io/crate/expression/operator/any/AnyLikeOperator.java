@@ -29,14 +29,15 @@ import io.crate.metadata.BaseFunctionResolver;
 import io.crate.metadata.FunctionIdent;
 import io.crate.metadata.FunctionImplementation;
 import io.crate.metadata.FunctionInfo;
+import io.crate.metadata.TransactionContext;
 import io.crate.metadata.functions.params.FuncParams;
 import io.crate.metadata.functions.params.Param;
 import io.crate.types.ArrayType;
 import io.crate.types.CollectionType;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
+import io.crate.types.ObjectType;
 import io.crate.types.SetType;
-import org.apache.lucene.util.BytesRef;
 
 import java.util.List;
 import java.util.function.BiPredicate;
@@ -76,18 +77,15 @@ public final class AnyLikeOperator extends Operator<Object> {
     }
 
     private Boolean doEvaluate(Object left, Iterable<?> rightIterable) {
-        BytesRef rightBytesRef = (BytesRef) left;
-        String pattern = rightBytesRef.utf8ToString();
-
+        String pattern = (String) left;
         boolean hasNull = false;
         for (Object elem : rightIterable) {
             if (elem == null) {
                 hasNull = true;
                 continue;
             }
-            assert elem instanceof BytesRef || elem instanceof String : "elem must be BytesRef or String";
-
-            String elemValue = elem instanceof BytesRef ? ((BytesRef) elem).utf8ToString() : (String) elem;
+            assert elem instanceof String : "elem must be a String";
+            String elemValue = (String) elem;
             if (matches.test(elemValue, pattern)) {
                 return true;
             }
@@ -96,7 +94,7 @@ public final class AnyLikeOperator extends Operator<Object> {
     }
 
     @Override
-    public Boolean evaluate(Input<Object>... args) {
+    public Boolean evaluate(TransactionContext txnCtx, Input<Object>... args) {
         Object value = args[0].value();
         Object collectionReference = args[1].value();
 
@@ -128,7 +126,7 @@ public final class AnyLikeOperator extends Operator<Object> {
             DataType<?> innerType = ((CollectionType) dataTypes.get(1)).innerType();
             checkArgument(innerType.equals(dataTypes.get(0)),
                 "The inner type of the array/set passed to ANY must match its left expression");
-            checkArgument(!innerType.equals(DataTypes.OBJECT),
+            checkArgument(innerType.id() != ObjectType.ID,
                 "ANY on object arrays is not supported");
 
             return new AnyLikeOperator(

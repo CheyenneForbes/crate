@@ -35,6 +35,7 @@ import io.crate.metadata.expressions.RowCollectExpressionFactory;
 import io.crate.metadata.table.ColumnRegistrar;
 import io.crate.metadata.table.StaticTableInfo;
 import io.crate.types.DataTypes;
+import io.crate.types.ObjectType;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.repositories.Repository;
 
@@ -53,9 +54,9 @@ public class SysRepositoriesTableInfo extends StaticTableInfo {
     public static ImmutableMap<ColumnIdent, RowCollectExpressionFactory<Repository>> expressions() {
         return ImmutableMap.<ColumnIdent, RowCollectExpressionFactory<Repository>>builder()
             .put(SysRepositoriesTableInfo.Columns.NAME,
-                () -> NestableCollectExpression.objToBytesRef((Repository r) -> r.getMetadata().name()))
+                () -> NestableCollectExpression.forFunction((Repository r) -> r.getMetadata().name()))
             .put(SysRepositoriesTableInfo.Columns.TYPE,
-                () -> NestableCollectExpression.objToBytesRef((Repository r) -> r.getMetadata().type()))
+                () -> NestableCollectExpression.forFunction((Repository r) -> r.getMetadata().type()))
             .put(SysRepositoriesTableInfo.Columns.SETTINGS,
                 () -> NestableCollectExpression
                     .forFunction((Repository r) -> r.getMetadata().settings().getAsStructuredMap()))
@@ -67,7 +68,7 @@ public class SysRepositoriesTableInfo extends StaticTableInfo {
         super(IDENT, new ColumnRegistrar(IDENT, GRANULARITY)
             .register(Columns.NAME, DataTypes.STRING)
             .register(Columns.TYPE, DataTypes.STRING)
-            .register(Columns.SETTINGS, DataTypes.OBJECT), PRIMARY_KEY);
+            .register(Columns.SETTINGS, ObjectType.untyped()), PRIMARY_KEY);
     }
 
     @Override

@@ -93,11 +93,11 @@ public class ExplainPlan implements Plan {
     }
 
     @Override
-    public void execute(DependencyCarrier executor,
-                        PlannerContext plannerContext,
-                        RowConsumer consumer,
-                        Row params,
-                        SubQueryResults subQueryResults) {
+    public void executeOrFail(DependencyCarrier dependencies,
+                              PlannerContext plannerContext,
+                              RowConsumer consumer,
+                              Row params,
+                              SubQueryResults subQueryResults) {
         if (context != null) {
             assert subPlan instanceof LogicalPlan : "subPlan must be a LogicalPlan";
             LogicalPlan plan = (LogicalPlan) subPlan;
@@ -107,18 +107,25 @@ public class ExplainPlan implements Plan {
             if (plan.dependencies().isEmpty()) {
                 UUID jobId = plannerContext.jobId();
                 BaseResultReceiver resultReceiver = new BaseResultReceiver();
-                RowConsumer noopRowConsumer = new RowConsumerToResultReceiver(resultReceiver, 0);
+                RowConsumer noopRowConsumer = new RowConsumerToResultReceiver(resultReceiver, 0, t -> {});
 
                 Timer timer = context.createTimer(Phase.Execute.name());
                 timer.start();
 
                 NodeOperationTree operationTree = LogicalPlanner.getNodeOperationTree(
-                    plan, executor, plannerContext, params, subQueryResults);
+                    plan, dependencies, plannerContext, params, subQueryResults);
 
                 resultReceiver.completionFuture()
-                    .whenComplete(createResultConsumer(executor, consumer, jobId, timer, operationTree));
+                    .whenComplete(createResultConsumer(dependencies, consumer, jobId, timer, operationTree));
 
-                LogicalPlanner.executeNodeOpTree(executor, jobId, noopRowConsumer, true, operationTree);
+                LogicalPlanner.executeNodeOpTree(
+                    dependencies,
+                    plannerContext.transactionContext(),
+                    jobId,
+                    noopRowConsumer,
+                    true,
+                    operationTree
+                );
             } else {
                 consumer.accept(null,
                     new UnsupportedOperationException("EXPLAIN ANALYZE does not support profiling multi-phase plans, " +
@@ -128,10 +135,10 @@ public class ExplainPlan implements Plan {
             try {
                 Map<String, Object> map;
                 if (subPlan instanceof LogicalPlan) {
-                    map = ExplainLogicalPlan.explainMap((LogicalPlan) subPlan, plannerContext, executor.projectionBuilder());
+                    map = ExplainLogicalPlan.explainMap((LogicalPlan) subPlan, plannerContext, dependencies.projectionBuilder());
                 } else if (subPlan instanceof CopyStatementPlanner.CopyFrom) {
                     ExecutionPlan executionPlan = CopyStatementPlanner.planCopyFromExecution(
-                        executor.clusterService().state().nodes(),
+                        dependencies.clusterService().state().nodes(),
                         ((CopyStatementPlanner.CopyFrom) subPlan).copyFrom,
                         plannerContext
                     );

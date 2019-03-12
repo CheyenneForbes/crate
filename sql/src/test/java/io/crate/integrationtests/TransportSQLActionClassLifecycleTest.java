@@ -21,14 +21,15 @@
 
 package io.crate.integrationtests;
 
-import io.crate.Build;
-import io.crate.Version;
 import io.crate.action.sql.SQLActionException;
 import io.crate.execution.engine.collect.stats.JobsLogService;
 import io.crate.testing.SQLResponse;
 import io.crate.testing.SQLTransportExecutor;
 import io.crate.testing.UseJdbc;
 import org.apache.lucene.util.Constants;
+import org.elasticsearch.Build;
+import org.elasticsearch.Version;
+import org.elasticsearch.common.xcontent.DeprecationHandler;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.json.JsonXContent;
 import org.elasticsearch.test.ESIntegTestCase;
@@ -126,7 +127,8 @@ public class TransportSQLActionClassLifecycleTest extends SQLTransportIntegratio
     public void testSelectRaw() throws Exception {
         SQLResponse response = execute("select _raw from characters order by name desc limit 1");
         Object raw = response.rows()[0][0];
-        Map<String, Object> rawMap = JsonXContent.jsonXContent.createParser(NamedXContentRegistry.EMPTY, (String) raw).map();
+        Map<String, Object> rawMap = JsonXContent.jsonXContent.createParser(
+            NamedXContentRegistry.EMPTY, DeprecationHandler.THROW_UNSUPPORTED_OPERATION, (String) raw).map();
 
         assertThat(rawMap.get("race"), is("Human"));
         assertThat(rawMap.get("gender"), is("female"));
@@ -140,7 +142,8 @@ public class TransportSQLActionClassLifecycleTest extends SQLTransportIntegratio
                                        "group by _raw, name order by name desc limit 1");
 
         Object raw = response.rows()[0][1];
-        Map<String, Object> rawMap = JsonXContent.jsonXContent.createParser(NamedXContentRegistry.EMPTY, (String) raw).map();
+        Map<String, Object> rawMap = JsonXContent.jsonXContent.createParser(
+            NamedXContentRegistry.EMPTY, DeprecationHandler.THROW_UNSUPPORTED_OPERATION, (String) raw).map();
 
         assertThat(rawMap.get("race"), is("Human"));
         assertThat(rawMap.get("gender"), is("female"));
@@ -348,7 +351,6 @@ public class TransportSQLActionClassLifecycleTest extends SQLTransportIntegratio
     }
 
     @Test
-    @UseJdbc(0) // copy has no rowcount
     public void testCopyToDirectoryOnPartitionedTableWithPartitionClause() throws Exception {
         String uriTemplate = Paths.get(folder.getRoot().toURI()).toUri().toString();
         SQLResponse response = execute("copy parted partition (date='2014-01-01') to DIRECTORY ?", $(uriTemplate));
@@ -369,7 +371,6 @@ public class TransportSQLActionClassLifecycleTest extends SQLTransportIntegratio
     }
 
     @Test
-    @UseJdbc(0) // COPY has no rowcount
     public void testCopyToDirectoryOnPartitionedTableWithoutPartitionClause() throws Exception {
         String uriTemplate = Paths.get(folder.getRoot().toURI()).toUri().toString();
         SQLResponse response = execute("copy parted to DIRECTORY ?", $(uriTemplate));
@@ -410,7 +411,6 @@ public class TransportSQLActionClassLifecycleTest extends SQLTransportIntegratio
     }
 
     @Test
-    @UseJdbc(0) // set has no rowcount
     public void testSetMultipleStatement() throws Exception {
         SQLResponse response = execute(
             "select settings['stats']['operations_log_size'], settings['stats']['enabled'] from sys.cluster");
@@ -570,9 +570,9 @@ public class TransportSQLActionClassLifecycleTest extends SQLTransportIntegratio
         for (int i = 0; i <= 1; i++) {
             assertThat(response.rows()[i][0], instanceOf(Map.class));
             assertThat((Map<String, Object>) response.rows()[i][0], allOf(hasKey("number"), hasKey("build_hash"), hasKey("build_snapshot")));
-            assertThat((String) response.rows()[i][1], Matchers.is(Version.CURRENT.number()));
+            assertThat((String) response.rows()[i][1], Matchers.is(Version.CURRENT.externalNumber()));
             assertThat((String) response.rows()[i][2], is(Build.CURRENT.hash()));
-            assertThat((Boolean) response.rows()[i][3], is(Version.CURRENT.snapshot()));
+            assertThat((Boolean) response.rows()[i][3], is(Version.CURRENT.isSnapshot()));
         }
     }
 

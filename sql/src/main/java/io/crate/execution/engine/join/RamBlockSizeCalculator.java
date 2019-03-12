@@ -22,7 +22,6 @@
 
 package io.crate.execution.engine.join;
 
-import io.crate.data.Paging;
 import org.elasticsearch.common.breaker.CircuitBreaker;
 
 import java.util.function.IntSupplier;
@@ -32,15 +31,16 @@ import java.util.function.IntSupplier;
  */
 public class RamBlockSizeCalculator implements IntSupplier {
 
-    static final int DEFAULT_BLOCK_SIZE = Paging.PAGE_SIZE;
-
+    private final int defaultBlockSize;
     private final CircuitBreaker circuitBreaker;
     private final long estimatedRowSizeForLeft;
     private final long numberOfRowsForLeft;
 
-    RamBlockSizeCalculator(CircuitBreaker circuitBreaker,
+    public RamBlockSizeCalculator(int defaultBlockSize,
+                           CircuitBreaker circuitBreaker,
                            long estimatedRowSizeForLeft,
                            long numberOfRowsForLeft) {
+        this.defaultBlockSize = defaultBlockSize;
         this.circuitBreaker = circuitBreaker;
         this.estimatedRowSizeForLeft = estimatedRowSizeForLeft;
         this.numberOfRowsForLeft = numberOfRowsForLeft;
@@ -49,20 +49,23 @@ public class RamBlockSizeCalculator implements IntSupplier {
     @Override
     public int getAsInt() {
         if (statisticsUnavailable(circuitBreaker, estimatedRowSizeForLeft, numberOfRowsForLeft)) {
-            return DEFAULT_BLOCK_SIZE;
+            return defaultBlockSize;
         }
+        long availableMemory = circuitBreaker.getLimit() - circuitBreaker.getUsed();
+        long numRowsFittingIntoAvailableMemory = availableMemory / estimatedRowSizeForLeft;
 
-        int blockSize = (int) Math.min(Integer.MAX_VALUE, (circuitBreaker.getLimit() - circuitBreaker.getUsed()) / estimatedRowSizeForLeft);
-        blockSize = (int) Math.min(numberOfRowsForLeft, blockSize);
-
-        // for distributed hash joins, we must ensure that each parallel executed join is switching to the same relation
-        // eventually and does not load the next batch while another is already switching. this would result in a
-        // dead lock caused by the constraint that all receivers must response to the collect nodes before a next batch
-        // is sent.
-        blockSize = Math.min(DEFAULT_BLOCK_SIZE, blockSize);
+        // Restrict the number of rows per block by whatever is lowest:
+        // - numberOfRowsForLeft because we don't have to create blocks larger than the table is expected to be
+        // - defaultBlockSize it is an integer, the blockSize must not exceed Integer.MAX_SIZE to fit into the buffer structure and:
+        //      for distributed hash joins, we must ensure that each parallel executed join is switching to the same relation
+        //      eventually and does not load the next batch while another is already switching. this would result in a
+        //      dead lock caused by the constraint that all receivers must response to the collect nodes before a next batch
+        //      is sent.
+        int cap = (int) Math.min(numberOfRowsForLeft, defaultBlockSize);
+        int blockSize = (int) Math.min(cap, numRowsFittingIntoAvailableMemory);
 
         // In case no mem available from circuit breaker then still allocate a small blockSize,
-        // so that at least some rows (min 1) could be processed and a CircuitBreakerException can be triggered.
+        // so that at least some rows (min 10) could be processed and a CircuitBreakerException can be triggered.
         return blockSize <= 0 ? 10 : blockSize;
     }
 

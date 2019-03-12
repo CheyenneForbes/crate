@@ -28,6 +28,9 @@ import org.junit.Test;
 import java.util.Locale;
 import java.util.Map;
 
+import static io.crate.testing.TestingHelpers.printedTable;
+import static org.hamcrest.Matchers.is;
+
 public class TableSettingsTest extends SQLTransportIntegrationTest {
 
     @Before
@@ -41,6 +44,7 @@ public class TableSettingsTest extends SQLTransportIntegrationTest {
                 "\"blocks.metadata\" = false, " +
                 "\"routing.allocation.enable\" = 'primaries', " +
                 "\"routing.allocation.total_shards_per_node\" = 10, " +
+                "\"routing.allocation.exclude.foo\" = 'bar' ," +
                 "\"translog.sync_interval\" = '3600ms', " +
                 "\"translog.flush_threshold_size\" = '1000000b', " +
                 "\"warmer.enabled\" = false, " +
@@ -85,7 +89,7 @@ public class TableSettingsTest extends SQLTransportIntegrationTest {
     public void testFilterOnNull() throws Exception {
         execute("select * from information_schema.tables " +
                 "where settings IS NULL");
-        assertEquals(27L, response.rowCount());
+        assertEquals(34L, response.rowCount());
         execute("select * from information_schema.tables " +
                 "where table_name = 'settings_table' and settings['warmer']['enabled'] IS NULL");
         assertEquals(0, response.rowCount());
@@ -115,10 +119,7 @@ public class TableSettingsTest extends SQLTransportIntegrationTest {
     @Test
     public void testMappingTotalFieldsLimit() throws Exception {
         execute("create table test (id int)");
-        // The total amount of fields on table test is now 12 (system fields)
-        // plus the column id, that we've just created.
-        // Each additional column increases this number by 1.
-        int totalFields = 12;
+        int totalFields = 1;
         execute("alter table test set (\"mapping.total_fields.limit\"=?)", new Object[]{totalFields + 1});
         // Add a column is within the limit
         execute("alter table test add column new_column int");
@@ -141,7 +142,7 @@ public class TableSettingsTest extends SQLTransportIntegrationTest {
     @Test
     public void testFilterOnString() throws Exception {
         execute("select * from information_schema.tables " +
-                "where settings['routing']['allocation']['enable'] = 'PRIMARIES'");
+                "where settings['routing']['allocation']['enable'] = 'primaries'");
         assertEquals(1, response.rowCount());
     }
 
@@ -158,5 +159,54 @@ public class TableSettingsTest extends SQLTransportIntegrationTest {
                 "where table_name = 'settings_table'");
         assertEquals(1, response.rowCount());
         assertEquals("1", response.rows()[0][0]);
+    }
+
+    @Test
+    public void testSelectDynamicSettingGroup() {
+        execute("select settings['routing']['allocation']['exclude'] from information_schema.tables " +
+                "where table_name = 'settings_table'");
+        assertThat(printedTable(response.rows()), is("{foo=bar}\n"));
+    }
+
+    @Test
+    public void testSelectConcreteDynamicSetting() {
+        expectedException.expectMessage("Column settings['routing']['allocation']['exclude']['foo'] unknown");
+        execute("select settings['routing']['allocation']['exclude']['foo'] from information_schema.tables " +
+                "where table_name = 'settings_table'");
+    }
+
+    @Test
+    public void testSetDynamicSetting() {
+        execute("alter table settings_table set (\"routing.allocation.exclude.foo\" = 'bar2')");
+        execute("select settings['routing']['allocation']['exclude'] from information_schema.tables " +
+                "where table_name = 'settings_table'");
+        assertThat(printedTable(response.rows()), is("{foo=bar2}\n"));
+    }
+
+    @Test
+    public void testSetDynamicSettingGroup() {
+        expectedException.expectMessage("Cannot change a dynamic group setting, only concrete settings allowed.");
+        execute("alter table settings_table set (\"routing.allocation.exclude\" = {foo = 'bar2'})");
+    }
+
+    @Test
+    public void testResetDynamicSetting() {
+        execute("alter table settings_table reset (\"routing.allocation.exclude.foo\")");
+        execute("select settings['routing']['allocation']['exclude'] from information_schema.tables " +
+                "where table_name = 'settings_table'");
+        assertThat(printedTable(response.rows()), is("NULL\n"));
+
+        execute("alter table settings_table set (" +
+                "\"routing.allocation.exclude.foo\" = 'bar', \"routing.allocation.exclude.foo2\" = 'bar2')");
+        execute("alter table settings_table reset (\"routing.allocation.exclude.foo\")");
+        execute("select settings['routing']['allocation']['exclude'] from information_schema.tables " +
+                "where table_name = 'settings_table'");
+        assertThat(printedTable(response.rows()), is("{foo2=bar2}\n"));
+    }
+
+    @Test
+    public void testResetDynamicSettingGroup() {
+        expectedException.expectMessage("Cannot change a dynamic group setting, only concrete settings allowed.");
+        execute("alter table settings_table reset (\"routing.allocation.exclude\")");
     }
 }

@@ -26,7 +26,7 @@ import com.carrotsearch.hppc.IntIndexedContainer;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Sets;
 import io.crate.analyze.WhereClause;
-import io.crate.core.collections.TreeMapBuilder;
+import io.crate.common.collections.TreeMapBuilder;
 import io.crate.execution.dsl.phases.ExecutionPhase;
 import io.crate.execution.dsl.phases.MergePhase;
 import io.crate.execution.dsl.phases.NodeOperation;
@@ -65,8 +65,7 @@ public class ExecutionPhasesRootTaskTest {
             ImmutableList.of(),
             ImmutableList.of(),
             WhereClause.MATCH_ALL.queryOrFallback(),
-            DistributionInfo.DEFAULT_BROADCAST,
-            null
+            DistributionInfo.DEFAULT_BROADCAST
         );
 
         MergePhase m1 = new MergePhase(

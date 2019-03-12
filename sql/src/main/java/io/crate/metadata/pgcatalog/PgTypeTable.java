@@ -36,52 +36,71 @@ import io.crate.metadata.table.ColumnRegistrar;
 import io.crate.metadata.table.StaticTableInfo;
 import io.crate.protocols.postgres.types.PGType;
 import io.crate.types.DataTypes;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.cluster.ClusterState;
 
 import java.util.Collections;
 import java.util.Map;
 
+import static io.crate.metadata.pgcatalog.OidHash.schemaOid;
+
 public class PgTypeTable extends StaticTableInfo {
 
     public static final RelationName IDENT = new RelationName(PgCatalogSchemaInfo.NAME, "pg_type");
+
+    private static final Integer TYPE_NAMESPACE_OID = schemaOid(PgCatalogSchemaInfo.NAME);
 
     static class Columns {
         static final ColumnIdent OID = new ColumnIdent("oid");
         static final ColumnIdent TYPNAME = new ColumnIdent("typname");
         static final ColumnIdent TYPDELIM = new ColumnIdent("typdelim");
         static final ColumnIdent TYPELEM = new ColumnIdent("typelem");
+        static final ColumnIdent TYPLEN = new ColumnIdent("typlen");
         static final ColumnIdent TYPTYPE = new ColumnIdent("typtype");
         static final ColumnIdent TYPBASETYPE = new ColumnIdent("typbasetype");
+        static final ColumnIdent TYPTYPMOD = new ColumnIdent("typtypmod");
+        static final ColumnIdent TYPNAMESPACE = new ColumnIdent("typnamespace");
+        static final ColumnIdent TYPARRAY = new ColumnIdent("typarray");
     }
 
-    private static final BytesRef TYPTYPE = new BytesRef("b");
+    private static final String TYPTYPE = "b";
 
     public static Map<ColumnIdent, RowCollectExpressionFactory<PGType>> expressions() {
         return ImmutableMap.<ColumnIdent, RowCollectExpressionFactory<PGType>>builder()
             .put(Columns.OID,
                 () -> NestableCollectExpression.forFunction(PGType::oid))
             .put(Columns.TYPNAME,
-                () -> NestableCollectExpression.objToBytesRef(PGType::typName))
+                () -> NestableCollectExpression.forFunction(PGType::typName))
             .put(Columns.TYPDELIM,
-                () -> NestableCollectExpression.objToBytesRef(PGType::typDelim))
+                () -> NestableCollectExpression.forFunction(PGType::typDelim))
             .put(Columns.TYPELEM,
                 () -> NestableCollectExpression.forFunction(PGType::typElem))
+            .put(Columns.TYPLEN,
+                () -> NestableCollectExpression.forFunction(PGType::typeLen))
             .put(Columns.TYPTYPE,
                 () -> NestableCollectExpression.constant(TYPTYPE))
             .put(Columns.TYPBASETYPE,
                 () -> NestableCollectExpression.constant(0))
+            .put(Columns.TYPTYPMOD,
+                () -> NestableCollectExpression.constant(-1))
+            .put(Columns.TYPNAMESPACE,
+                () -> NestableCollectExpression.constant(TYPE_NAMESPACE_OID))
+            .put(Columns.TYPARRAY,
+                () -> NestableCollectExpression.forFunction(PGType::typArray))
             .build();
     }
 
     PgTypeTable() {
         super(IDENT, new ColumnRegistrar(IDENT, RowGranularity.DOC)
-                .register(Columns.OID.name(), DataTypes.INTEGER, null)
-                .register(Columns.TYPNAME.name(), DataTypes.STRING, null)
-                .register(Columns.TYPDELIM.name(), DataTypes.STRING, null)
-                .register(Columns.TYPELEM.name(), DataTypes.INTEGER, null)
-                .register(Columns.TYPTYPE.name(), DataTypes.STRING, null)
-                .register(Columns.TYPBASETYPE.name(), DataTypes.INTEGER, null),
+                .register(Columns.OID.name(), DataTypes.INTEGER)
+                .register(Columns.TYPNAME.name(), DataTypes.STRING)
+                .register(Columns.TYPDELIM.name(), DataTypes.STRING)
+                .register(Columns.TYPELEM.name(), DataTypes.INTEGER)
+                .register(Columns.TYPLEN.name(), DataTypes.SHORT)
+                .register(Columns.TYPTYPE.name(), DataTypes.STRING)
+                .register(Columns.TYPBASETYPE.name(), DataTypes.INTEGER)
+                .register(Columns.TYPTYPMOD.name(), DataTypes.INTEGER)
+                .register(Columns.TYPNAMESPACE.name(), DataTypes.INTEGER)
+                .register(Columns.TYPARRAY.name(), DataTypes.INTEGER),
             Collections.emptyList());
     }
 

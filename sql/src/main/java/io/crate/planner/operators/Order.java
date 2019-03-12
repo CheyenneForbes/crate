@@ -29,6 +29,7 @@ import io.crate.execution.dsl.projection.OrderedTopNProjection;
 import io.crate.execution.dsl.projection.builder.InputColumns;
 import io.crate.execution.dsl.projection.builder.ProjectionBuilder;
 import io.crate.expression.symbol.Symbol;
+import io.crate.expression.symbol.format.SymbolFormatter;
 import io.crate.planner.ExecutionPlan;
 import io.crate.planner.Merge;
 import io.crate.planner.PlannerContext;
@@ -36,7 +37,10 @@ import io.crate.planner.PositionalOrderBy;
 
 import javax.annotation.Nullable;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Set;
+
+import static io.crate.planner.operators.LogicalPlanner.extractColumns;
 
 class Order extends OneInputPlan {
 
@@ -80,6 +84,7 @@ class Order extends OneInputPlan {
             executionPlan = Merge.ensureOnHandler(executionPlan, plannerContext);
         }
         InputColumns.SourceSymbols ctx = new InputColumns.SourceSymbols(source.outputs());
+        ensureOrderByColumnsArePresentInOutputs(source.outputs(), orderBy.orderBySymbols());
         OrderedTopNProjection topNProjection = new OrderedTopNProjection(
             Limit.limitAndOffset(limit, offset),
             0,
@@ -99,15 +104,26 @@ class Order extends OneInputPlan {
         return executionPlan;
     }
 
+    private static void ensureOrderByColumnsArePresentInOutputs(List<Symbol> outputs, List<Symbol> orderBySymbols) {
+        Set<Symbol> columnsInOutputs = extractColumns(outputs);
+        for (Symbol columnInOrderBy : extractColumns(orderBySymbols)) {
+            if (!columnsInOutputs.contains(columnInOrderBy)) {
+                throw new UnsupportedOperationException(SymbolFormatter.format(
+                    "Cannot order by \"%s\", as the column does not appear in the outputs of the underlying relation",
+                    columnInOrderBy));
+            }
+        }
+    }
+
     @Override
-    public LogicalPlan tryOptimize(@Nullable LogicalPlan pushDown, SymbolMapper mapper) {
-        if (pushDown instanceof Order) {
+    public LogicalPlan tryOptimize(@Nullable LogicalPlan ancestor, SymbolMapper mapper) {
+        if (ancestor instanceof Order) {
             // We can overwrite this Order with the Order being pushed down
             // because the order of the results will be changed anyway further
             // downstream.
-            return source.tryOptimize(pushDown, mapper);
+            return source.tryOptimize(ancestor, mapper);
         }
-        if (pushDown != null) {
+        if (ancestor != null) {
             // already pushing down something else
             return null;
         }

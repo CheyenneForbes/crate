@@ -123,19 +123,25 @@ Function Call
 A function is declared by its name followed by its arguments enclosed in
 parentheses::
 
-    function_name([expression [, expression ... ]])
+    function_name([expression [, expression ... ]]) [ OVER([ORDER BY expression] [, ...]) ]
 
 .. SEEALSO::
 
     - :ref:`scalar`
     - :ref:`aggregation`
+    - :ref:`window-functions`
 
 Type Cast
 =========
 
 A type cast specifies the conversion from one type to another. The syntax is::
 
-    CAST ( expression as type )
+    CAST(expression as type)
+
+Another variant to do type casts is ``try_cast``. Instead of raising an error
+this returns ``null`` if a value cannot be converted to the given type::
+
+    TRY_CAST(expression as type)
 
 .. SEEALSO::
 

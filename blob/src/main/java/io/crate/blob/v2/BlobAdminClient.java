@@ -22,17 +22,15 @@
 
 package io.crate.blob.v2;
 
-import io.crate.Constants;
 import io.crate.action.FutureActionListener;
 import org.elasticsearch.action.admin.indices.create.CreateIndexRequest;
 import org.elasticsearch.action.admin.indices.create.CreateIndexResponse;
 import org.elasticsearch.action.admin.indices.create.TransportCreateIndexAction;
 import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest;
-import org.elasticsearch.action.admin.indices.delete.DeleteIndexResponse;
 import org.elasticsearch.action.admin.indices.delete.TransportDeleteIndexAction;
 import org.elasticsearch.action.admin.indices.settings.put.TransportUpdateSettingsAction;
 import org.elasticsearch.action.admin.indices.settings.put.UpdateSettingsRequest;
-import org.elasticsearch.action.admin.indices.settings.put.UpdateSettingsResponse;
+import org.elasticsearch.action.support.master.AcknowledgedResponse;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Singleton;
 import org.elasticsearch.common.settings.Settings;
@@ -41,7 +39,6 @@ import java.util.concurrent.CompletableFuture;
 
 import static io.crate.blob.v2.BlobIndex.fullIndexName;
 import static io.crate.blob.v2.BlobIndicesService.SETTING_INDEX_BLOBS_ENABLED;
-import static io.crate.metadata.IndexMappings.DEFAULT_TABLE_MAPPING;
 
 /**
  * DDL Client for blob tables - used to create, update or delete blob tables.
@@ -69,7 +66,7 @@ public class BlobAdminClient {
      * @param indexSettings updated index settings
      */
     public CompletableFuture<Long> alterBlobTable(String tableName, Settings indexSettings) {
-        FutureActionListener<UpdateSettingsResponse, Long> listener = new FutureActionListener<>(r -> 1L);
+        FutureActionListener<AcknowledgedResponse, Long> listener = new FutureActionListener<>(r -> 1L);
         updateSettingsAction.execute(new UpdateSettingsRequest(indexSettings, fullIndexName(tableName)), listener);
         return listener;
     }
@@ -80,14 +77,13 @@ public class BlobAdminClient {
         builder.put(SETTING_INDEX_BLOBS_ENABLED.getKey(), true);
 
         FutureActionListener<CreateIndexResponse, Long> listener = new FutureActionListener<>(r -> 1L);
-        CreateIndexRequest createIndexRequest = new CreateIndexRequest(fullIndexName(tableName), builder.build())
-            .mapping(Constants.DEFAULT_MAPPING_TYPE, DEFAULT_TABLE_MAPPING);
+        CreateIndexRequest createIndexRequest = new CreateIndexRequest(fullIndexName(tableName), builder.build());
         createIndexAction.execute(createIndexRequest, listener);
         return listener;
     }
 
     public CompletableFuture<Long> dropBlobTable(final String tableName) {
-        FutureActionListener<DeleteIndexResponse, Long> listener = new FutureActionListener<>(r -> 1L);
+        FutureActionListener<AcknowledgedResponse, Long> listener = new FutureActionListener<>(r -> 1L);
         deleteIndexAction.execute(new DeleteIndexRequest(fullIndexName(tableName)), listener);
         return listener;
     }

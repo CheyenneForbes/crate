@@ -65,7 +65,6 @@ import io.crate.sql.tree.CrateTableOption;
 import io.crate.sql.tree.CreateAnalyzer;
 import io.crate.sql.tree.CreateBlobTable;
 import io.crate.sql.tree.CreateFunction;
-import io.crate.sql.tree.CreateIngestRule;
 import io.crate.sql.tree.CreateRepository;
 import io.crate.sql.tree.CreateSnapshot;
 import io.crate.sql.tree.CreateTable;
@@ -74,24 +73,28 @@ import io.crate.sql.tree.CreateView;
 import io.crate.sql.tree.CurrentTime;
 import io.crate.sql.tree.DateLiteral;
 import io.crate.sql.tree.DeallocateStatement;
+import io.crate.sql.tree.DecommissionNodeStatement;
 import io.crate.sql.tree.Delete;
 import io.crate.sql.tree.DenyPrivilege;
 import io.crate.sql.tree.DoubleLiteral;
+import io.crate.sql.tree.DropAnalyzer;
 import io.crate.sql.tree.DropBlobTable;
 import io.crate.sql.tree.DropFunction;
-import io.crate.sql.tree.DropIngestRule;
 import io.crate.sql.tree.DropRepository;
 import io.crate.sql.tree.DropSnapshot;
 import io.crate.sql.tree.DropTable;
 import io.crate.sql.tree.DropUser;
 import io.crate.sql.tree.DropView;
+import io.crate.sql.tree.EscapedCharStringLiteral;
 import io.crate.sql.tree.Except;
 import io.crate.sql.tree.ExistsPredicate;
 import io.crate.sql.tree.Explain;
 import io.crate.sql.tree.Expression;
 import io.crate.sql.tree.Extract;
+import io.crate.sql.tree.FrameBound;
 import io.crate.sql.tree.FunctionArgument;
 import io.crate.sql.tree.FunctionCall;
+import io.crate.sql.tree.GCDanglingArtifacts;
 import io.crate.sql.tree.GenericProperties;
 import io.crate.sql.tree.GenericProperty;
 import io.crate.sql.tree.GrantPrivilege;
@@ -151,6 +154,7 @@ import io.crate.sql.tree.SetStatement;
 import io.crate.sql.tree.ShowColumns;
 import io.crate.sql.tree.ShowCreateTable;
 import io.crate.sql.tree.ShowSchemas;
+import io.crate.sql.tree.ShowSessionParameter;
 import io.crate.sql.tree.ShowTables;
 import io.crate.sql.tree.ShowTransaction;
 import io.crate.sql.tree.SimpleCaseExpression;
@@ -160,6 +164,7 @@ import io.crate.sql.tree.Statement;
 import io.crate.sql.tree.StringLiteral;
 import io.crate.sql.tree.SubqueryExpression;
 import io.crate.sql.tree.SubscriptExpression;
+import io.crate.sql.tree.SwapTable;
 import io.crate.sql.tree.Table;
 import io.crate.sql.tree.TableElement;
 import io.crate.sql.tree.TableFunction;
@@ -173,6 +178,8 @@ import io.crate.sql.tree.Union;
 import io.crate.sql.tree.Update;
 import io.crate.sql.tree.ValuesList;
 import io.crate.sql.tree.WhenClause;
+import io.crate.sql.tree.Window;
+import io.crate.sql.tree.WindowFrame;
 import org.antlr.v4.runtime.ParserRuleContext;
 import org.antlr.v4.runtime.RuleContext;
 import org.antlr.v4.runtime.Token;
@@ -185,6 +192,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 
+import static java.util.Collections.emptyList;
 import static java.util.stream.Collectors.toList;
 
 class AstBuilder extends SqlBaseBaseVisitor<Node> {
@@ -231,9 +239,42 @@ class AstBuilder extends SqlBaseBaseVisitor<Node> {
         return new CreateTable(
             (Table) visit(context.table()),
             visitCollection(context.tableElement(), TableElement.class),
-            visitCollection(context.crateTableOption(), CrateTableOption.class),
+            processTableOptions(context.partitionedByOrClusteredInto()),
             extractGenericProperties(context.withProperties()),
             notExists);
+    }
+
+    private List<CrateTableOption> processTableOptions(@Nullable SqlBaseParser.PartitionedByOrClusteredIntoContext ctx) {
+        if (ctx == null) {
+            return Collections.emptyList();
+        }
+        ArrayList<CrateTableOption> tableOptions = new ArrayList<>(2);
+        if (ctx.clusteredBy() != null) {
+            tableOptions.add((ClusteredBy) visit(ctx.clusteredBy()));
+        }
+        if (ctx.partitionedBy() != null) {
+            tableOptions.add((PartitionedBy) visit(ctx.partitionedBy()));
+        }
+        return tableOptions;
+    }
+
+    @Override
+    public Node visitAlterClusterSwapTable(SqlBaseParser.AlterClusterSwapTableContext ctx) {
+        return new SwapTable(
+            getQualifiedName(ctx.source),
+            getQualifiedName(ctx.target),
+            extractGenericProperties(ctx.withProperties())
+        );
+    }
+
+    @Override
+    public Node visitAlterClusterGCDanglingArtifacts(SqlBaseParser.AlterClusterGCDanglingArtifactsContext ctx) {
+        return GCDanglingArtifacts.INSTANCE;
+    }
+
+    @Override
+    public Node visitAlterClusterDecommissionNode(SqlBaseParser.AlterClusterDecommissionNodeContext ctx) {
+        return new DecommissionNodeStatement((Expression) visit(ctx.node));
     }
 
     @Override
@@ -286,6 +327,11 @@ class AstBuilder extends SqlBaseBaseVisitor<Node> {
             getIdentText(context.extendedName),
             visitCollection(context.analyzerElement(), AnalyzerElement.class)
         );
+    }
+
+    @Override
+    public Node visitDropAnalyzer(SqlBaseParser.DropAnalyzerContext ctx) {
+        return new DropAnalyzer(getIdentText(ctx.name));
     }
 
     @Override
@@ -393,6 +439,15 @@ class AstBuilder extends SqlBaseBaseVisitor<Node> {
     }
 
     @Override
+    public Node visitShowSessionParameter(SqlBaseParser.ShowSessionParameterContext ctx) {
+        if (ctx.ALL() != null) {
+            return new ShowSessionParameter(null);
+        } else {
+            return new ShowSessionParameter(getQualifiedName(ctx.qname()));
+        }
+    }
+
+    @Override
     public Node visitDropTable(SqlBaseParser.DropTableContext context) {
         return new DropTable((Table) visit(context.table()), context.EXISTS() != null);
     }
@@ -426,7 +481,7 @@ class AstBuilder extends SqlBaseBaseVisitor<Node> {
     public Node visitCopyTo(SqlBaseParser.CopyToContext context) {
         return new CopyTo(
             (Table) visit(context.tableWithPartition()),
-            context.columns() == null ? Collections.emptyList() : visitCollection(context.columns().primaryExpression(), Expression.class),
+            context.columns() == null ? emptyList() : visitCollection(context.columns().primaryExpression(), Expression.class),
             visitIfPresent(context.where(), Expression.class),
             context.DIRECTORY() != null,
             (Expression) visit(context.path),
@@ -469,12 +524,7 @@ class AstBuilder extends SqlBaseBaseVisitor<Node> {
      * Creates a {@link io.crate.sql.tree.Insert.DuplicateKeyContext} based on the Insert
      */
     private Insert.DuplicateKeyContext createDuplicateKeyContext(SqlBaseParser.InsertContext context) {
-        if (context.onDuplicate() != null) {
-            return new Insert.DuplicateKeyContext(
-                Insert.DuplicateKeyContext.Type.ON_DUPLICATE_KEY_UPDATE,
-                visitCollection(context.onDuplicate().assignment(), Assignment.class),
-                Collections.emptyList());
-        } else if (context.onConflict() != null) {
+        if (context.onConflict() != null) {
             SqlBaseParser.OnConflictContext onConflictContext = context.onConflict();
             final List<String> conflictColumns;
             if (onConflictContext.conflictTarget() != null) {
@@ -482,15 +532,15 @@ class AstBuilder extends SqlBaseBaseVisitor<Node> {
                     .map(RuleContext::getText)
                     .collect(toList());
             } else {
-                conflictColumns = Collections.emptyList();
+                conflictColumns = emptyList();
             }
             if (onConflictContext.NOTHING() != null) {
                 return new Insert.DuplicateKeyContext(
                     Insert.DuplicateKeyContext.Type.ON_CONFLICT_DO_NOTHING,
-                    Collections.emptyList(),
+                    emptyList(),
                     conflictColumns);
             } else {
-                if (conflictColumns == null) {
+                if (conflictColumns.isEmpty()) {
                     throw new IllegalStateException("ON CONFLICT <conflict_target> <- conflict_target missing");
                 }
                 return new Insert.DuplicateKeyContext(
@@ -548,6 +598,15 @@ class AstBuilder extends SqlBaseBaseVisitor<Node> {
                 visitCollection(context.setGlobalAssignment(), Assignment.class));
         }
         return new SetStatement(SetStatement.Scope.GLOBAL, visitCollection(context.setGlobalAssignment(), Assignment.class));
+    }
+
+    @Override
+    public Node visitSetLicense(SqlBaseParser.SetLicenseContext ctx) {
+        Assignment assignment = new Assignment(
+            new StringLiteral("license"), (Expression) visit(ctx.stringLiteral()));
+
+        return new SetStatement(SetStatement.Scope.LICENSE,
+            SetStatement.SettingType.PERSISTENT, Collections.singletonList(assignment));
     }
 
     @Override
@@ -724,8 +783,8 @@ class AstBuilder extends SqlBaseBaseVisitor<Node> {
     }
 
     @Override
-    public Node visitClusteredInto(SqlBaseParser.ClusteredIntoContext context) {
-        return new ClusteredBy(null, visitIfPresent(context.numShards, Expression.class));
+    public Node visitBlobClusteredInto(SqlBaseParser.BlobClusteredIntoContext ctx) {
+        return new ClusteredBy(null, visitIfPresent(ctx.numShards, Expression.class));
     }
 
     @Override
@@ -1282,6 +1341,43 @@ class AstBuilder extends SqlBaseBaseVisitor<Node> {
     }
 
     @Override
+    public Node visitOver(SqlBaseParser.OverContext ctx) {
+        List<SortItem> orderBy;
+        if (ctx.ORDER() != null) {
+            orderBy = visitCollection(ctx.sortItem(), SortItem.class);
+        } else {
+            orderBy = emptyList();
+        }
+        return new Window(
+            visitCollection(ctx.partition, Expression.class),
+            orderBy,
+            visitIfPresent(ctx.windowFrame(), WindowFrame.class));
+    }
+
+    @Override
+    public Node visitWindowFrame(SqlBaseParser.WindowFrameContext ctx) {
+        return new WindowFrame(
+            getFrameType(ctx.frameType),
+            (FrameBound) visit(ctx.start),
+            visitIfPresent(ctx.end, FrameBound.class));
+    }
+
+    @Override
+    public Node visitUnboundedFrame(SqlBaseParser.UnboundedFrameContext context) {
+        return new FrameBound(getUnboundedFrameBoundType(context.boundType));
+    }
+
+    @Override
+    public Node visitBoundedFrame(SqlBaseParser.BoundedFrameContext context) {
+        return new FrameBound(getBoundedFrameBoundType(context.boundType), (Expression) visit(context.expr()));
+    }
+
+    @Override
+    public Node visitCurrentRowBound(SqlBaseParser.CurrentRowBoundContext context) {
+        return new FrameBound(FrameBound.Type.CURRENT_ROW);
+    }
+
+    @Override
     public Node visitDoubleColonCast(SqlBaseParser.DoubleColonCastContext context) {
         return new Cast((Expression) visit(context.valueExpression()), (ColumnType) visit(context.dataType()));
     }
@@ -1381,7 +1477,7 @@ class AstBuilder extends SqlBaseBaseVisitor<Node> {
     @Override
     public Node visitSimpleCase(SqlBaseParser.SimpleCaseContext context) {
         return new SimpleCaseExpression(
-            (Expression) visit(context.valueExpression()),
+            (Expression) visit(context.operand),
             visitCollection(context.whenClause(), WhenClause.class),
             visitOptionalContext(context.elseExpr, Expression.class));
     }
@@ -1411,7 +1507,9 @@ class AstBuilder extends SqlBaseBaseVisitor<Node> {
         return new FunctionCall(
             getQualifiedName(context.qname()),
             isDistinct(context.setQuant()),
-            visitCollection(context.expr(), Expression.class));
+            visitCollection(context.expr(), Expression.class),
+            visitIfPresent(context.over(), Window.class)
+        );
     }
 
     // Literals
@@ -1424,6 +1522,11 @@ class AstBuilder extends SqlBaseBaseVisitor<Node> {
     @Override
     public Node visitStringLiteral(SqlBaseParser.StringLiteralContext context) {
         return new StringLiteral(unquote(context.STRING().getText()));
+    }
+
+    @Override
+    public Node visitEscapedCharsStringLiteral(SqlBaseParser.EscapedCharsStringLiteralContext ctx) {
+        return new EscapedCharStringLiteral(unquoteEscaped(ctx.ESCAPED_STRING().getText()));
     }
 
     @Override
@@ -1484,21 +1587,6 @@ class AstBuilder extends SqlBaseBaseVisitor<Node> {
     public Node visitOn(SqlBaseParser.OnContext context) {
         return BooleanLiteral.TRUE_LITERAL;
     }
-
-    @Override
-    public Node visitDropIngestRule(SqlBaseParser.DropIngestRuleContext ctx) {
-        return new DropIngestRule(getIdentText(ctx.rule_name), ctx.EXISTS() != null);
-    }
-
-    @Override
-    public Node visitCreateIngestRule(SqlBaseParser.CreateIngestRuleContext ctx) {
-        return new CreateIngestRule(getIdentText(ctx.rule_name),
-            getIdentText(ctx.source_ident),
-            getQualifiedName(ctx.table_ident),
-            visitIfPresent(ctx.where(), Expression.class));
-    }
-
-    // Data types
 
     @Override
     public Node visitDataType(SqlBaseParser.DataTypeContext context) {
@@ -1571,6 +1659,13 @@ class AstBuilder extends SqlBaseBaseVisitor<Node> {
     private static String unquote(String value) {
         return value.substring(1, value.length() - 1)
             .replace("''", "'");
+    }
+
+    private static String unquoteEscaped(String value) {
+        // start from index: 2 to account for the 'E' literal
+        // single quote escaping is handled at later stage
+        // as we require more context on the surrounding characters
+        return value.substring(2, value.length() - 1);
     }
 
     private QualifiedName getQualifiedName(SqlBaseParser.QnameContext context) {
@@ -1743,7 +1838,7 @@ class AstBuilder extends SqlBaseBaseVisitor<Node> {
                                                          SqlBaseParser.ClazzContext clazz,
                                                          SqlBaseParser.QnamesContext qnamesContext) {
         if (onCluster) {
-            return new ClassAndIdent(CLUSTER, Collections.emptyList());
+            return new ClassAndIdent(CLUSTER, emptyList());
         } else {
             return new ClassAndIdent(getClazz(clazz.getStart()), getIdents(qnamesContext.qname()));
         }
@@ -1756,6 +1851,40 @@ class AstBuilder extends SqlBaseBaseVisitor<Node> {
         ClassAndIdent(String clazz, List<QualifiedName> idents) {
             this.clazz = clazz;
             this.idents = idents;
+        }
+    }
+
+    private static WindowFrame.Type getFrameType(Token type) {
+        switch (type.getType()) {
+            case SqlBaseLexer.RANGE:
+                return WindowFrame.Type.RANGE;
+            case SqlBaseLexer.ROWS:
+                return WindowFrame.Type.ROWS;
+            default:
+                throw new IllegalArgumentException("Unsupported frame type: " + type.getText());
+        }
+    }
+
+    private static FrameBound.Type getBoundedFrameBoundType(Token token) {
+        switch (token.getType()) {
+            case SqlBaseLexer.PRECEDING:
+                return FrameBound.Type.PRECEDING;
+            case SqlBaseLexer.FOLLOWING:
+                return FrameBound.Type.FOLLOWING;
+            default:
+                throw new IllegalArgumentException("Unsupported bound type: " + token.getText());
+        }
+    }
+
+    private static FrameBound.Type getUnboundedFrameBoundType(Token token) {
+        switch (token.getType()) {
+            case SqlBaseLexer.PRECEDING:
+                return FrameBound.Type.UNBOUNDED_PRECEDING;
+            case SqlBaseLexer.FOLLOWING:
+                return FrameBound.Type.UNBOUNDED_FOLLOWING;
+
+            default:
+                throw new IllegalArgumentException("Unsupported bound type: " + token.getText());
         }
     }
 }

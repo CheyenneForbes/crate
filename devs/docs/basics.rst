@@ -8,7 +8,7 @@ Prerequisites
 CrateDB is written in Java_. Some of the (testing) tooling in Python_. So to
 develop on CrateDB you'll need:
 
- - Java_ (>= 8)
+ - Java_ (>= 11)
  - Python_ (>= 3.6)
 
 On macOS, we recommend using `Oracle's Java`_. If you're using Linux, we
@@ -40,20 +40,19 @@ To compile the CrateDB sources, run::
 
     $ ./gradlew compileJava
 
-To run CrateDB as a Gradle task, you need to create configuration file for
-logging::
-
-    $ mkdir -pv config && touch config/log4j2.properties
-
-You can use a *minimal logging configuration*. For more information, see the
-`logging documentation`_.
-
 Run CrateDB like so::
+
+    $ ./gradlew run
+
+or with remote debugging enabled::
 
     $ ./gradlew runDebug
 
 *Note*: If you run CrateDB like this, CrateDB will wait for a remote debugger
 on port ``5005`` before fully starting up!
+
+Both ``run`` and ``runDebug`` comands will set the HOME to ``sandbox/crate`` and
+so uses the configuration files located there.
 
 To install the CrateDB locally, run::
 
@@ -66,6 +65,10 @@ And then start CrateDB like this::
 Build a tarball like so::
 
     $ ./gradlew distTar
+
+Build a tarball of the Community Edition like so::
+
+    $ ./gradlew communityEditionDistTar
 
 The tarball can then be found in the ``app/build/distributions`` directory.
 
@@ -122,15 +125,6 @@ You can create test coverage reports with `jacoco`_::
 The HTML test coverage report can then be found in the
 ``build/reports/jacoco/jacocoHtml`` directory.
 
-SpotBugs (formerly known as FindBugs)
--------------------------------------
-
-You can run `SpotBugs`_ like so::
-
-    $ ./gradlew spotbugsMain
-
-The SpotBugs check will also be executed when running ``./gradlew check``.
-
 Forbidden APIs
 --------------
 
@@ -156,12 +150,11 @@ build like so::
 
 
 .. _Java: http://www.java.com/
-.. _OpenJDK: http://openjdk.java.net/projects/jdk8/
+.. _OpenJDK: https://openjdk.java.net/projects/jdk/11/
 .. _Oracle's Java: http://www.java.com/en/download/help/mac_install.xml
 .. _Python: http://www.python.org/
 .. _Gradle: http://www.gradle.org/
 .. _logging documentation: https://crate.io/docs/en/stable/configuration.html#logging
 .. _IntelliJ IDEA: https://www.jetbrains.com/idea/
 .. _jacoco: http://www.eclemma.org/jacoco/
-.. _SpotBugs: https://spotbugs.github.io
 .. _Forbidden APIs: https://github.com/policeman-tools/forbidden-apis

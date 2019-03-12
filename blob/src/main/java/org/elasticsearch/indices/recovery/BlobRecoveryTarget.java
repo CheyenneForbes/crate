@@ -29,8 +29,6 @@ import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.component.AbstractComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
-import org.elasticsearch.common.util.concurrent.ConcurrentMapLong;
 import org.elasticsearch.index.shard.IndexShardClosedException;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportChannel;
@@ -42,6 +40,8 @@ import java.io.FileOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 
 public class BlobRecoveryTarget extends AbstractComponent {
@@ -74,17 +74,17 @@ public class BlobRecoveryTarget extends AbstractComponent {
     *
     * */
 
-    private final ConcurrentMapLong<BlobRecoveryStatus> onGoingBlobRecoveries = ConcurrentCollections.newConcurrentMapLong();
+    private final ConcurrentMap<Long, BlobRecoveryStatus> onGoingBlobRecoveries = new ConcurrentHashMap<>();
     private final BlobIndicesService blobIndicesService;
     private final PeerRecoveryTargetService peerRecoveryTargetService;
 
     public static class Actions {
-        public static final String FINALIZE_RECOVERY = "crate/blob/shard/recovery/finalize_recovery";
-        public static final String DELETE_FILE = "crate/blob/shard/recovery/delete_file";
-        public static final String START_RECOVERY = "crate/blob/shard/recovery/start";
-        public static final String START_PREFIX = "crate/blob/shard/recovery/start_prefix";
-        public static final String TRANSFER_CHUNK = "crate/blob/shard/recovery/transfer_chunk";
-        public static final String START_TRANSFER = "crate/blob/shard/recovery/start_transfer";
+        public static final String FINALIZE_RECOVERY = "internal:crate:blob/shard/recovery/finalize_recovery";
+        public static final String DELETE_FILE = "internal:crate:blob/shard/recovery/delete_file";
+        public static final String START_RECOVERY = "internal:crate:blob/shard/recovery/start";
+        public static final String START_PREFIX = "internal:crate:blob/shard/recovery/start_prefix";
+        public static final String TRANSFER_CHUNK = "internal:crate:blob/shard/recovery/transfer_chunk";
+        public static final String START_TRANSFER = "internal:crate:blob/shard/recovery/start_transfer";
     }
 
     @Inject
@@ -176,8 +176,8 @@ public class BlobRecoveryTarget extends AbstractComponent {
             if (status.canceled()) {
                 throw new IndexShardClosedException(status.shardId());
             }
-            BlobStartPrefixResponse response = new BlobStartPrefixResponse();
-            response.existingDigests = status.blobShard.currentDigests(request.prefix());
+            byte[][] currentDigests = status.blobShard.currentDigests(request.prefix());
+            BlobStartPrefixResponse response = new BlobStartPrefixResponse(currentDigests);
             channel.sendResponse(response);
         }
     }

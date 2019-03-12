@@ -28,12 +28,10 @@ import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
 import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.cluster.repositories.delete.DeleteRepositoryRequest;
-import org.elasticsearch.action.admin.cluster.repositories.delete.DeleteRepositoryResponse;
 import org.elasticsearch.action.admin.cluster.repositories.delete.TransportDeleteRepositoryAction;
 import org.elasticsearch.action.admin.cluster.repositories.put.PutRepositoryRequest;
-import org.elasticsearch.action.admin.cluster.repositories.put.PutRepositoryResponse;
 import org.elasticsearch.action.admin.cluster.repositories.put.TransportPutRepositoryAction;
-import org.elasticsearch.action.support.ActionFilters;
+import org.elasticsearch.action.support.master.AcknowledgedResponse;
 import org.elasticsearch.cluster.ClusterName;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
@@ -49,7 +47,6 @@ import org.elasticsearch.tasks.Task;
 import org.elasticsearch.test.ClusterServiceUtils;
 import org.elasticsearch.test.transport.MockTransportService;
 import org.junit.Test;
-import org.mockito.Answers;
 
 import java.util.Collections;
 import java.util.concurrent.ExecutionException;
@@ -77,11 +74,10 @@ public class RepositoryServiceTest extends CrateDummyClusterServiceUnitTest {
         expectedException.expect(RepositoryException.class);
 
         // add repo to cluster service so that it exists..
-        RepositoriesMetaData repos = new RepositoriesMetaData(new RepositoryMetaData("repo1", "fs", Settings.EMPTY));
+        RepositoriesMetaData repos = new RepositoriesMetaData(Collections.singletonList(new RepositoryMetaData("repo1", "fs", Settings.EMPTY)));
         ClusterState state = ClusterState.builder(new ClusterName("dummy")).metaData(
             MetaData.builder().putCustom(RepositoriesMetaData.TYPE, repos)).build();
         ClusterServiceUtils.setState(clusterService, state);
-        final ActionFilters actionFilters = mock(ActionFilters.class, Answers.RETURNS_MOCKS.get());
         IndexNameExpressionResolver indexNameExpressionResolver = new IndexNameExpressionResolver(Settings.EMPTY);
 
 
@@ -93,12 +89,11 @@ public class RepositoryServiceTest extends CrateDummyClusterServiceUnitTest {
             clusterService,
             mock(RepositoriesService.class),
             THREAD_POOL,
-            actionFilters,
             indexNameExpressionResolver) {
             @Override
-            protected void doExecute(Task task, DeleteRepositoryRequest request, ActionListener<DeleteRepositoryResponse> listener) {
+            protected void doExecute(Task task, DeleteRepositoryRequest request, ActionListener<AcknowledgedResponse> listener) {
                 deleteRepoCalled.set(true);
-                listener.onResponse(mock(DeleteRepositoryResponse.class));
+                listener.onResponse(mock(AcknowledgedResponse.class));
             }
         };
 
@@ -109,10 +104,9 @@ public class RepositoryServiceTest extends CrateDummyClusterServiceUnitTest {
             clusterService,
             mock(RepositoriesService.class),
             THREAD_POOL,
-            actionFilters,
             indexNameExpressionResolver) {
             @Override
-            protected void doExecute(Task task, PutRepositoryRequest request, ActionListener<PutRepositoryResponse> listener) {
+            protected void doExecute(Task task, PutRepositoryRequest request, ActionListener<AcknowledgedResponse> listener) {
                 listener.onFailure(new RepositoryException(request.name(), "failure"));
             }
         };

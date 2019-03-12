@@ -52,6 +52,10 @@ public class IpColumnReferenceTest extends DocLevelExpressionsTest {
     private static final String IP_COLUMN = "i";
     private static final String IP_ARRAY_COLUMN = "ia";
 
+    public IpColumnReferenceTest() {
+        super("create table t (i ip, ia array(ip))");
+    }
+
     @Rule
     public ExpectedException expectedException = ExpectedException.none();
 
@@ -107,10 +111,10 @@ public class IpColumnReferenceTest extends DocLevelExpressionsTest {
             if (i == 20) {
                 assertThat(columnReference.value(), is(nullValue()));
             } else if (i < 10) {
-                assertThat(columnReference.value(), is(new BytesRef("192.168.0." + i)));
+                assertThat(columnReference.value(), is("192.168.0." + i));
             } else {
                 assertThat(columnReference.value(),
-                    is(new BytesRef("7bd0:8082:2df8:487e:e0df:e7b5:9362:" + Integer.toHexString(i))));
+                    is("7bd0:8082:2df8:487e:e0df:e7b5:9362:" + Integer.toHexString(i)));
             }
             i++;
         }

@@ -22,24 +22,25 @@
 package io.crate.analyze;
 
 import io.crate.sql.tree.CollectionColumnType;
+import io.crate.sql.tree.ColumnDefinition;
 import io.crate.sql.tree.ColumnType;
 import io.crate.sql.tree.DefaultTraversalVisitor;
-import io.crate.sql.tree.Expression;
 import io.crate.sql.tree.ObjectColumnType;
 import io.crate.types.ArrayType;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
+import io.crate.types.ObjectType;
 
 import java.util.Locale;
 
-public class DataTypeAnalyzer extends DefaultTraversalVisitor<DataType, Void> {
+public final class DataTypeAnalyzer extends DefaultTraversalVisitor<DataType, Void> {
 
     private DataTypeAnalyzer() {}
 
     private static final DataTypeAnalyzer INSTANCE = new DataTypeAnalyzer();
 
-    public static DataType convert(Expression expression) {
-        return INSTANCE.process(expression, null);
+    public static DataType convert(ColumnType columnType) {
+        return INSTANCE.process(columnType, null);
     }
 
     @Override
@@ -48,14 +49,17 @@ public class DataTypeAnalyzer extends DefaultTraversalVisitor<DataType, Void> {
         if (typeName == null) {
             return DataTypes.NOT_SUPPORTED;
         } else {
-            typeName = typeName.toLowerCase(Locale.ENGLISH);
-            return DataTypes.ofName(typeName);
+            return DataTypes.ofName(typeName.toLowerCase(Locale.ENGLISH));
         }
     }
 
     @Override
     public DataType visitObjectColumnType(ObjectColumnType node, Void context) {
-        return DataTypes.OBJECT;
+        ObjectType.Builder builder = ObjectType.builder();
+        for (ColumnDefinition columnDefinition : node.nestedColumns()) {
+            builder.setInnerType(columnDefinition.ident(), process(columnDefinition.type(), context));
+        }
+        return builder.build();
     }
 
     @Override
@@ -63,14 +67,7 @@ public class DataTypeAnalyzer extends DefaultTraversalVisitor<DataType, Void> {
         if (node.type() == ColumnType.Type.SET) {
             throw new UnsupportedOperationException("the SET dataType is currently not supported");
         }
-
-        if (node.innerType().type() != ColumnType.Type.PRIMITIVE) {
-            throw new UnsupportedOperationException("Nesting ARRAY or SET types is not supported");
-        }
-
         DataType innerType = process(node.innerType(), context);
         return new ArrayType(innerType);
     }
-
-
 }

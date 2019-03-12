@@ -22,10 +22,7 @@
 
 package io.crate.execution.engine;
 
-import com.google.common.base.Function;
-import com.google.common.collect.FluentIterable;
 import io.crate.concurrent.CompletableFutures;
-import io.crate.data.Bucket;
 import io.crate.data.CollectingRowConsumer;
 import io.crate.data.RowConsumer;
 import io.crate.execution.dsl.phases.ExecutionPhase;
@@ -33,6 +30,7 @@ import io.crate.execution.dsl.phases.ExecutionPhases;
 import io.crate.execution.dsl.phases.NodeOperation;
 import io.crate.execution.dsl.phases.NodeOperationGrouper;
 import io.crate.execution.dsl.phases.NodeOperationTree;
+import io.crate.execution.engine.distribution.StreamBucket;
 import io.crate.execution.jobs.DownstreamRXTask;
 import io.crate.execution.jobs.InstrumentedIndexSearcher;
 import io.crate.execution.jobs.JobSetup;
@@ -44,13 +42,13 @@ import io.crate.execution.jobs.TasksService;
 import io.crate.execution.jobs.kill.TransportKillJobsNodeAction;
 import io.crate.execution.jobs.transport.JobRequest;
 import io.crate.execution.jobs.transport.TransportJobAction;
+import io.crate.metadata.TransactionContext;
 import io.crate.profile.ProfilingContext;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.collect.Tuple;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.search.profile.query.QueryProfiler;
 
-import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -59,6 +57,7 @@ import java.util.ListIterator;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.util.function.UnaryOperator;
 import java.util.stream.Collectors;
 
@@ -109,6 +108,7 @@ public final class JobLauncher {
     private final TasksService tasksService;
     private final IndicesService indicesService;
     private final boolean enableProfiling;
+    private final Executor executor;
 
     private boolean hasDirectResponse;
 
@@ -120,7 +120,8 @@ public final class JobLauncher {
                 TransportJobAction transportJobAction,
                 TransportKillJobsNodeAction transportKillJobsNodeAction,
                 List<NodeOperationTree> nodeOperationTrees,
-                boolean enableProfiling) {
+                boolean enableProfiling,
+                Executor executor) {
         this.jobId = jobId;
         this.clusterService = clusterService;
         this.jobSetup = jobSetup;
@@ -130,6 +131,7 @@ public final class JobLauncher {
         this.transportKillJobsNodeAction = transportKillJobsNodeAction;
         this.nodeOperationTrees = nodeOperationTrees;
         this.enableProfiling = enableProfiling;
+        this.executor = executor;
 
         for (NodeOperationTree nodeOperationTree : nodeOperationTrees) {
             for (NodeOperation nodeOperation : nodeOperationTree.nodeOperations()) {
@@ -141,7 +143,7 @@ public final class JobLauncher {
         }
     }
 
-    public void execute(RowConsumer consumer) {
+    public void execute(RowConsumer consumer, TransactionContext txnCtx) {
         assert nodeOperationTrees.size() == 1 : "must only have 1 NodeOperationTree for non-bulk operations";
         NodeOperationTree nodeOperationTree = nodeOperationTrees.get(0);
         Map<String, Collection<NodeOperation>> operationByServer = NodeOperationGrouper.groupByServer(nodeOperationTree.nodeOperations());
@@ -149,21 +151,16 @@ public final class JobLauncher {
         List<ExecutionPhase> handlerPhases = Collections.singletonList(nodeOperationTree.leaf());
         List<RowConsumer> handlerConsumers = Collections.singletonList(consumer);
         try {
-            setupTasks(operationByServer, handlerPhases, handlerConsumers);
+            setupTasks(txnCtx, operationByServer, handlerPhases, handlerConsumers);
         } catch (Throwable throwable) {
             consumer.accept(null, throwable);
         }
     }
 
-    public List<CompletableFuture<Long>> executeBulk() {
-        FluentIterable<NodeOperation> nodeOperations = FluentIterable.from(nodeOperationTrees)
-            .transformAndConcat(new Function<NodeOperationTree, Iterable<? extends NodeOperation>>() {
-                @Nullable
-                @Override
-                public Iterable<? extends NodeOperation> apply(NodeOperationTree input) {
-                    return input.nodeOperations();
-                }
-            });
+    public List<CompletableFuture<Long>> executeBulk(TransactionContext txnCtx) {
+        Iterable<NodeOperation> nodeOperations = nodeOperationTrees.stream()
+            .flatMap(opTree -> opTree.nodeOperations().stream())
+            ::iterator;
         Map<String, Collection<NodeOperation>> operationByServer = NodeOperationGrouper.groupByServer(nodeOperations);
 
         List<ExecutionPhase> handlerPhases = new ArrayList<>(nodeOperationTrees.size());
@@ -177,14 +174,15 @@ public final class JobLauncher {
             handlerPhases.add(nodeOperationTree.leaf());
         }
         try {
-            setupTasks(operationByServer, handlerPhases, handlerConsumers);
+            setupTasks(txnCtx, operationByServer, handlerPhases, handlerConsumers);
         } catch (Throwable throwable) {
             return Collections.singletonList(CompletableFutures.failedFuture(throwable));
         }
         return results;
     }
 
-    private void setupTasks(Map<String, Collection<NodeOperation>> operationByServer,
+    private void setupTasks(TransactionContext txnCtx,
+                            Map<String, Collection<NodeOperation>> operationByServer,
                             List<ExecutionPhase> handlerPhases,
                             List<RowConsumer> handlerConsumers) throws Throwable {
         assert handlerPhases.size() == handlerConsumers.size() : "handlerPhases size must match handlerConsumers size";
@@ -202,7 +200,9 @@ public final class JobLauncher {
 
         RootTask.Builder builder = tasksService.newBuilder(jobId, localNodeId, operationByServer.keySet());
         SharedShardContexts sharedShardContexts = maybeInstrumentProfiler(builder);
-        List<CompletableFuture<Bucket>> directResponseFutures = jobSetup.prepareOnHandler(
+        List<CompletableFuture<StreamBucket>> directResponseFutures = jobSetup.prepareOnHandler(
+            txnCtx.userName(),
+            txnCtx.currentSchema(),
             localNodeOperations,
             builder,
             handlerPhaseAndReceiver,
@@ -243,7 +243,14 @@ public final class JobLauncher {
             }
         }
         sendJobRequests(
-            localNodeId, operationByServer, pageBucketReceivers, handlerPhaseAndReceiver, bucketIdx, initializationTracker);
+            txnCtx,
+            localNodeId,
+            operationByServer,
+            pageBucketReceivers,
+            handlerPhaseAndReceiver,
+            bucketIdx,
+            initializationTracker
+        );
     }
 
     private SharedShardContexts maybeInstrumentProfiler(RootTask.Builder builder) {
@@ -279,14 +286,20 @@ public final class JobLauncher {
         ListIterator<RowConsumer> consumerIt = handlerReceivers.listIterator();
 
         for (ExecutionPhase handlerPhase : handlerPhases) {
-            InterceptingRowConsumer interceptingBatchConsumer =
-                new InterceptingRowConsumer(jobId, consumerIt.next(), initializationTracker, transportKillJobsNodeAction);
+            InterceptingRowConsumer interceptingBatchConsumer = new InterceptingRowConsumer(
+                jobId,
+                consumerIt.next(),
+                initializationTracker,
+                executor,
+                transportKillJobsNodeAction
+            );
             handlerPhaseAndReceiver.add(new Tuple<>(handlerPhase, interceptingBatchConsumer));
         }
         return handlerPhaseAndReceiver;
     }
 
-    private void sendJobRequests(String localNodeId,
+    private void sendJobRequests(TransactionContext txnCtx,
+                                 String localNodeId,
                                  Map<String, Collection<NodeOperation>> operationByServer,
                                  List<PageBucketReceiver> pageBucketReceivers,
                                  List<Tuple<ExecutionPhase, RowConsumer>> handlerPhases,
@@ -294,7 +307,8 @@ public final class JobLauncher {
                                  InitializationTracker initializationTracker) {
         for (Map.Entry<String, Collection<NodeOperation>> entry : operationByServer.entrySet()) {
             String serverNodeId = entry.getKey();
-            JobRequest request = new JobRequest(jobId, localNodeId, entry.getValue(), enableProfiling);
+            JobRequest request = new JobRequest(
+                jobId, txnCtx.userName(), txnCtx.currentSchema(), localNodeId, entry.getValue(), enableProfiling);
             if (hasDirectResponse) {
                 transportJobAction.execute(serverNodeId, request,
                     BucketForwarder.asActionListener(pageBucketReceivers, bucketIdx, initializationTracker));

@@ -24,6 +24,7 @@ package io.crate.analyze;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
+import io.crate.action.sql.SessionContext;
 import io.crate.analyze.relations.AnalyzedRelation;
 import io.crate.analyze.relations.QueriedRelation;
 import io.crate.exceptions.ColumnUnknownException;
@@ -52,6 +53,7 @@ import io.crate.expression.symbol.SelectSymbol;
 import io.crate.expression.symbol.Symbol;
 import io.crate.expression.symbol.SymbolType;
 import io.crate.expression.udf.UserDefinedFunctionService;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.FunctionInfo;
 import io.crate.metadata.Functions;
 import io.crate.metadata.RelationName;
@@ -79,7 +81,6 @@ import org.junit.Test;
 
 import javax.annotation.Nullable;
 import java.io.IOException;
-
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -112,7 +113,7 @@ public class SelectStatementAnalyzerTest extends CrateDummyClusterServiceUnitTes
     private SQLExecutor sqlExecutor;
 
     @Before
-    public void prepare() {
+    public void prepare() throws IOException {
         DocTableInfo fooUserTableInfo = TestingTableInfo.builder(new RelationName("foo", "users"), SHARD_ROUTING)
             .add("id", DataTypes.LONG, null)
             .add("name", DataTypes.STRING, null)
@@ -129,11 +130,17 @@ public class SelectStatementAnalyzerTest extends CrateDummyClusterServiceUnitTes
     }
 
     private QueriedRelation analyze(String statement) {
-        return sqlExecutor.analyze(statement);
+        return sqlExecutor.normalize(
+            sqlExecutor.analyze(statement),
+            new CoordinatorTxnCtx(SessionContext.systemSessionContext())
+        );
     }
 
     private QueriedRelation analyze(String statement, Object[] arguments) {
-        return (QueriedRelation) sqlExecutor.analyze(statement, arguments);
+        return sqlExecutor.normalize(
+                sqlExecutor.analyze(statement, arguments),
+                new CoordinatorTxnCtx(SessionContext.systemSessionContext())
+            );
     }
 
     @Test
@@ -225,9 +232,9 @@ public class SelectStatementAnalyzerTest extends CrateDummyClusterServiceUnitTes
     @Test
     public void testAllColumnCluster() throws Exception {
         QueriedRelation relation = analyze("select * from sys.cluster");
-        assertThat(relation.fields().size(), is(4));
-        assertThat(outputNames(relation), containsInAnyOrder("id", "master_node", "name", "settings"));
-        assertThat(relation.querySpec().outputs().size(), is(4));
+        assertThat(relation.fields().size(), is(5));
+        assertThat(outputNames(relation), containsInAnyOrder("id", "license", "master_node", "name", "settings"));
+        assertThat(relation.querySpec().outputs().size(), is(5));
     }
 
     @Test
@@ -350,14 +357,6 @@ public class SelectStatementAnalyzerTest extends CrateDummyClusterServiceUnitTes
         expectedException.expectMessage("ORDER BY expression 'id' must appear in the select clause " +
                                         "when grouping or global aggregation is used");
         analyze("select count(id) from users order by id");
-    }
-
-    @Test
-    public void testSelectDistinctOrderByWithColumnMissingFromSelect() throws Exception {
-        expectedException.expect(UnsupportedOperationException.class);
-        expectedException.expectMessage("ORDER BY expression 'id' must appear in the select clause " +
-                                        "when SELECT DISTINCT is used");
-        analyze("select distinct name from users order by id");
     }
 
     @Test
@@ -544,7 +543,7 @@ public class SelectStatementAnalyzerTest extends CrateDummyClusterServiceUnitTes
     @Test
     public void testSelectDistinctWithFunction() {
         QueriedRelation relation = analyze("select distinct id + 1 from users");
-        assertThat(relation.querySpec().groupBy(), isSQL("add(doc.users.id, 1)"));
+        assertThat(relation.isDistinct(), is(true));
         assertThat(relation.querySpec().outputs(), isSQL("add(doc.users.id, 1)"));
     }
 
@@ -566,25 +565,17 @@ public class SelectStatementAnalyzerTest extends CrateDummyClusterServiceUnitTes
     }
 
     @Test
-    public void testSelectDistinctWrongOrderBy() {
-        expectedException.expect(UnsupportedOperationException.class);
-        expectedException.expectMessage("ORDER BY expression 'add(id, 10)' must appear in the " +
-                                        "select clause when SELECT DISTINCT is used");
-        analyze("select distinct id from users order by id + 10");
-    }
-
-    @Test
     public void testDistinctOnLiteral() {
         QueriedRelation relation = analyze("select distinct [1,2,3] from users");
+        assertThat(relation.isDistinct(), is(true));
         assertThat(relation.querySpec().outputs(), isSQL("[1, 2, 3]"));
-        assertThat(relation.querySpec().groupBy(), isSQL("[1, 2, 3]"));
     }
 
     @Test
     public void testDistinctOnNullLiteral() {
         QueriedRelation relation = analyze("select distinct null from users");
+        assertThat(relation.isDistinct(), is(true));
         assertThat(relation.querySpec().outputs(), isSQL("NULL"));
-        assertThat(relation.querySpec().groupBy(), isSQL("NULL"));
     }
 
     @Test
@@ -598,29 +589,6 @@ public class SelectStatementAnalyzerTest extends CrateDummyClusterServiceUnitTes
         QueriedRelation distinctRelation = analyze("select distinct name, count(id) from users group by name");
         QueriedRelation groupByRelation = analyze("select name, count(id) from users group by name");
         assertEquals(groupByRelation.querySpec().groupBy(), distinctRelation.querySpec().groupBy());
-    }
-
-    @Test
-    public void testSelectGlobalDistinctRewrite() {
-        QueriedRelation distinctRelation = analyze("select distinct name from users");
-        QueriedRelation groupByRelation = analyze("select name from users group by name");
-        assertEquals(groupByRelation.querySpec().groupBy(), distinctRelation.querySpec().groupBy());
-    }
-
-    @Test
-    public void testSelectGlobalDistinctRewriteAllColumns() {
-        QueriedRelation distinctRelation = analyze("select distinct * from transactions");
-        QueriedRelation groupByRelation =
-            analyze(
-                "select id, sender, recipient, amount, timestamp " +
-                "from transactions " +
-                "group by id, sender, recipient, amount, timestamp");
-        assertEquals(
-            groupByRelation.querySpec().groupBy().size(),
-            distinctRelation.querySpec().groupBy().size());
-        for (Symbol s : distinctRelation.querySpec().groupBy()) {
-            assertThat(distinctRelation.querySpec().groupBy().contains(s), is(true));
-        }
     }
 
     @Test
@@ -668,7 +636,7 @@ public class SelectStatementAnalyzerTest extends CrateDummyClusterServiceUnitTes
         assertEquals(argumentTypes, whereClause.info().ident().argumentTypes());
         assertThat(whereClause.arguments().get(1), IsInstanceOf.instanceOf(Literal.class));
         Literal stringLiteral = (Literal) whereClause.arguments().get(1);
-        assertThat(stringLiteral.value(), is(new BytesRef("1")));
+        assertThat(stringLiteral.value(), is("1"));
     }
 
     @Test
@@ -800,7 +768,7 @@ public class SelectStatementAnalyzerTest extends CrateDummyClusterServiceUnitTes
             "where users.name = 'Arthur'");
 
         assertThat(relation.joinPairs().get(0).condition(),
-            isSQL("(\"doc.users\".id = doc.users_multi_pk.id)"));
+            isSQL("(doc.users.id = doc.users_multi_pk.id)"));
 
         // make sure that where clause was pushed down and didn't disappear somehow
         assertThat(relation.querySpec().where().query(), isSQL("null"));
@@ -891,13 +859,12 @@ public class SelectStatementAnalyzerTest extends CrateDummyClusterServiceUnitTes
         analyze("select * from users where 'George' = ANY (name)");
     }
 
-    @Test // TODO: remove this artificial limitation in general
+    @Test
     public void testArrayCompareObjectArray() throws Exception {
-        expectedException.expect(IllegalArgumentException.class);
-        expectedException.expectMessage("ANY on object arrays is not supported");
-        analyze("select * from users where ? = ANY (friends)", new Object[]{
+        QueriedRelation relation = analyze("select * from users where ? = ANY (friends)", new Object[]{
             new MapBuilder<String, Object>().put("id", 1L).map()
         });
+        assertThat(relation.where().queryOrFallback(), is(isFunction("any_=")));
     }
 
     @Test
@@ -962,7 +929,7 @@ public class SelectStatementAnalyzerTest extends CrateDummyClusterServiceUnitTes
             isFunction(
                 "any_=",
                 isLiteral(
-                    new Object[] {new BytesRef("vogon lyric lovers")},
+                    new Object[] {"vogon lyric lovers"},
                     new ArrayType(DataTypes.STRING)),
                 isReference("friends['groups']", new ArrayType(new ArrayType(DataTypes.STRING)))
             )
@@ -1289,7 +1256,7 @@ public class SelectStatementAnalyzerTest extends CrateDummyClusterServiceUnitTes
     }
 
     private String getMatchType(Function matchFunction) {
-        return ((BytesRef) ((Literal) matchFunction.arguments().get(2)).value()).utf8ToString();
+        return (String) ((Literal) matchFunction.arguments().get(2)).value();
     }
 
     @Test
@@ -1906,13 +1873,6 @@ public class SelectStatementAnalyzerTest extends CrateDummyClusterServiceUnitTes
     }
 
     @Test
-    public void testSelectFromTableFunctionInSelectList() throws Exception {
-        expectedException.expect(UnsupportedFeatureException.class);
-        expectedException.expectMessage("Table functions are not supported in select list");
-        analyze("select unnest([1, 2])");
-    }
-
-    @Test
     public void testSelectFromNonTableFunction() throws Exception {
         expectedException.expect(UnsupportedOperationException.class);
         expectedException.expectMessage("Non table function 'abs' is not supported in from clause");
@@ -2006,5 +1966,47 @@ public class SelectStatementAnalyzerTest extends CrateDummyClusterServiceUnitTes
     public void testTableAliasIsNotAddressableByColumnNameWithSchema() {
         expectedException.expectMessage("Relation 'doc.a' unknown");
         analyze("select doc.a.x from t1 as a");
+    }
+
+    @Test
+    public void testUsingTableFunctionInGroupByIsProhibited() {
+        expectedException.expectMessage("Table functions are not allowed in GROUP BY");
+        analyze("select count(*) from t1 group by unnest([1])");
+    }
+
+    @Test
+    public void testUsingTableFunctionInHavingIsProhibited() {
+        expectedException.expectMessage("Table functions are not allowed in HAVING");
+        analyze("select count(*) from t1 having unnest([1]) > 1");
+    }
+
+    @Test
+    public void testUsingTableFunctionInWhereClauseIsNotAllowed() {
+        expectedException.expectMessage("Table functions are not allowed in WHERE");
+        analyze("select * from sys.nodes where unnest([1]) = 1");
+    }
+
+
+    public void testUsingWindowFunctionInGroupByIsProhibited() {
+        expectedException.expectMessage("Window functions are not allowed in GROUP BY");
+        analyze("select count(*) from t1 group by sum(1) OVER()");
+    }
+
+    @Test
+    public void testUsingWindowFunctionInHavingIsProhibited() {
+        expectedException.expectMessage("Window functions are not allowed in HAVING");
+        analyze("select count(*) from t1 having sum(1) OVER() > 1");
+    }
+
+    @Test
+    public void testUsingWindowFunctionInWhereClauseIsNotAllowed() {
+        expectedException.expectMessage("Window functions are not allowed in WHERE");
+        analyze("select count(*) from t1 where sum(1) OVER() = 1");
+    }
+
+    @Test
+    public void testCastToNestedArrayCanBeUsed() {
+        QueriedRelation relation = analyze("select [[1, 2, 3]]::array(array(int))");
+        assertThat(relation.outputs().get(0).valueType(), is(new ArrayType(new ArrayType(DataTypes.INTEGER))));
     }
 }

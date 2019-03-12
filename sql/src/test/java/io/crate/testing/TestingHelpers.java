@@ -24,10 +24,9 @@ package io.crate.testing;
 import com.google.common.base.Joiner;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Ordering;
-import io.crate.Version;
 import io.crate.analyze.where.DocKeys;
 import io.crate.collections.Lists2;
-import io.crate.core.collections.Sorted;
+import io.crate.common.collections.Sorted;
 import io.crate.data.Bucket;
 import io.crate.data.Buckets;
 import io.crate.data.Row;
@@ -47,8 +46,10 @@ import io.crate.metadata.Schemas;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
 import org.apache.lucene.util.BytesRef;
+import org.elasticsearch.Version;
 import org.elasticsearch.common.inject.ModulesBuilder;
 import org.elasticsearch.common.lucene.BytesRefs;
+import org.elasticsearch.common.xcontent.DeprecationHandler;
 import org.elasticsearch.common.xcontent.NamedXContentRegistry;
 import org.elasticsearch.common.xcontent.json.JsonXContent;
 import org.hamcrest.BaseMatcher;
@@ -63,15 +64,14 @@ import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.lang.reflect.Array;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Objects;
-import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
 
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -144,7 +144,17 @@ public class TestingHelpers {
             out.print("]");
         } else if (o instanceof Map) {
             out.print("{");
-            out.print(MAP_JOINER.join(Sorted.sortRecursive((Map<String, Object>) o, true)));
+            //noinspection unchecked
+            Map<String, Object> map = Sorted.sortRecursive((Map<String, Object>) o, true);
+            Iterator<String> it = map.keySet().iterator();
+            while (it.hasNext()) {
+                String key = it.next();
+                out.print(key + "=");
+                printObject(out, true, map.get(key));
+                if (it.hasNext()) {
+                    out.print(", ");
+                }
+            }
             out.print("}");
         } else {
             out.print(o.toString());
@@ -183,8 +193,7 @@ public class TestingHelpers {
     }
 
     public static String readFile(String path) throws IOException {
-        byte[] encoded = Files.readAllBytes(Paths.get(path));
-        return new BytesRef(encoded).utf8ToString();
+        return String.join("\n", Files.readAllLines(Paths.get(path)));
     }
 
 
@@ -393,29 +402,11 @@ public class TestingHelpers {
 
     public static Map<String, Object> jsonMap(String json) {
         try {
-            return JsonXContent.jsonXContent.createParser(NamedXContentRegistry.EMPTY, json).map();
+            return JsonXContent.jsonXContent.createParser(
+                NamedXContentRegistry.EMPTY, DeprecationHandler.THROW_UNSUPPORTED_OPERATION, json).map();
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
-    }
-
-    /**
-     * Convert {@param s} into UTF8 encoded BytesRef with random offset and extra length
-     * <p>
-     * This should be preferred over `new BytesRef` in tests to make sure that implementations using BytesRef
-     * handle offset and length correctly (use {@link BytesRef#length} instead of {@link BytesRef#bytes#length}
-     */
-    public static BytesRef bytesRef(String s, Random random) {
-        byte[] strBytes = s.getBytes(StandardCharsets.UTF_8);
-        int extraLength = random.nextInt(100);
-        int offset = 0;
-        if (extraLength > 0) {
-            offset = random.nextInt(extraLength);
-        }
-        byte[] buffer = new byte[strBytes.length + extraLength];
-        random.nextBytes(buffer);
-        System.arraycopy(strBytes, 0, buffer, offset, strBytes.length);
-        return new BytesRef(buffer, offset, strBytes.length);
     }
 
     /**
@@ -432,9 +423,11 @@ public class TestingHelpers {
     public static void assertCrateVersion(Object object, Version versionCreated, Version versionUpgraded) {
         assertThat((Map<String, String>) object,
             allOf(
-                hasEntry(is(Version.Property.CREATED.toString()),
-                    versionCreated == null ? nullValue() : is(Version.toStringMap(versionCreated))),
-                hasEntry(is(Version.Property.UPGRADED.toString()),
-                    versionUpgraded == null ? nullValue() : is(Version.toStringMap(versionUpgraded)))));
+                hasEntry(
+                    is(Version.Property.CREATED.toString()),
+                    versionCreated == null ? nullValue() : is(versionCreated.externalNumber())),
+                hasEntry(
+                    is(Version.Property.UPGRADED.toString()),
+                    versionUpgraded == null ? nullValue() : is(versionUpgraded.externalNumber()))));
     }
 }

@@ -25,6 +25,7 @@ import io.crate.expression.symbol.Field;
 import io.crate.expression.symbol.Function;
 import io.crate.expression.symbol.Symbol;
 import io.crate.expression.symbol.SymbolVisitor;
+import io.crate.expression.symbol.WindowFunction;
 import io.crate.expression.symbol.format.SymbolFormatter;
 import io.crate.metadata.FunctionInfo;
 
@@ -69,23 +70,31 @@ public class HavingSymbolValidator {
         }
 
         @Override
-        public Void visitFunction(Function symbol, HavingContext context) {
-            if (symbol.info().type() == FunctionInfo.Type.AGGREGATE) {
+        public Void visitFunction(Function function, HavingContext context) {
+            FunctionInfo.Type type = function.info().type();
+            if (type == FunctionInfo.Type.TABLE) {
+                throw new IllegalArgumentException("Table functions are not allowed in HAVING");
+            } else if (type == FunctionInfo.Type.AGGREGATE) {
                 context.insideAggregation = true;
             } else {
                 // allow function if it is part of the grouping symbols
-                if (context.groupByContains(symbol)) {
+                if (context.groupByContains(function)) {
                     return null;
                 }
             }
 
-            for (Symbol argument : symbol.arguments()) {
+            for (Symbol argument : function.arguments()) {
                 process(argument, context);
             }
-            if (symbol.info().type() == FunctionInfo.Type.AGGREGATE) {
+            if (type == FunctionInfo.Type.AGGREGATE) {
                 context.insideAggregation = false;
             }
             return null;
+        }
+
+        @Override
+        public Void visitWindowFunction(WindowFunction symbol, HavingContext context) {
+            throw new IllegalArgumentException("Window functions are not allowed in HAVING");
         }
 
         @Override

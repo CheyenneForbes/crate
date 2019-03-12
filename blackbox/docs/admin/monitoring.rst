@@ -112,30 +112,52 @@ host.
 JMX Beans
 =========
 
+.. _query_stats_mbean:
+
 QueryStats MBean
 ----------------
 
-The ``QueryStats`` JMX MBean exposes query frequency and average duration in
-milliseconds for ``SELECT``, ``UPDATE``, ``DELETE``, and ``INSERT`` queries.
+The ``QueryStats`` MBean exposes the sum of durations, in milliseconds, total
+and failed count of all statements executed since the node was started, grouped
+by type, for ``SELECT``, ``UPDATE``, ``DELETE``, ``INSERT``, ``MANAGEMENT``,
+``DDL``, ``COPY`` and ``UNDEFINED`` queries.
 
 Metrics can be accessed using the JMX MBean object name
 ``io.crate.monitoring:type=QueryStats`` and the following attributes:
 
-Frequency:
+Statements total count since the node was started:
 
- - ``SelectQueryFrequency``
- - ``InsertQueryFrequency``
- - ``UpdateQueryFrequency``
- - ``DeleteQueryFrequency``
- - ``OverallQueryFrequency``
+ - ``SelectQueryTotalCount``
+ - ``InsertQueryTotalCount``
+ - ``UpdateQueryTotalCount``
+ - ``DeleteQueryTotalCount``
+ - ``ManagementQueryTotalCount``
+ - ``DDLQueryTotalCount``
+ - ``CopyQueryTotalCount``
+ - ``UndefinedQueryTotalCount``
 
-Average duration:
+Statements failed count since the node was started:
 
- - ``SelectQueryAverageDuration``
- - ``InsertQueryAverageDuration``
- - ``UpdateQueryAverageDuration``
- - ``DeleteQueryAverageDuration``
- - ``OverallQueryAverageDuration``
+ - ``SelectQueryFailedCount``
+ - ``InsertQueryFailedCount``
+ - ``UpdateQueryFailedCount``
+ - ``DeleteQueryFailedCount``
+ - ``ManagementQueryFailedCount``
+ - ``DDLQueryFailedCount``
+ - ``CopyQueryFailedCount``
+ - ``UndefinedQueryFailedCount``
+
+The sum of the durations, in milliseconds, since the node was started, of all
+statement executions grouped by type:
+
+ - ``SelectQuerySumOfDurations``
+ - ``InsertQuerySumOfDurations``
+ - ``UpdateQuerySumOfDurations``
+ - ``DeleteQuerySumOfDurations``
+ - ``ManagementQuerySumOfDurations``
+ - ``DDLQuerySumOfDurations``
+ - ``CopyQuerySumOfDurations``
+ - ``UndefinedQuerySumOfDurations``
 
 NodeStatus MBean
 ----------------
@@ -214,15 +236,12 @@ name and has following attributes:
 | ``Search``            | Thread pool statistics of the ``search`` thread pool    |
 |                       | used by read statements on user generated tables.       |
 +-----------------------+---------------------------------------------------------+
-| ``Bulk``              | Thread pool statistics of the ``bulk`` thread pool      |
+| ``Write``             | Thread pool statistics of the ``write`` thread pool     |
 |                       | used for writing and deleting data.                     |
 +-----------------------+---------------------------------------------------------+
 | ``Management``        | Thread pool statistics of the ``management`` thread     |
 |                       | pool used by management tasks like stats collecting,    |
 |                       | repository information, shard allocations, etc.         |
-+-----------------------+---------------------------------------------------------+
-| ``Index``             | Thread pool statistics of the ``index`` thread pool     |
-|                       | used for writing blobs.                                 |
 +-----------------------+---------------------------------------------------------+
 | ``Flush``             | Thread pool statistics of the ``flush`` thread pool     |
 |                       | used for fsyncing to disk and merging segments in the   |

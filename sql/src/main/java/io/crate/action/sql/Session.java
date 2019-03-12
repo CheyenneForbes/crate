@@ -29,6 +29,7 @@ import io.crate.analyze.AnalyzedStatement;
 import io.crate.analyze.Analyzer;
 import io.crate.analyze.DeallocateAnalyzedStatement;
 import io.crate.analyze.ParamTypeHints;
+import io.crate.analyze.Relations;
 import io.crate.analyze.relations.AnalyzedRelation;
 import io.crate.data.Row;
 import io.crate.data.RowConsumer;
@@ -37,9 +38,10 @@ import io.crate.execution.engine.collect.stats.JobsLogs;
 import io.crate.expression.symbol.DefaultTraversalSymbolVisitor;
 import io.crate.expression.symbol.Field;
 import io.crate.expression.symbol.ParameterSymbol;
+import io.crate.expression.symbol.SelectSymbol;
 import io.crate.expression.symbol.Symbol;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.RoutingProvider;
-import io.crate.metadata.TransactionContext;
 import io.crate.planner.DependencyCarrier;
 import io.crate.planner.Plan;
 import io.crate.planner.Planner;
@@ -54,10 +56,10 @@ import io.crate.protocols.postgres.SimplePortal;
 import io.crate.sql.parser.SqlParser;
 import io.crate.sql.tree.Statement;
 import io.crate.types.DataType;
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.common.Randomness;
-import org.elasticsearch.common.logging.Loggers;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -105,7 +107,7 @@ import java.util.function.Function;
 public class Session implements AutoCloseable {
 
     // Logger name should be SQLOperations here
-    private static final Logger LOGGER = Loggers.getLogger(SQLOperations.class);
+    private static final Logger LOGGER = LogManager.getLogger(SQLOperations.class);
 
     // Parser can't handle empty statement but postgres requires support for it.
     // This rewrite is done so that bind/describe calls on an empty statement will work as well
@@ -160,7 +162,7 @@ public class Session implements AutoCloseable {
      *              Use {@link #quickExec(String, ResultReceiver, Row)} to use the regular parser
      */
     public void quickExec(String statement, Function<String, Statement> parse, ResultReceiver resultReceiver, Row params) {
-        TransactionContext txnCtx = new TransactionContext(sessionContext);
+        CoordinatorTxnCtx txnCtx = new CoordinatorTxnCtx(sessionContext);
         Statement parsedStmt = parse.apply(statement);
         AnalyzedStatement analyzedStatement = analyzer.unboundAnalyze(parsedStmt, sessionContext, ParamTypeHints.EMPTY);
         assert analyzedStatement.isUnboundPlanningSupported()
@@ -184,10 +186,10 @@ public class Session implements AutoCloseable {
             jobsLogs.logPreExecutionFailure(jobId, statement, SQLExceptions.messageOf(t), sessionContext.user());
             throw t;
         }
+
         StatementClassifier.Classification classification = StatementClassifier.classify(plan);
         jobsLogs.logExecutionStart(jobId, statement, sessionContext.user(), classification);
-        resultReceiver.completionFuture().whenComplete(new JobsLogsUpdateListener(jobId, jobsLogs));
-
+        JobsLogsUpdateListener jobsLogsUpdateListener = new JobsLogsUpdateListener(jobId, jobsLogs);
         if (!analyzedStatement.isWriteOperation()) {
             resultReceiver = new RetryOnFailureResultReceiver(
                 executor.clusterService(),
@@ -202,13 +204,13 @@ public class Session implements AutoCloseable {
                     newJobId,
                     analyzedStatement,
                     routingProvider,
-                    new RowConsumerToResultReceiver(retryResultReceiver, 0),
+                    new RowConsumerToResultReceiver(retryResultReceiver, 0, jobsLogsUpdateListener),
                     params,
                     txnCtx
                 )
             );
         }
-        RowConsumerToResultReceiver consumer = new RowConsumerToResultReceiver(resultReceiver, 0);
+        RowConsumerToResultReceiver consumer = new RowConsumerToResultReceiver(resultReceiver, 0, jobsLogsUpdateListener);
         plan.execute(executor, plannerContext, consumer, params, SubQueryResults.EMPTY);
     }
 
@@ -217,7 +219,7 @@ public class Session implements AutoCloseable {
                             RoutingProvider routingProvider,
                             RowConsumer consumer,
                             Row params,
-                            TransactionContext txnCtx) {
+                            CoordinatorTxnCtx txnCtx) {
         PlannerContext plannerContext = new PlannerContext(
             planner.currentClusterState(),
             routingProvider,
@@ -351,7 +353,8 @@ public class Session implements AutoCloseable {
                     // statement without result set -> return null for NoData msg
                     return new DescribeResult(null);
                 }
-                DataType[] parameterSymbols = parameterTypeExtractor.getParameterTypes(analyzedStatement::visitSymbols);
+                DataType[] parameterSymbols =
+                    parameterTypeExtractor.getParameterTypes(x -> Relations.traverseDeepSymbols(analyzedStatement, x));
                 if (parameterSymbols.length > 0) {
                     preparedStmt.setDescribedParameters(parameterSymbols);
                 }
@@ -501,6 +504,12 @@ public class Session implements AutoCloseable {
         @Override
         public void accept(Symbol symbol) {
             process(symbol, null);
+        }
+
+        @Override
+        public Void visitSelectSymbol(SelectSymbol selectSymbol, Void context) {
+            Relations.traverseDeepSymbols(selectSymbol.relation(), this);
+            return null;
         }
 
         @Override

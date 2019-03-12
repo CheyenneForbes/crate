@@ -21,16 +21,19 @@
 
 package io.crate.analyze;
 
-import io.crate.core.collections.Maps;
+import io.crate.common.collections.Maps;
 import io.crate.exceptions.OperationOnInaccessibleRelationException;
 import io.crate.metadata.ColumnIdent;
 import io.crate.sql.parser.ParsingException;
 import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
 import io.crate.testing.SQLExecutor;
+import io.crate.types.DataTypes;
+import io.crate.types.ObjectType;
 import org.hamcrest.Matchers;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -46,7 +49,7 @@ public class AlterTableAddColumnAnalyzerTest extends CrateDummyClusterServiceUni
     private SQLExecutor e;
 
     @Before
-    public void prepare() {
+    public void prepare() throws IOException {
         e = SQLExecutor.builder(clusterService).enableDefaultTables().build();
     }
 
@@ -117,11 +120,11 @@ public class AlterTableAddColumnAnalyzerTest extends CrateDummyClusterServiceUni
         }
         assertNotNull(idColumn);
         assertThat(idColumn.ident(), equalTo(new ColumnIdent("id")));
-        assertThat(idColumn.dataType(), equalTo("long"));
+        assertThat(idColumn.dataType(), equalTo(DataTypes.LONG));
 
         assertNotNull(additionalPkColumn);
         assertThat(additionalPkColumn.ident(), equalTo(new ColumnIdent("additional_pk")));
-        assertThat(additionalPkColumn.dataType(), equalTo("string"));
+        assertThat(additionalPkColumn.dataType(), equalTo(DataTypes.STRING));
     }
 
     @Test
@@ -146,7 +149,7 @@ public class AlterTableAddColumnAnalyzerTest extends CrateDummyClusterServiceUni
         AddColumnAnalyzedStatement analysis = e.analyze("alter table users add newtags array(string)");
         AnalyzedColumnDefinition columnDefinition = analysis.analyzedTableElements().columns().get(0);
         assertThat(columnDefinition.name(), Matchers.equalTo("newtags"));
-        assertThat(columnDefinition.dataType(), Matchers.equalTo("string"));
+        assertThat(columnDefinition.dataType(), Matchers.equalTo(DataTypes.STRING));
         assertTrue(columnDefinition.isArrayOrInArray());
 
         Map<String, Object> mappingProperties = (Map) analysis.analyzedTableElements().toMapping().get("properties");
@@ -232,7 +235,7 @@ public class AlterTableAddColumnAnalyzerTest extends CrateDummyClusterServiceUni
         AnalyzedColumnDefinition address = columns.get(0);
         AnalyzedColumnDefinition street = address.children().get(0);
         assertThat(street.ident(), is(ColumnIdent.fromPath("address.street")));
-        assertThat(street.dataType(), is("string"));
+        assertThat(street.dataType(), is(DataTypes.STRING));
         assertThat(street.isParentColumn(), is(false));
     }
 
@@ -245,24 +248,24 @@ public class AlterTableAddColumnAnalyzerTest extends CrateDummyClusterServiceUni
 
         AnalyzedColumnDefinition details = columns.get(0);
         assertThat(details.ident(), is(ColumnIdent.fromPath("details")));
-        assertThat(details.dataType(), is("object"));
+        assertThat(details.dataType().id(), is(ObjectType.ID));
         assertThat(details.isParentColumn(), is(true));
         assertThat(details.children().size(), is(1));
 
         AnalyzedColumnDefinition foo = details.children().get(0);
         assertThat(foo.ident(), is(ColumnIdent.fromPath("details.foo")));
-        assertThat(foo.dataType(), is("object"));
+        assertThat(foo.dataType().id(), is(ObjectType.ID));
         assertThat(foo.isParentColumn(), is(false));
 
         assertThat(columns.get(0).children().get(0).children().size(), is(2));
 
         AnalyzedColumnDefinition score = columns.get(0).children().get(0).children().get(0);
         assertThat(score.ident(), is(ColumnIdent.fromPath("details.foo.score")));
-        assertThat(score.dataType(), is("float"));
+        assertThat(score.dataType(), is(DataTypes.FLOAT));
 
         AnalyzedColumnDefinition name = columns.get(0).children().get(0).children().get(1);
         assertThat(name.ident(), is(ColumnIdent.fromPath("details.foo.name")));
-        assertThat(name.dataType(), is("string"));
+        assertThat(name.dataType(), is(DataTypes.STRING));
 
         Map<String, Object> mapping = analysis.analyzedTableElements().toMapping();
         assertThat(mapToSortedString(mapping),
@@ -277,8 +280,8 @@ public class AlterTableAddColumnAnalyzerTest extends CrateDummyClusterServiceUni
             "alter table users add column new_obj_col object as (a array(long))");
         List<AnalyzedColumnDefinition> columns = analysis.analyzedTableElements().columns();
         assertThat(columns.size(), is(2)); // second one is primary key
-        assertThat(columns.get(0).dataType(), is("object"));
-        assertThat(columns.get(0).children().get(0).dataType(), is("long"));
+        assertThat(columns.get(0).dataType().id(), is(ObjectType.ID));
+        assertThat(columns.get(0).children().get(0).dataType(), is(DataTypes.LONG));
         assertTrue(columns.get(0).children().get(0).isArrayOrInArray());
     }
 
@@ -288,8 +291,8 @@ public class AlterTableAddColumnAnalyzerTest extends CrateDummyClusterServiceUni
             "alter table users add column new_obj_col object as (o object as (b array(long)))");
         List<AnalyzedColumnDefinition> columns = analysis.analyzedTableElements().columns();
         assertThat(columns.size(), is(2)); // second one is primary key
-        assertThat(columns.get(0).children().get(0).dataType(), is("object"));
-        assertThat(columns.get(0).children().get(0).children().get(0).dataType(), is("long"));
+        assertThat(columns.get(0).children().get(0).dataType().id(), is(ObjectType.ID));
+        assertThat(columns.get(0).children().get(0).children().get(0).dataType(), is(DataTypes.LONG));
         assertTrue(columns.get(0).children().get(0).children().get(0).isArrayOrInArray());
     }
 
@@ -300,29 +303,29 @@ public class AlterTableAddColumnAnalyzerTest extends CrateDummyClusterServiceUni
         List<AnalyzedColumnDefinition> columns = analysis.analyzedTableElements().columns();
         assertThat(columns.size(), is(1));
         assertThat(columns.get(0).ident(), is(ColumnIdent.fromPath("details")));
-        assertThat(columns.get(0).dataType(), is("object"));
+        assertThat(columns.get(0).dataType().id(), is(ObjectType.ID));
         assertThat(columns.get(0).isParentColumn(), is(true));
         assertThat(columns.get(0).children().size(), is(1));
 
         AnalyzedColumnDefinition stuff = columns.get(0).children().get(0);
         assertThat(stuff.ident(), is(ColumnIdent.fromPath("details.stuff")));
-        assertThat(stuff.dataType(), is("object"));
+        assertThat(stuff.dataType().id(), is(ObjectType.ID));
         assertThat(stuff.isParentColumn(), is(true));
         assertThat(stuff.children().size(), is(1));
 
         AnalyzedColumnDefinition foo = stuff.children().get(0);
         assertThat(foo.ident(), is(ColumnIdent.fromPath("details.stuff.foo")));
-        assertThat(foo.dataType(), is("object"));
+        assertThat(foo.dataType().id(), is(ObjectType.ID));
         assertThat(foo.isParentColumn(), is(false));
         assertThat(foo.children().size(), is(2));
 
         AnalyzedColumnDefinition score = foo.children().get(0);
         assertThat(score.ident(), is(ColumnIdent.fromPath("details.stuff.foo.score")));
-        assertThat(score.dataType(), is("float"));
+        assertThat(score.dataType(), is(DataTypes.FLOAT));
 
         AnalyzedColumnDefinition price = foo.children().get(1);
         assertThat(price.ident(), is(ColumnIdent.fromPath("details.stuff.foo.price")));
-        assertThat(price.dataType(), is("string"));
+        assertThat(price.dataType(), is(DataTypes.STRING));
 
         Map<String, Object> mapping = analysis.analyzedTableElements().toMapping();
         assertThat(mapToSortedString(mapping),
@@ -347,7 +350,7 @@ public class AlterTableAddColumnAnalyzerTest extends CrateDummyClusterServiceUni
             }
         }
         assertNotNull(nameGeneratedColumn);
-        assertThat(nameGeneratedColumn.dataType(), equalTo("string"));
+        assertThat(nameGeneratedColumn.dataType(), equalTo(DataTypes.STRING));
         assertThat(nameGeneratedColumn.formattedGeneratedExpression(), is("concat(name, 'foo')"));
     }
 

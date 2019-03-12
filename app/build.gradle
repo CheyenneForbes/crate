@@ -1,6 +1,5 @@
-import org.apache.tools.ant.filters.ReplaceTokens
-
 import java.nio.file.Paths
+import org.apache.tools.ant.filters.ReplaceTokens;
 
 buildscript {
     repositories {
@@ -23,7 +22,7 @@ configurations {
 }
 
 evaluationDependsOn(':es')
-evaluationDependsOn(':core')
+evaluationDependsOn(':common')
 evaluationDependsOn(':sql')
 evaluationDependsOn(':sql-parser')
 evaluationDependsOn(':dex')
@@ -32,6 +31,7 @@ evaluationDependsOn(':blob')
 evaluationDependsOn(':http')
 evaluationDependsOn(':udc')
 evaluationDependsOn(':dns-discovery')
+evaluationDependsOn(':licensing')
 
 dependencies {
     compile project(':sql')
@@ -52,13 +52,22 @@ dependencies {
     // include the enterprise module in classpath to be able to use it with Crate launched from within intellij
     runtime project(':enterprise:users')
     runtime project(':enterprise:ssl-impl')
-    runtime project(':enterprise:mqtt')
-    runtime project(':enterprise:hll')
+    runtime project(':enterprise:functions')
 
     testCompile project(':integration-testing')
+    testCompile project(':http')
+    testCompile project(path: ':sql', configuration: 'testOutput')
+    testCompile("io.crate:crate-jdbc:${versions.crate_jdbc}") {
+        exclude group: 'net.java.dev.jna', module: 'jna'
+        exclude group: 'commons-logging', module: 'commons-logging'
+        exclude group: 'org.slf4j', module: 'jcl-over-slf4j'
+    }
 
-    compileNotTransitive project(':core')
+    compileNotTransitive project(':common')
     compileNotTransitive project(':es:es-core')
+    compileNotTransitive project(':es:es-server')
+    compileNotTransitive project(':es:es-plugin-classloader')
+    compileNotTransitive project(':es:es-x-content')
     compileNotTransitive project(':sql')
     compileNotTransitive project(':sql-parser')
     compileNotTransitive project(':dex')
@@ -66,6 +75,7 @@ dependencies {
     compileNotTransitive project(':blob')
     compileNotTransitive project(':http')
     compileNotTransitive project(':udc')
+    compileNotTransitive project(':licensing')
     compileNotTransitive project(':dns-discovery')
     compileNotTransitive project(':es:es-discovery-ec2')
     compileNotTransitive project(':es:es-repository-url')
@@ -76,17 +86,17 @@ dependencies {
 
 task release(dependsOn: 'distTar') {
     doLast {
-        logger.info("released version: " + project(':core').getVersion.version)
+        logger.info("released version: " + project(':es:es-server').getVersion.version)
     }
 }
 
 task nightly(dependsOn: 'distTar') {
     doLast {
-        logger.info("nightly version: " + project(':core').getVersion.version)
+        logger.info("nightly version: " + project(':es:es-server').getVersion.version)
     }
 }
 
-task writeBuildInfo(dependsOn: [':core:getVersion']) {
+task writeBuildInfo(dependsOn: [':es:es-server:getVersion']) {
     doLast {
         def hash = "git rev-parse HEAD".execute().in.text.trim()
 
@@ -102,7 +112,7 @@ task writeBuildInfo(dependsOn: [':core:getVersion']) {
         copy {
             into('src/main/dist/bin')
             from('src/bin') {
-                filter(ReplaceTokens, tokens: [version: project(':core').getVersion.version])
+                filter(ReplaceTokens, tokens: [version: project(':es:es-server').getVersion.version])
             }
         }
 
@@ -113,7 +123,6 @@ task writeBuildInfo(dependsOn: [':core:getVersion']) {
     }
 }
 
-
 processResources.dependsOn('writeBuildInfo')
 
 task dist {
@@ -123,13 +132,14 @@ task dist {
 task myJavadocs(type: Javadoc, dependsOn: processResources) {
     classpath = configurations.compile
     source = sourceSets.main.allJava +
-            project(':core').sourceSets.main.allJava +
-            project(':sql').sourceSets.main.allJava +
-            project(':sql-parser').sourceSets.main.allJava +
-            project(':dex').sourceSets.main.allJava +
-            project(':shared').sourceSets.main.allJava +
-            project(':blob').sourceSets.main.allJava +
-            project(':udc').sourceSets.main.allJava
+        project(':common').sourceSets.main.allJava +
+        project(':sql').sourceSets.main.allJava +
+        project(':sql-parser').sourceSets.main.allJava +
+        project(':dex').sourceSets.main.allJava +
+        project(':shared').sourceSets.main.allJava +
+        project(':blob').sourceSets.main.allJava +
+        project(':udc').sourceSets.main.allJava +
+        project(':licensing').sourceSets.main.allJava
 }
 
 task javadocJar(type: Jar, dependsOn: [myJavadocs]) {
@@ -140,9 +150,9 @@ task javadocJar(type: Jar, dependsOn: [myJavadocs]) {
     }
 }
 
-task buildJavadocJar(dependsOn: [':core:getVersion', myJavadocs]) {
+task buildJavadocJar(dependsOn: [':es:es-server:getVersion', myJavadocs]) {
     doLast {
-        ext.version = project(':core').getVersion.version
+        ext.version = project(':es:es-server').getVersion.version
         project.version = ext.version
         tasks.javadocJar.execute()
     }
@@ -151,21 +161,22 @@ task buildJavadocJar(dependsOn: [':core:getVersion', myJavadocs]) {
 task sourceJar(type: Jar) {
     classifier = 'sources'
     from(sourceSets.main.allSource +
-            project(':core').sourceSets.main.allJava +
-            project(':sql').sourceSets.main.allJava +
-            project(':sql-parser').sourceSets.main.allJava +
-            project(':dex').sourceSets.main.allJava +
-            project(':shared').sourceSets.main.allJava +
-            project(':blob').sourceSets.main.allJava +
-            project(':udc').sourceSets.main.allJava)
+        project(':common').sourceSets.main.allJava +
+        project(':sql').sourceSets.main.allJava +
+        project(':sql-parser').sourceSets.main.allJava +
+        project(':dex').sourceSets.main.allJava +
+        project(':shared').sourceSets.main.allJava +
+        project(':blob').sourceSets.main.allJava +
+        project(':udc').sourceSets.main.allJava +
+        project(':licensing').sourceSets.main.allJava)
     manifest {
         attributes("Implementation-Title": "Crate.IO")
     }
 }
 
-task buildSourceJar(dependsOn: [':core:getVersion']) {
+task buildSourceJar(dependsOn: [':es:es-server:getVersion']) {
     doLast {
-        ext.version = project(':core').getVersion.version
+        ext.version = project(':es:es-server').getVersion.version
         project.version = ext.version
         tasks.sourceJar.execute()
     }
@@ -181,7 +192,7 @@ task signJars(type: Sign, dependsOn: [jar, buildSourceJar, buildJavadocJar]) {
     sign configurations.archives
 }
 
-install.dependsOn([jar, ':core:getVersion', buildSourceJar, buildJavadocJar])
+install.dependsOn([jar, ':es:es-server:getVersion', buildSourceJar, buildJavadocJar])
 install {
     repositories {
         mavenInstaller {
@@ -223,7 +234,7 @@ install {
 project.ext.bintrayUsername = project.hasProperty('bintrayUsername') ? bintrayUsername : ""
 project.ext.bintrayPassword = project.hasProperty('bintrayPassword') ? bintrayPassword : ""
 
-uploadArchives.dependsOn([jar, ':core:getVersion', buildSourceJar, buildJavadocJar, signJars])
+uploadArchives.dependsOn([jar, ':es:es-server:getVersion', buildSourceJar, buildJavadocJar, signJars])
 uploadArchives {
     repositories {
         mavenDeployer {
@@ -280,45 +291,21 @@ uploadArchives {
     }
 }
 
-distTar {
-    dependsOn ':core:getVersion'
-    compression = Compression.GZIP
-    baseName = 'crate'
-    extension = 'tar.gz'
-    doFirst {
-        version = project(':core').getVersion.version
-        chooseReleaseNotes.execute()
-    }
-}
-
-distZip {
-    dependsOn ':core:getVersion'
-    baseName = 'crate'
-    doFirst {
-        version = project(':core').getVersion.version
-        chooseReleaseNotes.execute()
-    }
-}
-
-installDist {
-    doFirst {
-        chooseReleaseNotes.execute()
-    }
-}
-
 ext {
     downloadDir = new File(buildDir, 'downloads')
-    adminui_version = '1.10.3'
+    adminui_version = '1.11.4'
 }
 
 def rootDir = project.parent.projectDir
-def libs = project.configurations.runtime.filter { !it.toPath().startsWith(Paths.get(rootDir.toString(), "enterprise")) }
+def libs = project.configurations.runtime.filter {
+    !it.toPath().startsWith(Paths.get(rootDir.toString(), "enterprise"))
+}
 
 // For releases choose the file under the release_notes structure
 // and for all other builds choose CHANGES.txt which contains the unreleased changes
-task chooseReleaseNotes(dependsOn: [':core:getVersion']) {
+task chooseReleaseNotes(dependsOn: [':es:es-server:getVersion']) {
     doLast {
-        def version = project(':core').getVersion.version
+        def version = project(':es:es-server').getVersion.version
         def releaseNotesDir = "$rootDir/blackbox/docs/appendices/release-notes"
         def releaseNotesFile = version.replaceAll('-.*', '') + '.rst'
         if (new File(releaseNotesDir + "/" + releaseNotesFile).exists()) {
@@ -340,9 +327,23 @@ task chooseReleaseNotes(dependsOn: [':core:getVersion']) {
     }
 }
 
+tasks.withType(Tar){
+    dependsOn ':es:es-server:getVersion'
+    dependsOn 'chooseReleaseNotes'
+    compression = Compression.GZIP
+    extension = 'tar.gz'
+}
+
+tasks.withType(Zip){
+    dependsOn ':es:es-server:getVersion'
+    dependsOn 'chooseReleaseNotes'
+}
+
+installDist.dependsOn(chooseReleaseNotes)
+
 distributions {
-    main {
-        baseName = 'crate'
+    communityEdition {
+        baseName = 'crate-ce'
         contents {
             into("") {
                 from("$rootDir") {
@@ -350,13 +351,14 @@ distributions {
                     include 'NOTICE'
                     include 'README.rst'
                 }
+                from("src/main/dist")
                 from(project.buildDir.path + "/releaseNotes") {
                     include 'CHANGES.txt'
                 }
                 File.createTempDir().with {
                     def tmpLogs = new File(absolutePath, 'logs')
                     tmpLogs.mkdirs()
-                    from (absolutePath) {
+                    from(absolutePath) {
                         includeEmptyDirs = true
                     }
                 }
@@ -370,11 +372,55 @@ distributions {
             into("lib") {
                 from jar
             }
-            into("lib/enterprise") {
-                from("enterprise")
+            into("lib") {
+                from("oss_modules")
+            }
+            into('plugins') {
+                from('plugins') {
+                    includeEmptyDirs = true
+                    exclude 'enterprise'
+                }
+            }
+            into('lib/site') {
+                from('adminui/_site')
+            }
+        }
+    }
+    main {
+        baseName = 'crate'
+        contents {
+            into("") {
+                from("$rootDir") {
+                    include 'LICENSE'
+                    include 'NOTICE'
+                    include 'README.rst'
+                }
+                from("src/main/dist")
+                from(project.buildDir.path + "/releaseNotes") {
+                    include 'CHANGES.txt'
+                }
+                File.createTempDir().with {
+                    def tmpLogs = new File(absolutePath, 'logs')
+                    tmpLogs.mkdirs()
+                    from(absolutePath) {
+                        includeEmptyDirs = true
+                    }
+                }
+            }
+            into("lib") {
+                from libs
+                exclude 'crate-*.jar'
+                exclude 'es.jar'
+                exclude 'es-*.jar'
+            }
+            into("lib") {
+                from jar
             }
             into("lib") {
                 from("oss_modules")
+            }
+            into("lib") {
+                from("enterprise")
             }
             into('plugins') {
                 from('plugins') {
@@ -382,21 +428,21 @@ distributions {
                 }
             }
             into('lib/site') {
-                from ('adminui/_site')
+                from('adminui/_site')
             }
         }
     }
 }
 
 jar {
-    dependsOn ':core:getVersion'
+    dependsOn ':es:es-server:getVersion'
 
     doFirst {
-        manifest.attributes 'Implementation-Version': project(':core').getVersion.version
+        manifest.attributes 'Implementation-Version': project(':es:es-server').getVersion.version
         // Needed by ES which validates those manifest attributes in Build class
-        manifest.attributes 'Build-Date': project(':core').getVersion.buildDate
-        manifest.attributes 'Change': project(':core').getVersion.buildShortHash
-        project.version = project(':core').getVersion.version
+        manifest.attributes 'Build-Date': project(':es:es-server').getVersion.buildDate
+        manifest.attributes 'Change': project(':es:es-server').getVersion.buildShortHash
+        project.version = project(':es:es-server').getVersion.version
         def serviceDir = file("$buildDir/META-INF/services")
         serviceDir.deleteDir()
         serviceDir.mkdirs()
@@ -418,30 +464,28 @@ jar {
 }
 
 task collectEnterpriseModules(
-        dependsOn: [':enterprise:users:jar',
-                    ':enterprise:ssl-impl:jar',
-                    ':enterprise:mqtt:jar']) {
+    dependsOn: [':enterprise:users:jar',
+                ':enterprise:ssl-impl:jar']) {
     // this task collects the enterprise module jar into a single folder
     // named enterprise from which the files are taken for the installDist task
     doLast {
         copy {
             from(project(':enterprise:users').tasks.jar.archivePath)
             from(project(':enterprise:ssl-impl').tasks.jar.archivePath)
-            from(project(':enterprise:mqtt').tasks.jar.archivePath)
             into 'enterprise'
         }
     }
 }
-collectEnterpriseModules.outputs.file ('enterprise')
+collectEnterpriseModules.outputs.dir('enterprise')
 
 
 task downloadPlugins(
-        dependsOn: ['downloadAdminUI',
-                    ':es:es-repository-hdfs:jar',
-                    ':azure-discovery:jar',
-                    ':enterprise:jmx-monitoring:jar',
-                    ':enterprise:lang-js:jar',
-                    ':enterprise:hll:jar']) {
+    dependsOn: ['downloadAdminUI',
+                ':es:es-repository-hdfs:jar',
+                ':azure-discovery:jar',
+                ':enterprise:jmx-monitoring:jar',
+                ':enterprise:lang-js:jar',
+                ':enterprise:functions:jar']) {
     doLast {
         // copy es-repository-hdfs plugin
         copy {
@@ -475,14 +519,13 @@ task downloadPlugins(
             into 'plugins/enterprise/lang-js'
         }
         copy {
-            from(project(':enterprise:hll').tasks.jar.archivePath)
-            into 'plugins/enterprise/hll'
+            from(project(':enterprise:functions').tasks.jar.archivePath)
+            into 'plugins/enterprise/functions'
         }
     }
 }
 
-downloadPlugins.outputs.file ('plugins')
-
+downloadPlugins.outputs.dir('plugins')
 
 
 task downloadAdminUI {
@@ -490,15 +533,15 @@ task downloadAdminUI {
         def dest
         if (gradle.taskGraph.hasTask(':app:nightly')) {
             dest = download(
-                    downloadDir,
-                    "https://cdn.crate.io/downloads/releases/nightly/crate-admin-latest.tar.gz",
-                    "crate-admin-latest.tar.gz"
+                downloadDir,
+                "https://cdn.crate.io/downloads/releases/nightly/crate-admin-latest.tar.gz",
+                "crate-admin-latest.tar.gz"
             )
         } else {
             dest = download(
-                    downloadDir,
-                    "https://cdn.crate.io/downloads/releases/crate-admin-${adminui_version}.tar.gz",
-                    "crate-admin-${adminui_version}.tar.gz"
+                downloadDir,
+                "https://cdn.crate.io/downloads/releases/crate-admin-${adminui_version}.tar.gz",
+                "crate-admin-${adminui_version}.tar.gz"
             )
         }
         extractTopfolder(dest, "${buildDir}/crate-admin/_site")
@@ -513,7 +556,7 @@ task(runDebug, dependsOn: 'classes', type: JavaExec) {
     debug = true
     enableAssertions = true
     classpath = sourceSets.main.runtimeClasspath
-    systemProperties += ['es.path.home': "${project.buildDir}/$name"]
+    systemProperties += ['es.path.home': "${rootDir}/sandbox/crate"]
 }
 
 task(run, dependsOn: 'classes', type: JavaExec) {
@@ -521,7 +564,7 @@ task(run, dependsOn: 'classes', type: JavaExec) {
     debug = false
     enableAssertions = true
     classpath = sourceSets.main.runtimeClasspath
-    systemProperties += ['es.path.home': "${project.buildDir}/$name"]
+    systemProperties += ['es.path.home': "${rootDir}/sandbox/crate"]
     systemProperties System.getProperties()
 }
 
@@ -548,10 +591,10 @@ clean.dependsOn(['cleanDownloadPlugins',
 def extractTopfolder(File src, String trg) {
     copy {
         includeEmptyDirs = false
-            FileTree ft
-            if (src.name.endsWith('.tar.gz')) {
-                ft = tarTree(src)
-            }
+        FileTree ft
+        if (src.name.endsWith('.tar.gz')) {
+            ft = tarTree(src)
+        }
         from(ft) {
             eachFile {
                 details -> details.path = details.path.substring(details.relativePath.segments[0].length())

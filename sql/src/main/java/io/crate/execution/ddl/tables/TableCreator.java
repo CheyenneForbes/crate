@@ -29,23 +29,23 @@ import io.crate.exceptions.SQLExceptions;
 import io.crate.metadata.IndexParts;
 import io.crate.metadata.PartitionName;
 import io.crate.metadata.RelationName;
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.ResourceAlreadyExistsException;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.indices.alias.Alias;
 import org.elasticsearch.action.admin.indices.create.CreateIndexRequest;
 import org.elasticsearch.action.admin.indices.delete.DeleteIndexRequest;
-import org.elasticsearch.action.admin.indices.delete.DeleteIndexResponse;
 import org.elasticsearch.action.admin.indices.delete.TransportDeleteIndexAction;
 import org.elasticsearch.action.admin.indices.template.put.PutIndexTemplateRequest;
 import org.elasticsearch.action.support.IndicesOptions;
+import org.elasticsearch.action.support.master.AcknowledgedResponse;
 import org.elasticsearch.cluster.metadata.AliasOrIndex;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Singleton;
-import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
 
 import java.util.Collections;
@@ -58,7 +58,7 @@ public class TableCreator {
 
     private static final Long SUCCESS_RESULT = 1L;
 
-    protected static final Logger logger = Loggers.getLogger(TableCreator.class);
+    protected static final Logger logger = LogManager.getLogger(TableCreator.class);
 
     private final ClusterService clusterService;
     private final IndexNameExpressionResolver indexNameExpressionResolver;
@@ -86,12 +86,12 @@ public class TableCreator {
     }
 
     private CreateIndexRequest createIndexRequest(CreateTableAnalyzedStatement statement) {
-        return new CreateIndexRequest(statement.tableIdent().indexName(), settings(statement))
+        return new CreateIndexRequest(statement.tableIdent().indexNameOrAlias(), settings(statement))
             .mapping(Constants.DEFAULT_MAPPING_TYPE, statement.mapping());
     }
 
     private Settings settings(CreateTableAnalyzedStatement statement) {
-        return statement.tableParameter().settings().getByPrefix("index.");
+        return statement.tableParameter().settings();
     }
 
     private PutIndexTemplateRequest createTemplateRequest(CreateTableAnalyzedStatement statement) {
@@ -101,7 +101,7 @@ public class TableCreator {
             .settings(settings(statement))
             .patterns(Collections.singletonList(statement.templatePrefix()))
             .order(100)
-            .alias(new Alias(statement.tableIdent().indexName()));
+            .alias(new Alias(statement.tableIdent().indexNameOrAlias()));
     }
 
     private void createTable(final CompletableFuture<Long> result, final CreateTableAnalyzedStatement statement) {
@@ -154,9 +154,9 @@ public class TableCreator {
 
         if (metaData.hasAlias(fqn) && isPartition(metaData, fqn)) {
             logger.debug("Deleting orphaned partitions with alias: {}", fqn);
-            transportDeleteIndexAction.execute(new DeleteIndexRequest(fqn), new ActionListener<DeleteIndexResponse>() {
+            transportDeleteIndexAction.execute(new DeleteIndexRequest(fqn), new ActionListener<AcknowledgedResponse>() {
                 @Override
-                public void onResponse(DeleteIndexResponse response) {
+                public void onResponse(AcknowledgedResponse response) {
                     if (!response.isAcknowledged()) {
                         warnNotAcknowledged("deleting orphaned alias");
                     }
@@ -195,9 +195,9 @@ public class TableCreator {
             if (logger.isDebugEnabled()) {
                 logger.debug("Deleting orphaned partitions: {}", Joiner.on(", ").join(orphans));
             }
-            transportDeleteIndexAction.execute(new DeleteIndexRequest(orphans), new ActionListener<DeleteIndexResponse>() {
+            transportDeleteIndexAction.execute(new DeleteIndexRequest(orphans), new ActionListener<AcknowledgedResponse>() {
                 @Override
-                public void onResponse(DeleteIndexResponse response) {
+                public void onResponse(AcknowledgedResponse response) {
                     if (!response.isAcknowledged()) {
                         warnNotAcknowledged("deleting orphans");
                     }

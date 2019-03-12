@@ -31,15 +31,14 @@ import io.crate.data.Row;
 import io.crate.data.Row1;
 import io.crate.execution.dml.ShardRequest;
 import io.crate.execution.dml.ShardResponse;
-import io.crate.execution.jobs.NodeJobsCounter;
 import io.crate.execution.engine.collect.CollectExpression;
+import io.crate.execution.jobs.NodeJobsCounter;
 import io.crate.execution.support.RetryListener;
 import org.apache.logging.log4j.Logger;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.bulk.BackoffPolicy;
 import org.elasticsearch.cluster.service.ClusterService;
-import org.elasticsearch.common.logging.Loggers;
+import org.apache.logging.log4j.LogManager;
 
 import javax.annotation.Nullable;
 import java.util.Collections;
@@ -57,7 +56,7 @@ import static io.crate.execution.jobs.NodeJobsCounter.MAX_NODE_CONCURRENT_OPERAT
 public class ShardDMLExecutor<TReq extends ShardRequest<TReq, TItem>, TItem extends ShardRequest.Item>
     implements Function<BatchIterator<Row>, CompletableFuture<? extends Iterable<? extends Row>>> {
 
-    private static final Logger LOGGER = Loggers.getLogger(ShardDMLExecutor.class);
+    private static final Logger LOGGER = LogManager.getLogger(ShardDMLExecutor.class);
 
     private static final BackoffPolicy BACKOFF_POLICY = LimitedExponentialBackoff.limitedExponential(1000);
     public static final int DEFAULT_BULK_SIZE = 10_000;
@@ -70,7 +69,6 @@ public class ShardDMLExecutor<TReq extends ShardRequest<TReq, TItem>, TItem exte
     private final Supplier<TReq> requestFactory;
     private final Function<String, TItem> itemFactory;
     private final BiConsumer<TReq, ActionListener<ShardResponse>> operation;
-    private final Predicate<TReq> shouldPause;
     private final String localNodeId;
 
     private int numItems = -1;
@@ -93,15 +91,12 @@ public class ShardDMLExecutor<TReq extends ShardRequest<TReq, TItem>, TItem exte
         this.itemFactory = itemFactory;
         this.operation = transportAction;
         this.localNodeId = getLocalNodeId(clusterService);
-
-        this.shouldPause = ignored ->
-            nodeJobsCounter.getInProgressJobsForNode(localNodeId) >= MAX_NODE_CONCURRENT_OPERATIONS;
     }
 
     private void addRowToRequest(TReq req, Row row) {
         numItems++;
         uidExpression.setNextRow(row);
-        req.add(numItems, itemFactory.apply(((BytesRef) uidExpression.value()).utf8ToString()));
+        req.add(numItems, itemFactory.apply((String) uidExpression.value()));
     }
 
     private CompletableFuture<Long> executeBatch(TReq request) {
@@ -127,6 +122,15 @@ public class ShardDMLExecutor<TReq extends ShardRequest<TReq, TItem>, TItem exte
             BatchIterators.partition(batchIterator, bulkSize, requestFactory, this::addRowToRequest, r -> false);
         BinaryOperator<Long> combinePartialResult = (a, b) -> a + b;
         long initialResult = 0L;
+
+        // If the source batch iterator does not involve IO, mostly in-memory structures are used which we want to free
+        // as soon as possible. We do not want to throttle based on the targets node counter in such cases.
+        Predicate<TReq> shouldPause = ignored -> true;
+        if (batchIterator.involvesIO()) {
+            shouldPause = ignored ->
+                nodeJobsCounter.getInProgressJobsForNode(localNodeId) >= MAX_NODE_CONCURRENT_OPERATIONS;
+        }
+
         return new BatchIteratorBackpressureExecutor<>(
             scheduler,
             executor,

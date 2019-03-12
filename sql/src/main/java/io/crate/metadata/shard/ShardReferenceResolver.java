@@ -26,7 +26,6 @@ import io.crate.exceptions.ResourceUnknownException;
 import io.crate.exceptions.UnhandledServerException;
 import io.crate.execution.engine.collect.NestableCollectExpression;
 import io.crate.expression.NestableInput;
-import io.crate.expression.reference.LiteralNestableInput;
 import io.crate.expression.reference.ReferenceResolver;
 import io.crate.expression.reference.StaticTableReferenceResolver;
 import io.crate.expression.reference.sys.shard.ShardRowContext;
@@ -40,17 +39,18 @@ import io.crate.metadata.Schemas;
 import io.crate.metadata.doc.DocTableInfo;
 import io.crate.metadata.sys.SysShardsTableInfo;
 import org.apache.logging.log4j.Logger;
-import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.common.logging.Loggers;
+import org.apache.logging.log4j.LogManager;
 import org.elasticsearch.index.Index;
 
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 
+import static io.crate.execution.engine.collect.NestableCollectExpression.constant;
+
 public class ShardReferenceResolver implements ReferenceResolver<NestableInput<?>> {
 
-    private static final Logger LOGGER = Loggers.getLogger(ShardReferenceResolver.class);
+    private static final Logger LOGGER = LogManager.getLogger(ShardReferenceResolver.class);
     private static final StaticTableReferenceResolver<ShardRowContext> SHARD_REFERENCE_RESOLVER_DELEGATE =
         new StaticTableReferenceResolver<>(SysShardsTableInfo.expressions());
     private static final ReferenceResolver<NestableInput<?>> EMPTY_RESOLVER =
@@ -68,23 +68,19 @@ public class ShardReferenceResolver implements ReferenceResolver<NestableInput<?
         RelationName relationName = partitionName.relationName();
         try {
             DocTableInfo info = schemas.getTableInfo(relationName);
-            if (!schemas.isOrphanedAlias(info)) {
-                assert info.isPartitioned() : "table must be partitioned";
-                int i = 0;
-                int numPartitionedColumns = info.partitionedByColumns().size();
+            assert info.isPartitioned() : "table must be partitioned";
+            int i = 0;
+            int numPartitionedColumns = info.partitionedByColumns().size();
 
-                List<BytesRef> partitionValue = partitionName.values();
-                assert partitionValue.size() ==
-                       numPartitionedColumns : "invalid number of partitioned columns";
-                for (Reference partitionedInfo : info.partitionedByColumns()) {
-                    builder.put(
-                        partitionedInfo.ident(),
-                        new LiteralNestableInput<>(partitionedInfo.valueType().value(partitionValue.get(i)))
-                    );
-                    i++;
-                }
-            } else {
-                LOGGER.error("Orphaned partition '{}' with missing table '{}' found", index, relationName.fqn());
+            List<String> partitionValue = partitionName.values();
+            assert partitionValue.size() ==
+                   numPartitionedColumns : "invalid number of partitioned columns";
+            for (Reference partitionedInfo : info.partitionedByColumns()) {
+                builder.put(
+                    partitionedInfo.ident(),
+                    constant(partitionedInfo.valueType().value(partitionValue.get(i)))
+                );
+                i++;
             }
         } catch (ResourceUnknownException e) {
             LOGGER.error("Orphaned partition '{}' with missing table '{}' found", index, relationName.fqn());

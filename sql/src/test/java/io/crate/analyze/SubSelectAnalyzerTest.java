@@ -22,15 +22,19 @@
 
 package io.crate.analyze;
 
+import io.crate.action.sql.SessionContext;
 import io.crate.analyze.relations.AbstractTableRelation;
 import io.crate.analyze.relations.QueriedRelation;
 import io.crate.exceptions.AmbiguousColumnAliasException;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.sql.tree.QualifiedName;
 import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
 import io.crate.testing.SQLExecutor;
 import org.hamcrest.Matchers;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.io.IOException;
 
 import static io.crate.testing.SymbolMatchers.isField;
 import static io.crate.testing.SymbolMatchers.isFunction;
@@ -46,12 +50,14 @@ public class SubSelectAnalyzerTest extends CrateDummyClusterServiceUnitTest {
     private SQLExecutor executor;
 
     @Before
-    public void prepare() {
+    public void prepare() throws IOException {
         executor = SQLExecutor.builder(clusterService).enableDefaultTables().build();
     }
 
     private <T extends QueriedRelation> T analyze(String stmt) {
-        return (T) executor.analyze(stmt);
+        return (T) executor.normalize(
+            executor.analyze(stmt),
+            new CoordinatorTxnCtx(SessionContext.systemSessionContext()));
     }
 
     @Test

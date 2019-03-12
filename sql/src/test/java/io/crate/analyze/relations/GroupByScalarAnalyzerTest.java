@@ -5,6 +5,8 @@ import io.crate.testing.SQLExecutor;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.IOException;
+
 import static org.hamcrest.core.Is.is;
 
 
@@ -13,14 +15,14 @@ public class GroupByScalarAnalyzerTest extends CrateDummyClusterServiceUnitTest 
     private SQLExecutor executor;
 
     @Before
-    public void prepare() {
+    public void prepare() throws IOException {
         executor = SQLExecutor.builder(clusterService).enableDefaultTables().build();
     }
 
     @Test
     public void testScalarFunctionArgumentsNotAllInGroupByThrowsException() throws Exception {
         expectedException.expect(IllegalArgumentException.class);
-        expectedException.expectMessage("column 'other_id' must appear in the GROUP BY clause or be used in an aggregation function");
+        expectedException.expectMessage("'(id * other_id)' must appear in the GROUP BY");
         executor.analyze("select id * other_id from users group by id");
     }
 

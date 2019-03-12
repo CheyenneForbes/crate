@@ -664,15 +664,14 @@ public class GroupByAggregateTest extends SQLTransportIntegrationTest {
     public void testGroupByUnknownResultColumn() throws Exception {
         this.setup.groupBySetup();
         expectedException.expect(SQLActionException.class);
-        expectedException.expectMessage("column 'details_ignored['lol']' must appear in the GROUP BY clause or be used in an aggregation function");
+        expectedException.expectMessage("'details_ignored['lol']' must appear in the GROUP BY clause");
         execute("select details_ignored['lol'] from characters group by race");
     }
 
     @Test
     public void testGroupByUnknownGroupByColumn() throws Exception {
         this.setup.groupBySetup();
-        expectedException.expect(SQLActionException.class);
-        expectedException.expectMessage("Cannot GROUP BY 'details_ignored['lol']': invalid data type 'undefined'");
+        expectedException.expectMessage("Cannot GROUP BY type: undefined");
         execute("select max(birthdate) from characters group by details_ignored['lol']");
     }
 
@@ -873,28 +872,6 @@ public class GroupByAggregateTest extends SQLTransportIntegrationTest {
 
         execute("select count(*), col1 from test group by col1");
         assertEquals(0, response.rowCount());
-    }
-
-    @Test
-    public void testGroupByMultiValueField() throws Exception {
-        this.setup.groupBySetup();
-        // inserting multiple values not supported anymore
-        client().prepareIndex(getFqn("characters"), Constants.DEFAULT_MAPPING_TYPE).setSource(new HashMap<String, Object>() {{
-            put("race", new String[]{"Android"});
-            put("gender", new String[]{"male", "robot"});
-            put("name", "Marvin2");
-        }}).execute().actionGet();
-        client().prepareIndex(getFqn("characters"), Constants.DEFAULT_MAPPING_TYPE).setSource(new HashMap<String, Object>() {{
-            put("race", new String[]{"Android"});
-            put("gender", new String[]{"male", "robot"});
-            put("name", "Marvin3");
-        }}).execute().actionGet();
-        execute("refresh table characters");
-
-        expectedException.expect(SQLActionException.class);
-        expectedException.expectMessage("Column \"gender\" has a value that is an array. Group by doesn't work on Arrays");
-
-        execute("select gender from characters group by gender");
     }
 
     @Test

@@ -21,31 +21,59 @@ package io.crate.beans;
 /**
  * The QueryStatsMBean interface is required to define a standard MBean,
  * such as a standard MBean is composed of an MBean interface and a class.
- *
+ * <p>
  * The QueryStatsMBean interface lists the methods for all exposed attributes.
  *
  * @see <a href="https://docs.oracle.com/javase/tutorial/jmx/mbeans/standard.html">
- *     https://docs.oracle.com/javase/tutorial/jmx/mbeans/standard.html</a>
+ * https://docs.oracle.com/javase/tutorial/jmx/mbeans/standard.html</a>
  */
 public interface QueryStatsMBean {
 
-    double getSelectQueryFrequency();
+    long getSelectQueryTotalCount();
 
-    double getInsertQueryFrequency();
+    long getInsertQueryTotalCount();
 
-    double getUpdateQueryFrequency();
+    long getUpdateQueryTotalCount();
 
-    double getDeleteQueryFrequency();
+    long getDeleteQueryTotalCount();
 
-    double getOverallQueryFrequency();
+    long getManagementQueryTotalCount();
 
-    double getSelectQueryAverageDuration();
+    long getDDLQueryTotalCount();
 
-    double getInsertQueryAverageDuration();
+    long getCopyQueryTotalCount();
 
-    double getUpdateQueryAverageDuration();
+    long getUndefinedQueryTotalCount();
 
-    double getDeleteQueryAverageDuration();
+    long getSelectQuerySumOfDurations();
 
-    double getOverallQueryAverageDuration();
+    long getInsertQuerySumOfDurations();
+
+    long getUpdateQuerySumOfDurations();
+
+    long getDeleteQuerySumOfDurations();
+
+    long getManagementQuerySumOfDurations();
+
+    long getDDLQuerySumOfDurations();
+
+    long getCopyQuerySumOfDurations();
+
+    long getUndefinedQuerySumOfDurations();
+
+    long getSelectQueryFailedCount();
+
+    long getInsertQueryFailedCount();
+
+    long getUpdateQueryFailedCount();
+
+    long getDeleteQueryFailedCount();
+
+    long getManagementQueryFailedCount();
+
+    long getDDLQueryFailedCount();
+
+    long getCopyQueryFailedCount();
+
+    long getUndefinedQueryFailedCount();
 }

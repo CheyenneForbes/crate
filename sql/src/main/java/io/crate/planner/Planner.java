@@ -22,12 +22,16 @@
 
 package io.crate.planner;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Preconditions;
 import io.crate.analyze.AnalyzedBegin;
 import io.crate.analyze.AnalyzedCommit;
+import io.crate.analyze.AnalyzedDecommissionNodeStatement;
 import io.crate.analyze.AnalyzedDeleteStatement;
+import io.crate.analyze.AnalyzedGCDanglingArtifacts;
 import io.crate.analyze.AnalyzedStatement;
 import io.crate.analyze.AnalyzedStatementVisitor;
+import io.crate.analyze.AnalyzedSwapTable;
 import io.crate.analyze.AnalyzedUpdateStatement;
 import io.crate.analyze.CopyFromAnalyzedStatement;
 import io.crate.analyze.CopyToAnalyzedStatement;
@@ -37,6 +41,7 @@ import io.crate.analyze.CreateViewStmt;
 import io.crate.analyze.DCLStatement;
 import io.crate.analyze.DDLStatement;
 import io.crate.analyze.DeallocateAnalyzedStatement;
+import io.crate.analyze.DropAnalyzerStatement;
 import io.crate.analyze.DropBlobTableAnalyzedStatement;
 import io.crate.analyze.DropTableAnalyzedStatement;
 import io.crate.analyze.DropViewStmt;
@@ -46,77 +51,105 @@ import io.crate.analyze.InsertFromValuesAnalyzedStatement;
 import io.crate.analyze.KillAnalyzedStatement;
 import io.crate.analyze.ResetAnalyzedStatement;
 import io.crate.analyze.SetAnalyzedStatement;
+import io.crate.analyze.SetLicenseAnalyzedStatement;
 import io.crate.analyze.ShowCreateTableAnalyzedStatement;
+import io.crate.analyze.ShowSessionParameterAnalyzedStatement;
 import io.crate.analyze.relations.QueriedRelation;
-import io.crate.exceptions.UnhandledServerException;
+import io.crate.exceptions.ExpiredLicenseException;
 import io.crate.expression.symbol.Symbol;
+import io.crate.license.LicenseService;
 import io.crate.metadata.Functions;
 import io.crate.metadata.Reference;
 import io.crate.metadata.doc.DocTableInfo;
 import io.crate.planner.consumer.UpdatePlanner;
 import io.crate.planner.node.dcl.GenericDCLPlan;
-import io.crate.planner.node.ddl.CreateAnalyzerPlan;
+import io.crate.planner.node.ddl.CreateDropAnalyzerPlan;
 import io.crate.planner.node.ddl.DropTablePlan;
-import io.crate.planner.node.ddl.ESClusterUpdateSettingsPlan;
+import io.crate.planner.node.ddl.UpdateSettingsPlan;
 import io.crate.planner.node.ddl.GenericDDLPlan;
 import io.crate.planner.node.dml.LegacyUpsertById;
 import io.crate.planner.node.management.ExplainPlan;
 import io.crate.planner.node.management.KillPlan;
 import io.crate.planner.node.management.ShowCreateTablePlan;
+import io.crate.planner.node.management.ShowSessionParameterPlan;
 import io.crate.planner.operators.LogicalPlanner;
 import io.crate.planner.statement.CopyStatementPlanner;
 import io.crate.planner.statement.DeletePlanner;
+import io.crate.planner.statement.SetLicensePlan;
 import io.crate.planner.statement.SetSessionPlan;
 import io.crate.profile.ProfilingContext;
 import io.crate.profile.Timer;
 import io.crate.sql.tree.Expression;
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.routing.allocation.decider.AwarenessAllocationDecider;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Singleton;
-import org.elasticsearch.common.logging.Loggers;
 import org.elasticsearch.common.settings.Settings;
 
-import java.io.IOException;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 
 @Singleton
 public class Planner extends AnalyzedStatementVisitor<PlannerContext, Plan> {
 
-    private static final Logger LOGGER = Loggers.getLogger(Planner.class);
+    private static final Logger LOGGER = LogManager.getLogger(Planner.class);
 
     private final ClusterService clusterService;
-    private final LogicalPlanner logicalPlanner;
     private final Functions functions;
+    private final LogicalPlanner logicalPlanner;
+    private final IsStatementExecutionAllowed isStatementExecutionAllowed;
 
-    private String[] awarenessAttributes;
-
+    private List<String> awarenessAttributes;
 
     @Inject
-    public Planner(Settings settings, ClusterService clusterService, Functions functions, TableStats tableStats) {
+    public Planner(Settings settings,
+                   ClusterService clusterService,
+                   Functions functions,
+                   TableStats tableStats,
+                   LicenseService licenseService) {
+        this(
+            settings,
+            clusterService,
+            functions,
+            tableStats,
+            licenseService::hasValidLicense
+        );
+    }
+
+    @VisibleForTesting
+    public Planner(Settings settings,
+                   ClusterService clusterService,
+                   Functions functions,
+                   TableStats tableStats,
+                   BooleanSupplier hasValidLicense) {
         this.clusterService = clusterService;
         this.functions = functions;
         this.logicalPlanner = new LogicalPlanner(functions, tableStats);
+        this.isStatementExecutionAllowed = new IsStatementExecutionAllowed(hasValidLicense);
+        initAwarenessAttributes(settings);
+    }
 
-        this.awarenessAttributes =
+    private void initAwarenessAttributes(Settings settings) {
+        awarenessAttributes =
             AwarenessAllocationDecider.CLUSTER_ROUTING_ALLOCATION_AWARENESS_ATTRIBUTE_SETTING.get(settings);
         clusterService.getClusterSettings().addSettingsUpdateConsumer(
             AwarenessAllocationDecider.CLUSTER_ROUTING_ALLOCATION_AWARENESS_ATTRIBUTE_SETTING,
             this::setAwarenessAttributes);
     }
 
-    private void setAwarenessAttributes(String[] awarenessAttributes) {
+    private void setAwarenessAttributes(List<String> awarenessAttributes) {
         this.awarenessAttributes = awarenessAttributes;
     }
 
-    public String[] getAwarenessAttributes() {
+    public List<String> getAwarenessAttributes() {
         return awarenessAttributes;
     }
 
@@ -131,6 +164,9 @@ public class Planner extends AnalyzedStatementVisitor<PlannerContext, Plan> {
      * @return plan
      */
     public Plan plan(AnalyzedStatement analyzedStatement, PlannerContext plannerContext) {
+        if (isStatementExecutionAllowed.test(analyzedStatement) == false) {
+            throw new ExpiredLicenseException("Statement not allowed");
+        }
         return process(analyzedStatement, plannerContext);
     }
 
@@ -153,6 +189,21 @@ public class Planner extends AnalyzedStatementVisitor<PlannerContext, Plan> {
     @Override
     public Plan visitSelectStatement(QueriedRelation relation, PlannerContext context) {
         return logicalPlanner.plan(relation, context);
+    }
+
+    @Override
+    public Plan visitSwapTable(AnalyzedSwapTable swapTable, PlannerContext context) {
+        return new SwapTablePlan(swapTable);
+    }
+
+    @Override
+    public Plan visitGCDanglingArtifacts(AnalyzedGCDanglingArtifacts gcDanglingArtifacts, PlannerContext context) {
+        return new GCDangingArtifactsPlan();
+    }
+
+    @Override
+    public Plan visitDecommissionNode(AnalyzedDecommissionNodeStatement decommissionNode, PlannerContext context) {
+        return new DecommissionNodePlan(decommissionNode);
     }
 
     @Override
@@ -199,6 +250,11 @@ public class Planner extends AnalyzedStatementVisitor<PlannerContext, Plan> {
     }
 
     @Override
+    public Plan visitShowSessionParameterAnalyzedStatement(ShowSessionParameterAnalyzedStatement analysis, PlannerContext context) {
+        return new ShowSessionParameterPlan(analysis);
+    }
+
+    @Override
     protected Plan visitDDLStatement(DDLStatement statement, PlannerContext context) {
         return new GenericDDLPlan(statement);
     }
@@ -234,13 +290,12 @@ public class Planner extends AnalyzedStatementVisitor<PlannerContext, Plan> {
 
     @Override
     protected Plan visitCreateAnalyzerStatement(CreateAnalyzerAnalyzedStatement analysis, PlannerContext context) {
-        Settings analyzerSettings;
-        try {
-            analyzerSettings = analysis.buildSettings();
-        } catch (IOException ioe) {
-            throw new UnhandledServerException("Could not build analyzer Settings", ioe);
-        }
-        return new CreateAnalyzerPlan(analyzerSettings);
+        return new CreateDropAnalyzerPlan(analysis.buildSettings());
+    }
+
+    @Override
+    protected Plan visitDropAnalyzerStatement(DropAnalyzerStatement analysis, PlannerContext context) {
+        return new CreateDropAnalyzerPlan(analysis.settingsForRemoval());
     }
 
     @Override
@@ -254,31 +309,39 @@ public class Planner extends AnalyzedStatementVisitor<PlannerContext, Plan> {
         for (String setting : settingsToRemove) {
             nullSettings.put(setting, null);
         }
-        return new ESClusterUpdateSettingsPlan(nullSettings, nullSettings);
+        return new UpdateSettingsPlan(nullSettings, nullSettings);
     }
 
     @Override
     public Plan visitSetStatement(SetAnalyzedStatement setStatement, PlannerContext context) {
         switch (setStatement.scope()) {
+            case LICENSE:
+                LOGGER.warn("SET LICENSE STATEMENT WILL BE IGNORED: {}", setStatement.settings());
+                return NoopPlan.INSTANCE;
             case LOCAL:
-                LOGGER.warn("SET LOCAL STATEMENT  WILL BE IGNORED: {}", setStatement.settings());
+                LOGGER.warn("SET LOCAL STATEMENT WILL BE IGNORED: {}", setStatement.settings());
                 return NoopPlan.INSTANCE;
             case SESSION_TRANSACTION_MODE:
                 LOGGER.warn("'SET SESSION CHARACTERISTICS AS TRANSACTION' STATEMENT WILL BE IGNORED");
                 return NoopPlan.INSTANCE;
             case SESSION:
-                return new SetSessionPlan(setStatement.settings(), context.transactionContext().sessionContext());
+                return new SetSessionPlan(setStatement.settings());
             case GLOBAL:
             default:
                 if (setStatement.isPersistent()) {
-                    return new ESClusterUpdateSettingsPlan(setStatement.settings());
+                    return new UpdateSettingsPlan(setStatement.settings());
                 } else {
-                    return new ESClusterUpdateSettingsPlan(
+                    return new UpdateSettingsPlan(
                         Collections.emptyMap(),
                         setStatement.settings()
                     );
                 }
         }
+    }
+
+    @Override
+    public Plan visitSetLicenseStatement(SetLicenseAnalyzedStatement setLicenseAnalyzedStatement, PlannerContext context) {
+        return new SetLicensePlan(setLicenseAnalyzedStatement);
     }
 
     @Override
@@ -353,7 +416,7 @@ public class Planner extends AnalyzedStatementVisitor<PlannerContext, Plan> {
                     onDuplicateKeyAssignments = analysis.onDuplicateKeyAssignments().get(i);
                 }
                 legacyUpsertById.add(
-                    tableInfo.ident().indexName(),
+                    tableInfo.ident().indexNameOrAlias(),
                     analysis.ids().get(i),
                     analysis.routingValues().get(i),
                     onDuplicateKeyAssignments,

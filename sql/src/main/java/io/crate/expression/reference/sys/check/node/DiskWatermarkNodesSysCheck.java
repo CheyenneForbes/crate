@@ -26,7 +26,7 @@ import com.google.common.annotations.VisibleForTesting;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.cluster.routing.allocation.DiskThresholdSettings;
 import org.elasticsearch.cluster.service.ClusterService;
-import org.elasticsearch.common.logging.Loggers;
+import org.apache.logging.log4j.LogManager;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.monitor.fs.FsInfo;
 import org.elasticsearch.monitor.fs.FsService;
@@ -36,7 +36,7 @@ import java.io.IOException;
 
 abstract class DiskWatermarkNodesSysCheck extends AbstractSysNodeCheck {
 
-    private static final Logger LOGGER = Loggers.getLogger(DiskWatermarkNodesSysCheck.class);
+    private static final Logger LOGGER = LogManager.getLogger(DiskWatermarkNodesSysCheck.class);
 
     private final FsService fsService;
     final DiskThresholdSettings diskThresholdSettings;
@@ -47,7 +47,7 @@ abstract class DiskWatermarkNodesSysCheck extends AbstractSysNodeCheck {
                                ClusterService clusterService,
                                FsService fsService,
                                Settings settings) {
-        super(id, description, severity, clusterService);
+        super(id, description, severity);
         this.fsService = fsService;
         this.diskThresholdSettings = new DiskThresholdSettings(settings, clusterService.getClusterSettings());
     }

@@ -23,12 +23,12 @@
 package io.crate.expression.reference.sys.cluster;
 
 import io.crate.cluster.gracefulstop.DecommissioningService;
-import io.crate.core.collections.Maps;
-import io.crate.metadata.settings.CrateSettings;
+import io.crate.common.collections.Maps;
 import io.crate.execution.engine.collect.stats.JobsLogService;
+import io.crate.metadata.settings.CrateSettings;
 import io.crate.plugin.SQLPlugin;
+import io.crate.settings.SharedSettings;
 import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.ClusterStateUpdateTask;
 import org.elasticsearch.cluster.metadata.MetaData;
@@ -63,9 +63,9 @@ public class ClusterSettingsExpressionTest extends CrateDummyClusterServiceUnitT
         ClusterSettingsExpression clusterSettingsExpression = new ClusterSettingsExpression(
             clusterService, new CrateSettings(clusterService, clusterService.getSettings()));
 
-        assertThat(((BytesRef) clusterSettingsExpression
+        assertThat(clusterSettingsExpression
                 .getChild("bulk")
-                .getChild("request_timeout").value()).utf8ToString(),
+                .getChild("request_timeout").value(),
             is("20s"));
     }
 
@@ -103,5 +103,9 @@ public class ClusterSettingsExpressionTest extends CrateDummyClusterServiceUnitT
 
         assertThat(
             Maps.getByPath(values, DecommissioningService.GRACEFUL_STOP_MIN_AVAILABILITY_SETTING.getKey()), is("FULL"));
+
+        assertSettingDeprecationsAndWarnings(new Setting<?>[] {
+            SharedSettings.LICENSE_IDENT_SETTING.setting(),
+            SharedSettings.ENTERPRISE_LICENSE_SETTING.setting()});
     }
 }

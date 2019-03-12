@@ -34,10 +34,9 @@ import io.crate.metadata.expressions.RowCollectExpressionFactory;
 import io.crate.metadata.table.ColumnRegistrar;
 import io.crate.metadata.table.StaticTableInfo;
 import io.crate.types.DataTypes;
-import org.apache.lucene.util.BytesRef;
+import io.crate.types.ObjectType;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.node.DiscoveryNode;
-import org.elasticsearch.common.lucene.BytesRefs;
 
 import java.util.Collections;
 import java.util.Map;
@@ -51,6 +50,8 @@ public class SysMetricsTableInfo extends StaticTableInfo {
 
     static class Columns {
         static final ColumnIdent TOTAL_COUNT = new ColumnIdent("total_count");
+        static final ColumnIdent SUM_OF_DURATIONS = new ColumnIdent("sum_of_durations");
+        static final ColumnIdent FAILED_COUNT = new ColumnIdent("failed_count");
         static final ColumnIdent MEAN = new ColumnIdent("mean");
         static final ColumnIdent STDEV = new ColumnIdent("stdev");
         static final ColumnIdent MAX = new ColumnIdent("max");
@@ -74,71 +75,70 @@ public class SysMetricsTableInfo extends StaticTableInfo {
         super(NAME,
             new ColumnRegistrar(NAME, RowGranularity.DOC)
                 .register(Columns.TOTAL_COUNT, DataTypes.LONG)
+                .register(Columns.SUM_OF_DURATIONS, DataTypes.LONG)
+                .register(Columns.FAILED_COUNT, DataTypes.LONG)
                 .register(Columns.MEAN, DataTypes.DOUBLE)
                 .register(Columns.STDEV, DataTypes.DOUBLE)
                 .register(Columns.MAX, DataTypes.LONG)
                 .register(Columns.MIN, DataTypes.LONG)
-                .register(Columns.PERCENTILES, DataTypes.OBJECT)
-                .register(Columns.P25, DataTypes.LONG)
-                .register(Columns.P50, DataTypes.LONG)
-                .register(Columns.P75, DataTypes.LONG)
-                .register(Columns.P90, DataTypes.LONG)
-                .register(Columns.P95, DataTypes.LONG)
-                .register(Columns.P99, DataTypes.LONG)
-                .register(Columns.NODE, DataTypes.OBJECT)
-                .register(Columns.NODE_ID, DataTypes.STRING)
-                .register(Columns.NODE_NAME, DataTypes.STRING)
-                .register(Columns.CLASS, DataTypes.OBJECT)
-                .register(Columns.CLASS_TYPE, DataTypes.STRING)
-                .register(Columns.CLASS_LABELS, DataTypes.STRING_ARRAY),
+                .register(Columns.PERCENTILES, ObjectType.builder()
+                    .setInnerType("25", DataTypes.LONG)
+                    .setInnerType("50", DataTypes.LONG)
+                    .setInnerType("75", DataTypes.LONG)
+                    .setInnerType("90", DataTypes.LONG)
+                    .setInnerType("95", DataTypes.LONG)
+                    .setInnerType("99", DataTypes.LONG)
+                    .build())
+                .register(Columns.NODE, ObjectType.builder()
+                    .setInnerType("id", DataTypes.STRING)
+                    .setInnerType("name", DataTypes.STRING)
+                    .build())
+                .register(Columns.CLASS, ObjectType.builder()
+                    .setInnerType("type", DataTypes.STRING)
+                    .setInnerType("labels", DataTypes.STRING_ARRAY)
+                    .build()),
             Collections.emptyList()
         );
     }
 
-    public static Map<ColumnIdent, RowCollectExpressionFactory<ClassifiedHistograms.ClassifiedHistogram>> expressions(Supplier<DiscoveryNode> localNode) {
-        return ImmutableMap.<ColumnIdent, RowCollectExpressionFactory<ClassifiedHistograms.ClassifiedHistogram>>builder()
-            .put(Columns.TOTAL_COUNT, () -> forFunction(h -> h.histogram().getTotalCount()))
-            .put(Columns.MEAN, () -> forFunction(h -> h.histogram().getMean()))
-            .put(Columns.STDEV, () -> forFunction(h -> h.histogram().getStdDeviation()))
-            .put(Columns.MAX, () -> forFunction(h -> h.histogram().getMaxValue()))
-            .put(Columns.MIN, () -> forFunction(h -> h.histogram().getMinValue() == Long.MAX_VALUE ? 0L : h.histogram().getMinValue()))
-            .put(Columns.PERCENTILES, () -> forFunction(h -> ImmutableMap.builder()
-                .put("25", h.histogram().getValueAtPercentile(25.0))
-                .put("50", h.histogram().getValueAtPercentile(50.0))
-                .put("75", h.histogram().getValueAtPercentile(75.0))
-                .put("90", h.histogram().getValueAtPercentile(90.0))
-                .put("95", h.histogram().getValueAtPercentile(95.0))
-                .put("99", h.histogram().getValueAtPercentile(99.0))
+    public static Map<ColumnIdent, RowCollectExpressionFactory<MetricsView>> expressions(Supplier<DiscoveryNode> localNode) {
+        return ImmutableMap.<ColumnIdent, RowCollectExpressionFactory<MetricsView>>builder()
+            .put(Columns.TOTAL_COUNT, () -> forFunction(MetricsView::totalCount))
+            .put(Columns.SUM_OF_DURATIONS, () -> forFunction(MetricsView::sumOfDurations))
+            .put(Columns.FAILED_COUNT, () -> forFunction(MetricsView::failedCount))
+            .put(Columns.MEAN, () -> forFunction(MetricsView::mean))
+            .put(Columns.STDEV, () -> forFunction(MetricsView::stdDeviation))
+            .put(Columns.MAX, () -> forFunction(MetricsView::maxValue))
+            .put(Columns.MIN, () -> forFunction(MetricsView::minValue))
+            .put(Columns.PERCENTILES, () -> forFunction(m -> ImmutableMap.builder()
+                .put("25", m.getValueAtPercentile(25.0))
+                .put("50", m.getValueAtPercentile(50.0))
+                .put("75", m.getValueAtPercentile(75.0))
+                .put("90", m.getValueAtPercentile(90.0))
+                .put("95", m.getValueAtPercentile(95.0))
+                .put("99", m.getValueAtPercentile(99.0))
                 .build()
             ))
-            .put(Columns.P25, () -> forFunction(h -> h.histogram().getValueAtPercentile(25.0)))
-            .put(Columns.P50, () -> forFunction(h -> h.histogram().getValueAtPercentile(50.0)))
-            .put(Columns.P75, () -> forFunction(h -> h.histogram().getValueAtPercentile(75.0)))
-            .put(Columns.P90, () -> forFunction(h -> h.histogram().getValueAtPercentile(90.0)))
-            .put(Columns.P95, () -> forFunction(h -> h.histogram().getValueAtPercentile(95.0)))
-            .put(Columns.P99, () -> forFunction(h -> h.histogram().getValueAtPercentile(99.0)))
+            .put(Columns.P25, () -> forFunction(m -> m.getValueAtPercentile(25.0)))
+            .put(Columns.P50, () -> forFunction(m -> m.getValueAtPercentile(50.0)))
+            .put(Columns.P75, () -> forFunction(m -> m.getValueAtPercentile(75.0)))
+            .put(Columns.P90, () -> forFunction(m -> m.getValueAtPercentile(90.0)))
+            .put(Columns.P95, () -> forFunction(m -> m.getValueAtPercentile(95.0)))
+            .put(Columns.P99, () -> forFunction(m -> m.getValueAtPercentile(99.0)))
             .put(Columns.NODE, () -> forFunction(ignored -> ImmutableMap.builder()
-                .put("id", new BytesRef(localNode.get().getId()))
-                .put("name", new BytesRef(localNode.get().getName()))
+                .put("id", localNode.get().getId())
+                .put("name", localNode.get().getName())
                 .build()
             ))
-            .put(Columns.NODE_ID, () -> forFunction(ignored -> new BytesRef(localNode.get().getId())))
-            .put(Columns.NODE_NAME, () -> forFunction(ignored -> new BytesRef(localNode.get().getName())))
+            .put(Columns.NODE_ID, () -> forFunction(ignored -> localNode.get().getId()))
+            .put(Columns.NODE_NAME, () -> forFunction(ignored -> localNode.get().getName()))
             .put(Columns.CLASS, () -> forFunction(h -> ImmutableMap.builder()
-                .put("type", new BytesRef(h.classification().type().name()))
-                .put("labels", h.classification().labels()
-                    .stream()
-                    .map(BytesRefs::toBytesRef)
-                    .toArray(BytesRef[]::new)
-                )
+                .put("type", h.classification().type().name())
+                .put("labels", h.classification().labels().toArray(new String[0]))
                 .build()
             ))
-            .put(Columns.CLASS_TYPE, () -> forFunction(h -> new BytesRef(h.classification().type().name())))
-            .put(Columns.CLASS_LABELS, () -> forFunction(h -> h.classification().labels()
-                .stream()
-                .map(BytesRefs::toBytesRef)
-                .toArray(BytesRef[]::new)
-            ))
+            .put(Columns.CLASS_TYPE, () -> forFunction(h -> h.classification().type().name()))
+            .put(Columns.CLASS_LABELS, () -> forFunction(h -> h.classification().labels().toArray(new String[0])))
             .build();
     }
 

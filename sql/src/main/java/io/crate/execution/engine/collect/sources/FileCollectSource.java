@@ -34,6 +34,7 @@ import io.crate.execution.engine.collect.files.LineCollectorExpression;
 import io.crate.expression.InputFactory;
 import io.crate.expression.reference.file.FileLineReferenceResolver;
 import io.crate.expression.symbol.Symbol;
+import io.crate.metadata.TransactionContext;
 import io.crate.metadata.Functions;
 import io.crate.planner.operators.SubQueryResults;
 import io.crate.types.CollectionType;
@@ -41,7 +42,6 @@ import io.crate.types.DataTypes;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.inject.Singleton;
-import org.elasticsearch.common.lucene.BytesRefs;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -67,13 +67,16 @@ public class FileCollectSource implements CollectSource {
     }
 
     @Override
-    public BatchIterator<Row> getIterator(CollectPhase collectPhase, CollectTask collectTask, boolean supportMoveToStart) {
+    public BatchIterator<Row> getIterator(TransactionContext txnCtx,
+                                          CollectPhase collectPhase,
+                                          CollectTask collectTask,
+                                          boolean supportMoveToStart) {
         FileUriCollectPhase fileUriCollectPhase = (FileUriCollectPhase) collectPhase;
         InputFactory.Context<LineCollectorExpression<?>> ctx =
-            inputFactory.ctxForRefs(FileLineReferenceResolver::getImplementation);
+            inputFactory.ctxForRefs(txnCtx, FileLineReferenceResolver::getImplementation);
         ctx.add(collectPhase.toCollect());
 
-        List<String> fileUris = targetUriToStringList(functions, fileUriCollectPhase.targetUri());
+        List<String> fileUris = targetUriToStringList(txnCtx, functions, fileUriCollectPhase.targetUri());
         return FileReadingIterator.newInstance(
             fileUris,
             ctx.topLevelInputs(),
@@ -93,17 +96,19 @@ public class FileCollectSource implements CollectSource {
         return Arrays.binarySearch(readers, localNodeId);
     }
 
-    private static List<String> targetUriToStringList(Functions functions, Symbol targetUri) {
-        Object value = SymbolEvaluator.evaluate(functions, targetUri, Row.EMPTY, SubQueryResults.EMPTY);
+    private static List<String> targetUriToStringList(TransactionContext txnCtx,
+                                                      Functions functions,
+                                                      Symbol targetUri) {
+        Object value = SymbolEvaluator.evaluate(txnCtx, functions, targetUri, Row.EMPTY, SubQueryResults.EMPTY);
         if (targetUri.valueType() == DataTypes.STRING) {
-            String uri = BytesRefs.toString(value);
+            String uri = (String) value;
             return Collections.singletonList(uri);
         } else if (targetUri.valueType() instanceof CollectionType
                    && ((CollectionType) targetUri.valueType()).innerType() == DataTypes.STRING) {
             Object[] values = (Object[]) value;
             ArrayList<String> uris = new ArrayList<>(values.length);
             for (Object v : values) {
-                uris.add(BytesRefs.toString(v));
+                uris.add((String) v);
             }
             return uris;
         }

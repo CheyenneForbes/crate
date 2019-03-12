@@ -37,7 +37,7 @@ import io.crate.metadata.Reference;
 import io.crate.metadata.ReferenceIdent;
 import io.crate.metadata.RelationName;
 import io.crate.metadata.RowGranularity;
-import io.crate.metadata.TransactionContext;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.types.ArrayType;
 import io.crate.types.CollectionType;
 import io.crate.types.DataType;
@@ -62,7 +62,7 @@ public class AnalyzedTableElements {
     List<AnalyzedColumnDefinition> partitionedByColumns = new ArrayList<>();
     private List<AnalyzedColumnDefinition> columns = new ArrayList<>();
     private Set<ColumnIdent> columnIdents = new HashSet<>();
-    private Map<ColumnIdent, String> columnTypes = new HashMap<>();
+    private Map<ColumnIdent, DataType> columnTypes = new HashMap<>();
     private Set<String> primaryKeys;
     private Set<String> notNullColumns;
     private List<List<String>> partitionedBy;
@@ -132,9 +132,7 @@ public class AnalyzedTableElements {
             partitionedBy = new ArrayList<>(partitionedByColumns.size());
             for (AnalyzedColumnDefinition partitionedByColumn : partitionedByColumns) {
                 partitionedBy.add(ImmutableList.of(
-                    partitionedByColumn.ident().fqn(),
-                    partitionedByColumn.dataType())
-                );
+                    partitionedByColumn.ident().fqn(), partitionedByColumn.typeNameForESMapping()));
             }
         }
 
@@ -246,9 +244,9 @@ public class AnalyzedTableElements {
                              Collection<? extends Reference> existingColumns,
                              Functions functions,
                              ParameterContext parameterContext,
-                             TransactionContext transactionContext) {
+                             CoordinatorTxnCtx coordinatorTxnCtx) {
         expandColumnIdents();
-        validateGeneratedColumns(relationName, existingColumns, functions, parameterContext, transactionContext);
+        validateGeneratedColumns(relationName, existingColumns, functions, parameterContext, coordinatorTxnCtx);
         for (AnalyzedColumnDefinition column : columns) {
             column.validate();
             addCopyToInfo(column);
@@ -262,7 +260,7 @@ public class AnalyzedTableElements {
                                           Collection<? extends Reference> existingColumns,
                                           Functions functions,
                                           ParameterContext parameterContext,
-                                          TransactionContext transactionContext) {
+                                          CoordinatorTxnCtx coordinatorTxnCtx) {
         List<Reference> tableReferences = new ArrayList<>();
         for (AnalyzedColumnDefinition columnDefinition : columns) {
             buildReference(relationName, columnDefinition, tableReferences);
@@ -271,7 +269,7 @@ public class AnalyzedTableElements {
 
         TableReferenceResolver tableReferenceResolver = new TableReferenceResolver(tableReferences, relationName);
         ExpressionAnalyzer expressionAnalyzer = new ExpressionAnalyzer(
-            functions, transactionContext, parameterContext, tableReferenceResolver, null);
+            functions, coordinatorTxnCtx, parameterContext, tableReferenceResolver, null);
         SymbolPrinter printer = new SymbolPrinter(functions);
         ExpressionAnalysisContext expressionAnalysisContext = new ExpressionAnalysisContext();
         for (AnalyzedColumnDefinition columnDefinition : columns) {
@@ -310,8 +308,7 @@ public class AnalyzedTableElements {
 
         String formattedExpression;
         DataType valueType = function.valueType();
-        DataType definedType =
-            columnDefinition.dataType() == null ? null : DataTypes.ofMappingNameSafe(columnDefinition.dataType());
+        DataType definedType = columnDefinition.dataType();
 
         // check for optional defined type and add `cast` to expression if possible
         if (definedType != null && !definedType.equals(valueType)) {
@@ -341,13 +338,13 @@ public class AnalyzedTableElements {
             reference = new Reference(
                 new ReferenceIdent(relationName, columnDefinition.ident()),
                 RowGranularity.DOC,
-                DataTypes.ofMappingNameSafe(columnDefinition.dataType()));
+                columnDefinition.dataType()
+            );
         } else {
             reference = new GeneratedReference(
                 new ReferenceIdent(relationName, columnDefinition.ident()),
                 RowGranularity.DOC,
-                columnDefinition.dataType() ==
-                null ? DataTypes.UNDEFINED : DataTypes.ofMappingNameSafe(columnDefinition.dataType()),
+                columnDefinition.dataType() == null ? DataTypes.UNDEFINED : columnDefinition.dataType(),
                 "dummy expression, real one not needed here");
         }
         references.add(reference);
@@ -385,7 +382,7 @@ public class AnalyzedTableElements {
             if (!columnIdents.contains(columnIdent)) {
                 throw new ColumnUnknownException(columnIdent.sqlFqn(), relationName);
             }
-            if (!columnTypes.get(columnIdent).equalsIgnoreCase("string")) {
+            if (!DataTypes.STRING.equals(columnTypes.get(columnIdent))) {
                 throw new IllegalArgumentException("INDEX definition only support 'string' typed source columns");
             }
         }
@@ -393,7 +390,7 @@ public class AnalyzedTableElements {
 
     private void validateColumnStorageDefinitions() {
         for (AnalyzedColumnDefinition columnDefinition : columns) {
-            DataType dataType = DataTypes.ofMappingName(columnDefinition.dataType());
+            DataType dataType = columnDefinition.dataType();
             if (columnDefinition.isColumnStoreEnabled() == false && dataType != DataTypes.STRING) {
                 throw new IllegalArgumentException(
                     String.format(Locale.ENGLISH, "Invalid storage option \"columnstore\" for data type \"%s\"",
@@ -470,7 +467,7 @@ public class AnalyzedTableElements {
             }
             throw new ColumnUnknownException(partitionedByIdent.sqlFqn(), relationName);
         }
-        DataType columnType = DataTypes.ofMappingNameSafe(columnDefinition.dataType());
+        DataType columnType = columnDefinition.dataType();
         if (!DataTypes.isPrimitive(columnType)) {
             throw new IllegalArgumentException(String.format(Locale.ENGLISH,
                 "Cannot use column %s of type %s in PARTITIONED BY clause",

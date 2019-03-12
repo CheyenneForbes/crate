@@ -73,7 +73,7 @@ public class InformationSchemaTableDefinitions {
         ));
         tableDefinitions.put(InformationTableConstraintsTableInfo.IDENT, new StaticTableDefinition<>(
             informationSchemaIterables::constraints,
-            (user, t) -> user.hasAnyPrivilege(Privilege.Clazz.TABLE, t.tableIdent().fqn()),
+            (user, t) -> user.hasAnyPrivilege(Privilege.Clazz.TABLE, t.relationName().fqn()),
             InformationTableConstraintsTableInfo.expressions()
         ));
         tableDefinitions.put(InformationRoutinesTableInfo.IDENT, new StaticTableDefinition<>(
@@ -84,11 +84,6 @@ public class InformationSchemaTableDefinitions {
         tableDefinitions.put(InformationSqlFeaturesTableInfo.IDENT, new StaticTableDefinition<>(
             () -> completedFuture(informationSchemaIterables.features()),
             InformationSqlFeaturesTableInfo.expressions()
-        ));
-        tableDefinitions.put(InformationSchemaIngestionRulesTableInfo.IDENT, new StaticTableDefinition<>(
-            informationSchemaIterables::ingestionRules,
-            (user, ingestionRule) -> user.hasAnyPrivilege(Privilege.Clazz.TABLE, ingestionRule.getTarget()),
-            InformationSchemaIngestionRulesTableInfo.expressions()
         ));
         tableDefinitions.put(InformationKeyColumnUsageTableInfo.IDENT, new StaticTableDefinition<>(
             informationSchemaIterables::keyColumnUsage,

@@ -67,7 +67,6 @@ public class LuceneBatchIterator implements BatchIterator<Row> {
     private final List<LeafReaderContext> leaves;
     private final InputRow row;
     private Weight weight;
-    private final CollectorFieldsVisitor visitor;
     private final Float minScore;
 
     private Iterator<LeafReaderContext> leavesIt;
@@ -90,7 +89,6 @@ public class LuceneBatchIterator implements BatchIterator<Row> {
         this.doScores = doScores || minScore != null;
         this.minScore = minScore;
         this.collectorContext = collectorContext;
-        this.visitor = collectorContext.visitor();
         this.ramAccountingContext = ramAccountingContext;
         this.row = new InputRow(inputs);
         this.expressions = expressions.toArray(new LuceneCollectorExpression[0]);
@@ -136,7 +134,7 @@ public class LuceneBatchIterator implements BatchIterator<Row> {
                 if (docDeleted(liveDocs, doc) || belowMinScore(currentScorer)) {
                     continue;
                 }
-                onDoc(doc, reader);
+                onDoc(doc);
                 return true;
             }
             currentDocIdSetIt = null;
@@ -195,11 +193,16 @@ public class LuceneBatchIterator implements BatchIterator<Row> {
         for (LuceneCollectorExpression expression : expressions) {
             expression.startCollect(collectorContext);
         }
-        return indexSearcher.createNormalizedWeight(query, doScores);
+        return indexSearcher.createWeight(indexSearcher.rewrite(query), doScores, 1f);
     }
 
     @Override
     public boolean allLoaded() {
+        return true;
+    }
+
+    @Override
+    public boolean involvesIO() {
         return true;
     }
 
@@ -219,12 +222,8 @@ public class LuceneBatchIterator implements BatchIterator<Row> {
         }
     }
 
-    private void onDoc(int doc, LeafReader reader) throws IOException {
+    private void onDoc(int doc) throws IOException {
         checkCircuitBreaker();
-        if (visitor.required()) {
-            visitor.reset();
-            reader.document(doc, visitor);
-        }
         for (LuceneCollectorExpression expression : expressions) {
             expression.setNextDocId(doc);
         }

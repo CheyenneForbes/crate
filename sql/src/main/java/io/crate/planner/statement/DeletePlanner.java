@@ -121,11 +121,11 @@ public final class DeletePlanner {
         }
 
         @Override
-        public void execute(DependencyCarrier executor,
-                            PlannerContext plannerContext,
-                            RowConsumer consumer,
-                            Row params,
-                            SubQueryResults subQueryResults) {
+        public void executeOrFail(DependencyCarrier executor,
+            PlannerContext plannerContext,
+            RowConsumer consumer,
+            Row params,
+            SubQueryResults subQueryResults) {
 
             WhereClause where = detailedQuery.toBoundWhereClause(
                 table.tableInfo(),
@@ -146,7 +146,7 @@ public final class DeletePlanner {
             NodeOperationTree nodeOpTree = NodeOperationTreeGenerator.fromPlan(executionPlan, executor.localNodeId());
             executor.phasesTaskFactory()
                 .create(plannerContext.jobId(), Collections.singletonList(nodeOpTree))
-                .execute(consumer);
+                .execute(consumer, plannerContext.transactionContext());
         }
 
         @Override
@@ -167,7 +167,7 @@ public final class DeletePlanner {
             }
             return executor.phasesTaskFactory()
                 .create(plannerContext.jobId(), nodeOperationTreeList)
-                .executeBulk();
+                .executeBulk(plannerContext.transactionContext());
         }
     }
 
@@ -187,8 +187,7 @@ public final class DeletePlanner {
             newArrayList(idReference),
             ImmutableList.of(deleteProjection),
             where.queryOrFallback(),
-            DistributionInfo.DEFAULT_BROADCAST,
-            sessionContext.user()
+            DistributionInfo.DEFAULT_BROADCAST
         );
         Collect collect = new Collect(collectPhase, TopN.NO_LIMIT, 0, 1, 1, null);
         return Merge.ensureOnHandler(collect, context, Collections.singletonList(MergeCountProjection.INSTANCE));

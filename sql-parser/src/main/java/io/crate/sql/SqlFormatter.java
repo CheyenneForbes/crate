@@ -36,17 +36,18 @@ import io.crate.sql.tree.ColumnType;
 import io.crate.sql.tree.CopyFrom;
 import io.crate.sql.tree.CrateTableOption;
 import io.crate.sql.tree.CreateFunction;
-import io.crate.sql.tree.CreateIngestRule;
 import io.crate.sql.tree.CreateSnapshot;
 import io.crate.sql.tree.CreateTable;
 import io.crate.sql.tree.CreateUser;
+import io.crate.sql.tree.DecommissionNodeStatement;
 import io.crate.sql.tree.DenyPrivilege;
-import io.crate.sql.tree.DropIngestRule;
 import io.crate.sql.tree.DropRepository;
 import io.crate.sql.tree.DropUser;
+import io.crate.sql.tree.EscapedCharStringLiteral;
 import io.crate.sql.tree.Explain;
 import io.crate.sql.tree.Expression;
 import io.crate.sql.tree.FunctionArgument;
+import io.crate.sql.tree.GCDanglingArtifacts;
 import io.crate.sql.tree.GenericProperties;
 import io.crate.sql.tree.GrantPrivilege;
 import io.crate.sql.tree.IndexColumnConstraint;
@@ -75,6 +76,7 @@ import io.crate.sql.tree.SelectItem;
 import io.crate.sql.tree.SingleColumn;
 import io.crate.sql.tree.SortItem;
 import io.crate.sql.tree.StringLiteral;
+import io.crate.sql.tree.SwapTable;
 import io.crate.sql.tree.Table;
 import io.crate.sql.tree.TableFunction;
 import io.crate.sql.tree.TableSubquery;
@@ -87,11 +89,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
-import java.util.function.Function;
 import java.util.stream.Collector;
 import java.util.stream.Collectors;
 
-import static io.crate.sql.ExpressionFormatter.formatExpression;
 import static io.crate.sql.ExpressionFormatter.formatStandaloneExpression;
 
 public final class SqlFormatter {
@@ -118,6 +118,33 @@ public final class SqlFormatter {
         @Override
         protected Void visitNode(Node node, Integer indent) {
             throw new UnsupportedOperationException("not yet implemented: " + node);
+        }
+
+        @Override
+        public Void visitSwapTable(SwapTable swapTable, Integer indent) {
+            append(indent, "ALTER CLUSTER SWAP TABLE ");
+            append(indent, swapTable.source().toString());
+            append(indent, " TO ");
+            append(indent, swapTable.target().toString());
+            if (!swapTable.properties().isEmpty()) {
+                append(indent, " ");
+                process(swapTable.properties(), indent);
+            }
+            return null;
+        }
+
+        @Override
+        public Void visitGCDanglingArtifacts(GCDanglingArtifacts gcDanglingArtifacts, Integer indent) {
+            append(indent, "ALTER CLUSTER GC DANGLING ARTIFACTS");
+            return null;
+        }
+
+        @Override
+        public Void visitAlterClusterDecommissionNode(DecommissionNodeStatement decommissionNodeStatement,
+                                                      Integer indent) {
+            append(indent, "ALTER CLUSTER DECOMMISSION ");
+            process(decommissionNodeStatement.nodeIdOrName(), indent);
+            return null;
         }
 
         @Override
@@ -165,7 +192,7 @@ public final class SqlFormatter {
             if (!node.getOrderBy().isEmpty()) {
                 append(indent,
                     "ORDER BY " + node.getOrderBy().stream()
-                        .map(orderByFormatterFunction)
+                        .map(SqlFormatter::formatSortItem)
                         .collect(COMMA_JOINER)
                 ).append('\n');
             }
@@ -229,7 +256,7 @@ public final class SqlFormatter {
             if (!node.getOrderBy().isEmpty()) {
                 append(indent,
                     "ORDER BY " + node.getOrderBy().stream()
-                        .map(orderByFormatterFunction)
+                        .map(SqlFormatter::formatSortItem)
                         .collect(COMMA_JOINER)
                 ).append('\n');
             }
@@ -478,6 +505,12 @@ public final class SqlFormatter {
         }
 
         @Override
+        protected Void visitEscapedCharStringLiteral(EscapedCharStringLiteral node, Integer context) {
+            builder.append(Literals.quoteEscapedStringLiteral(node.getRawValue()));
+            return null;
+        }
+
+        @Override
         public Void visitColumnDefinition(ColumnDefinition node, Integer indent) {
             builder.append(quoteIdentifierIfNeeded(node.ident()))
                 .append(" ");
@@ -688,35 +721,7 @@ public final class SqlFormatter {
             return null;
         }
 
-        @Override
-        public Void visitCreateIngestRule(CreateIngestRule node, Integer context) {
-            builder.append("CREATE INGEST RULE ")
-                .append(quoteIdentifierIfNeeded(node.ruleName().toString()));
-
-            builder.append(" ON ")
-                .append(quoteIdentifierIfNeeded(node.sourceIdent().toString()));
-
-            if (node.where().isPresent()) {
-                builder.append(" WHERE " + formatExpression(node.where().get()));
-            }
-            builder.append(" INTO ")
-                .append(quoteIdentifierIfNeeded(node.targetTable().toString()));
-
-            return null;
-        }
-
-        @Override
-        public Void visitDropIngestRule(DropIngestRule node, Integer context) {
-            builder.append("DROP INGEST RULE ");
-            if (node.ifExists()) {
-                builder.append("IF EXISTS ");
-            }
-            builder.append(quoteIdentifierIfNeeded(node.name()));
-
-            return null;
-        }
-
-        private Void appendPrivilegesList(List<String> privilegeTypes) {
+        private void appendPrivilegesList(List<String> privilegeTypes) {
             int j = 0;
             for (String privilegeType : privilegeTypes) {
                 builder.append(privilegeType);
@@ -725,7 +730,6 @@ public final class SqlFormatter {
                 }
                 j++;
             }
-            return null;
         }
 
         private void appendUsersList(List<String> userNames) {
@@ -805,24 +809,32 @@ public final class SqlFormatter {
         }
     }
 
-    static Function<SortItem, String> orderByFormatterFunction = input -> {
-        StringBuilder builder = new StringBuilder();
-
-        builder.append(formatStandaloneExpression(input.getSortKey()));
-
-        switch (input.getOrdering()) {
+    static String formatSortItem(SortItem sortItem) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(formatStandaloneExpression(sortItem.getSortKey()));
+        switch (sortItem.getOrdering()) {
             case ASCENDING:
-                builder.append(" ASC");
+                sb.append(" ASC");
                 break;
             case DESCENDING:
-                builder.append(" DESC");
+                sb.append(" DESC");
                 break;
             default:
-                throw new UnsupportedOperationException("unknown ordering: " + input.getOrdering());
+                throw new UnsupportedOperationException("unknown ordering: " + sortItem.getOrdering());
         }
 
-        return builder.toString();
-    };
+        switch (sortItem.getNullOrdering()) {
+            case FIRST:
+                sb.append(" NULLS FIRST");
+                break;
+            case LAST:
+                sb.append(" NULLS LAST");
+                break;
+            default:
+                break;
+        }
+        return sb.toString();
+    }
 
     private static void appendAliasColumns(StringBuilder builder, List<String> columns) {
         if (!columns.isEmpty()) {

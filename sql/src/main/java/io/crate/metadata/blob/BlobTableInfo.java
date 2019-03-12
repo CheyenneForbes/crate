@@ -22,9 +22,7 @@
 package io.crate.metadata.blob;
 
 import com.google.common.collect.ImmutableList;
-import io.crate.Version;
 import io.crate.action.sql.SessionContext;
-import io.crate.analyze.AlterBlobTableParameterInfo;
 import io.crate.analyze.TableParameterInfo;
 import io.crate.analyze.WhereClause;
 import io.crate.metadata.ColumnIdent;
@@ -40,7 +38,7 @@ import io.crate.metadata.table.StoredTable;
 import io.crate.metadata.table.TableInfo;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
-import org.apache.lucene.util.BytesRef;
+import org.elasticsearch.Version;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.common.collect.Tuple;
 
@@ -58,10 +56,10 @@ public class BlobTableInfo implements TableInfo, ShardedTable, StoredTable {
 
     private final RelationName ident;
     private final int numberOfShards;
-    private final BytesRef numberOfReplicas;
+    private final String numberOfReplicas;
     private final String index;
     private final LinkedHashSet<Reference> columns = new LinkedHashSet<>();
-    private final BytesRef blobsPath;
+    private final String blobsPath;
     private final TableParameterInfo tableParameterInfo;
     private final Map<String, Object> tableParameters;
     private final Version versionCreated;
@@ -79,19 +77,19 @@ public class BlobTableInfo implements TableInfo, ShardedTable, StoredTable {
     public BlobTableInfo(RelationName ident,
                          String index,
                          int numberOfShards,
-                         BytesRef numberOfReplicas,
+                         String numberOfReplicas,
                          Map<String, Object> tableParameters,
-                         BytesRef blobsPath,
+                         String blobsPath,
                          @Nullable Version versionCreated,
                          @Nullable Version versionUpgraded,
                          boolean closed) {
-        assert ident.indexName().equals(index) : "RelationName indexName must match index";
+        assert ident.indexNameOrAlias().equals(index) : "RelationName indexName must match index";
         this.ident = ident;
         this.index = index;
         this.numberOfShards = numberOfShards;
         this.numberOfReplicas = numberOfReplicas;
         this.blobsPath = blobsPath;
-        this.tableParameterInfo = new AlterBlobTableParameterInfo();
+        this.tableParameterInfo = TableParameterInfo.BLOB_TABLE_ALTER_PARAMETER_INFO;
         this.tableParameters = tableParameters;
         this.versionCreated = versionCreated;
         this.versionUpgraded = versionUpgraded;
@@ -141,7 +139,7 @@ public class BlobTableInfo implements TableInfo, ShardedTable, StoredTable {
     }
 
     @Override
-    public BytesRef numberOfReplicas() {
+    public String numberOfReplicas() {
         return numberOfReplicas;
     }
 
@@ -166,7 +164,7 @@ public class BlobTableInfo implements TableInfo, ShardedTable, StoredTable {
         }
     }
 
-    public BytesRef blobsPath() {
+    public String blobsPath() {
         return blobsPath;
     }
 

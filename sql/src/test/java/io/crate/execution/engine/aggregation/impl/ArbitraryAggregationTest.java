@@ -28,7 +28,7 @@ import io.crate.metadata.SearchPath;
 import io.crate.operation.aggregation.AggregationTest;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
-import org.apache.lucene.util.BytesRef;
+import io.crate.types.ObjectType;
 import org.junit.Test;
 
 import static org.hamcrest.Matchers.isOneOf;
@@ -88,7 +88,7 @@ public class ArbitraryAggregationTest extends AggregationTest {
 
     @Test
     public void testString() throws Exception {
-        Object[][] data = new Object[][]{{new BytesRef("Youri")}, {new BytesRef("Ruben")}};
+        Object[][] data = new Object[][]{{"Youri"}, {"Ruben"}};
         Object[][] result = executeAggregation(DataTypes.STRING, data);
 
         assertThat(result[0][0], isOneOf(data[0][0], data[1][0]));
@@ -104,6 +104,6 @@ public class ArbitraryAggregationTest extends AggregationTest {
 
     @Test(expected = NullPointerException.class)
     public void testUnsupportedType() throws Exception {
-        Object[][] result = executeAggregation(DataTypes.OBJECT, new Object[][]{{new Object()}});
+        Object[][] result = executeAggregation(ObjectType.untyped(), new Object[][]{{new Object()}});
     }
 }

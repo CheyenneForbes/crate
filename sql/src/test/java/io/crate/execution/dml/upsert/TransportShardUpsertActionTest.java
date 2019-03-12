@@ -22,6 +22,7 @@
 
 package io.crate.execution.dml.upsert;
 
+import io.crate.Constants;
 import io.crate.exceptions.InvalidColumnNameException;
 import io.crate.execution.ddl.SchemaUpdateClient;
 import io.crate.execution.dml.ShardResponse;
@@ -38,9 +39,7 @@ import io.crate.metadata.doc.DocTableInfo;
 import io.crate.metadata.table.Operation;
 import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
 import io.crate.types.DataTypes;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.Version;
-import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.replication.TransportWriteAction;
 import org.elasticsearch.cluster.action.shard.ShardStateAction;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
@@ -48,6 +47,7 @@ import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.UUIDs;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.VersionType;
@@ -71,7 +71,6 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Consumer;
 
 import static io.crate.testing.TestingHelpers.getFunctions;
 import static org.hamcrest.Matchers.instanceOf;
@@ -89,7 +88,7 @@ import static org.mockito.Mockito.when;
 public class TransportShardUpsertActionTest extends CrateDummyClusterServiceUnitTest {
 
     private final static RelationName TABLE_IDENT = new RelationName(Schemas.DOC_SCHEMA_NAME, "characters");
-    private final static String PARTITION_INDEX = new PartitionName(TABLE_IDENT, Arrays.asList(new BytesRef("1395874800000"))).asIndexName();
+    private final static String PARTITION_INDEX = new PartitionName(TABLE_IDENT, Arrays.asList("1395874800000")).asIndexName();
     private final static Reference ID_REF = new Reference(
         new ReferenceIdent(TABLE_IDENT, "id"), RowGranularity.DOC, DataTypes.SHORT);
 
@@ -105,14 +104,13 @@ public class TransportShardUpsertActionTest extends CrateDummyClusterServiceUnit
                                                  ClusterService clusterService,
                                                  TransportService transportService,
                                                  SchemaUpdateClient schemaUpdateClient,
-                                                 ActionFilters actionFilters,
                                                  TasksService tasksService,
                                                  IndicesService indicesService,
                                                  ShardStateAction shardStateAction,
                                                  Functions functions,
                                                  Schemas schemas,
                                                  IndexNameExpressionResolver indexNameExpressionResolver) {
-            super(settings, threadPool, clusterService, transportService, schemaUpdateClient, actionFilters,
+            super(settings, threadPool, clusterService, transportService, schemaUpdateClient,
                 tasksService, indicesService, shardStateAction, functions, schemas, indexNameExpressionResolver);
         }
 
@@ -127,7 +125,7 @@ public class TransportShardUpsertActionTest extends CrateDummyClusterServiceUnit
                                               boolean isRetry) throws Exception {
              throw new VersionConflictEngineException(
                 indexShard.shardId(),
-                request.type(),
+                 Constants.DEFAULT_MAPPING_TYPE,
                 item.id(),
                 "document with id: " + item.id() + " already exists in '" + request.shardId().getIndexName() + '\'');
         }
@@ -145,7 +143,7 @@ public class TransportShardUpsertActionTest extends CrateDummyClusterServiceUnit
 
         IndicesService indicesService = mock(IndicesService.class);
         IndexService indexService = mock(IndexService.class);
-        Index charactersIndex = new Index(TABLE_IDENT.indexName(), charactersIndexUUID);
+        Index charactersIndex = new Index(TABLE_IDENT.indexNameOrAlias(), charactersIndexUUID);
         Index partitionIndex = new Index(PARTITION_INDEX, partitionIndexUUID);
 
         when(indicesService.indexServiceSafe(charactersIndex)).thenReturn(indexService);
@@ -163,9 +161,8 @@ public class TransportShardUpsertActionTest extends CrateDummyClusterServiceUnit
             Settings.EMPTY,
             mock(ThreadPool.class),
             clusterService,
-            MockTransportService.createNewService(Settings.EMPTY, Version.V_6_0_1, THREAD_POOL, clusterService.getClusterSettings()),
+            MockTransportService.createNewService(Settings.EMPTY, Version.ES_V_6_5_1, THREAD_POOL, clusterService.getClusterSettings()),
             mock(SchemaUpdateClient.class),
-            mock(ActionFilters.class),
             mock(TasksService.class),
             indicesService,
             mock(ShardStateAction.class),
@@ -177,8 +174,11 @@ public class TransportShardUpsertActionTest extends CrateDummyClusterServiceUnit
 
     @Test
     public void testExceptionWhileProcessingItemsNotContinueOnError() throws Exception {
-        ShardId shardId = new ShardId(TABLE_IDENT.indexName(), charactersIndexUUID, 0);
+        ShardId shardId = new ShardId(TABLE_IDENT.indexNameOrAlias(), charactersIndexUUID, 0);
         ShardUpsertRequest request = new ShardUpsertRequest.Builder(
+            "dummyUser",
+            "dummySchema",
+            TimeValue.timeValueSeconds(30),
             DuplicateKeyAction.UPDATE_OR_FAIL,
             false,
             null,
@@ -196,8 +196,11 @@ public class TransportShardUpsertActionTest extends CrateDummyClusterServiceUnit
 
     @Test
     public void testExceptionWhileProcessingItemsContinueOnError() throws Exception {
-        ShardId shardId = new ShardId(TABLE_IDENT.indexName(), charactersIndexUUID, 0);
+        ShardId shardId = new ShardId(TABLE_IDENT.indexNameOrAlias(), charactersIndexUUID, 0);
         ShardUpsertRequest request = new ShardUpsertRequest.Builder(
+            "dummyUser",
+            "dummySchema",
+            TimeValue.timeValueSeconds(30),
             DuplicateKeyAction.UPDATE_OR_FAIL,
             true,
             null,
@@ -235,8 +238,11 @@ public class TransportShardUpsertActionTest extends CrateDummyClusterServiceUnit
 
     @Test
     public void testKilledSetWhileProcessingItemsDoesNotThrowException() throws Exception {
-        ShardId shardId = new ShardId(TABLE_IDENT.indexName(), charactersIndexUUID, 0);
+        ShardId shardId = new ShardId(TABLE_IDENT.indexNameOrAlias(), charactersIndexUUID, 0);
         ShardUpsertRequest request = new ShardUpsertRequest.Builder(
+            "dummyUser",
+            "dummySchema",
+            TimeValue.timeValueSeconds(30),
             DuplicateKeyAction.UPDATE_OR_FAIL,
             false,
             null,
@@ -254,8 +260,11 @@ public class TransportShardUpsertActionTest extends CrateDummyClusterServiceUnit
 
     @Test
     public void testItemsWithoutSourceAreSkippedOnReplicaOperation() throws Exception {
-        ShardId shardId = new ShardId(TABLE_IDENT.indexName(), charactersIndexUUID, 0);
+        ShardId shardId = new ShardId(TABLE_IDENT.indexNameOrAlias(), charactersIndexUUID, 0);
         ShardUpsertRequest request = new ShardUpsertRequest.Builder(
+            "dummyUser",
+            "dummySchema",
+            TimeValue.timeValueSeconds(30),
             DuplicateKeyAction.UPDATE_OR_FAIL,
             false,
             null,
@@ -270,7 +279,6 @@ public class TransportShardUpsertActionTest extends CrateDummyClusterServiceUnit
         // would fail with NPE if not skipped
         transportShardUpsertAction.processRequestItemsOnReplica(indexShard, request);
         verify(indexShard, times(0)).applyIndexOperationOnReplica(
-            anyLong(), anyLong(), any(VersionType.class), anyLong(), anyBoolean(), any(SourceToParse.class),
-            any(Consumer.class));
+            anyLong(), anyLong(), any(VersionType.class), anyLong(), anyBoolean(), any(SourceToParse.class));
     }
 }

@@ -35,7 +35,7 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 
-@ESIntegTestCase.ClusterScope(minNumDataNodes = 2, transportClientRatio = 0)
+@ESIntegTestCase.ClusterScope(minNumDataNodes = 2)
 public class SysNodeResiliencyIntegrationTest extends SQLTransportIntegrationTest {
 
     @Override
@@ -51,6 +51,9 @@ public class SysNodeResiliencyIntegrationTest extends SQLTransportIntegrationTes
      */
     @Test
     public void testTimingOutNode() throws Exception {
+        // wait until no master cluster state tasks are pending, otherwise this test may fail due to master task timeouts
+        waitNoPendingTasksOnAll();
+
         String[] nodeNames = internalCluster().getNodeNames();
         String n1 = nodeNames[0];
         String n2 = nodeNames[1];
@@ -75,17 +78,5 @@ public class SysNodeResiliencyIntegrationTest extends SQLTransportIntegrationTes
             internalCluster().clearDisruptionScheme(true);
             waitNoPendingTasksOnAll();
         }
-    }
-
-    /**
-     * Test cluster name check, when path.data does not contain cluster
-     * name as a folder.
-     * <p>
-     * TODO-ES6: Remove this when ES >= 6.0
-     */
-    @Test
-    public void testClusterNameInPathCheckDoesNotFailWithDefaultConfig() throws Exception {
-        execute("select description, passed from sys.node_checks where not passed and id=1000");
-        assertThat(response.rowCount(), is(0L));
     }
 }

@@ -21,10 +21,10 @@
 
 package io.crate.integrationtests;
 
-import io.crate.Version;
 import io.crate.testing.SQLResponse;
 import io.crate.testing.UseJdbc;
 import org.apache.lucene.util.Constants;
+import org.elasticsearch.Version;
 import org.elasticsearch.env.NodeEnvironment;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.hamcrest.Matchers;
@@ -89,7 +89,7 @@ public class NodeStatsTest extends SQLTransportIntegrationTest {
                 break;
             }
         }
-        assertThat((String) threadPool.get("name"), is("generic"));
+        assertThat(threadPool.get("name"), is("generic"));
         assertThat((Integer) threadPool.get("active"), greaterThanOrEqualTo(0));
         assertThat((Long) threadPool.get("rejected"), greaterThanOrEqualTo(0L));
         assertThat((Integer) threadPool.get("largest"), greaterThanOrEqualTo(0));
@@ -201,7 +201,7 @@ public class NodeStatsTest extends SQLTransportIntegrationTest {
 
     @Test
     public void testSysNodesCgroup() throws Exception {
-        if (Constants.LINUX && !"true".equals(System.getenv("IS_SHIPPABLE_CI_BUILD"))) { // cgroups are only available on Linux
+        if (Constants.LINUX && !"true".equals(System.getenv("SHIPPABLE"))) { // cgroups are only available on Linux
             SQLResponse response = execute("select" +
                                            " os['cgroup']['cpuacct']['control_group']," +
                                            " os['cgroup']['cpuacct']['usage_nanos']," +
@@ -351,9 +351,9 @@ public class NodeStatsTest extends SQLTransportIntegrationTest {
         assertThat(response.rowCount(), is(1L));
         assertThat(response.rows()[0][0], instanceOf(Map.class));
         assertThat((Map<String, Object>) response.rows()[0][0], allOf(hasKey("number"), hasKey("build_hash"), hasKey("build_snapshot")));
-        assertThat((String) response.rows()[0][1], is(Version.CURRENT.number()));
+        assertThat((String) response.rows()[0][1], is(Version.CURRENT.externalNumber()));
         assertThat(response.rows()[0][2], instanceOf(String.class));
-        assertThat((Boolean) response.rows()[0][3], is(Version.CURRENT.snapshot()));
+        assertThat((Boolean) response.rows()[0][3], is(Version.CURRENT.isSnapshot()));
     }
 
     @Test

@@ -25,11 +25,8 @@ import io.crate.expression.symbol.Function;
 import io.crate.expression.symbol.MatchPredicate;
 import io.crate.expression.symbol.Symbol;
 import io.crate.expression.symbol.SymbolVisitor;
-import io.crate.expression.symbol.Symbols;
-import io.crate.expression.symbol.format.SymbolPrinter;
-import io.crate.types.DataTypes;
+import io.crate.expression.symbol.WindowFunction;
 
-import javax.annotation.Nullable;
 import java.util.Locale;
 
 public class GroupBySymbolValidator {
@@ -37,53 +34,27 @@ public class GroupBySymbolValidator {
     private static final InnerValidator INNER_VALIDATOR = new InnerValidator();
 
     public static void validate(Symbol symbol) throws IllegalArgumentException, UnsupportedOperationException {
-        INNER_VALIDATOR.process(symbol, new Context("Cannot GROUP BY '%s': invalid data type '%s'"));
+        INNER_VALIDATOR.process(symbol, "Cannot GROUP BY '%s': invalid data type '%s'");
     }
 
     public static void validateForDistinctRewrite(Symbol symbol) throws IllegalArgumentException, UnsupportedOperationException {
-        INNER_VALIDATOR.process(symbol, new Context("Cannot use DISTINCT on '%s': invalid data type '%s'"));
+        INNER_VALIDATOR.process(symbol, "Cannot use DISTINCT on '%s': invalid data type '%s'");
     }
 
-    private static void validateDataType(Symbol symbol, String errorMesage) {
-        if (!DataTypes.PRIMITIVE_TYPES.contains(symbol.valueType())) {
-            throw new IllegalArgumentException(
-                String.format(Locale.ENGLISH, errorMesage,
-                    SymbolPrinter.INSTANCE.printUnqualified(symbol),
-                    symbol.valueType()));
-        }
-    }
-
-    private static class Context {
-        final String invalidTypeErrorMessage;
-        @Nullable
-        Function parentScalar;
-
-        public Context(String invalidTypeErrorMessage) {
-            this.invalidTypeErrorMessage = invalidTypeErrorMessage;
-        }
-    }
-
-    private static class InnerValidator extends SymbolVisitor<Context, Void> {
+    private static class InnerValidator extends SymbolVisitor<String, Void> {
 
         @Override
-        public Void visitFunction(Function function, Context context) {
+        public Void visitFunction(Function function, String errorMsgTemplate) {
             switch (function.info().type()) {
                 case SCALAR:
-                    // If is literal no further datatype validation is required
-                    if (Symbols.allLiterals(function)) {
-                        return null;
-                    }
-
-                    visitSymbol(function, context);
-                    if (context.parentScalar == null) {
-                        context.parentScalar = function;
-                    }
                     for (Symbol argument : function.arguments()) {
-                        process(argument, context);
+                        process(argument, errorMsgTemplate);
                     }
                     break;
                 case AGGREGATE:
                     throw new IllegalArgumentException("Aggregate functions are not allowed in GROUP BY");
+                case TABLE:
+                    throw new IllegalArgumentException("Table functions are not allowed in GROUP BY");
                 default:
                     throw new UnsupportedOperationException(
                         String.format(Locale.ENGLISH, "FunctionInfo.Type %s not handled", function.info().type()));
@@ -92,25 +63,19 @@ public class GroupBySymbolValidator {
         }
 
         @Override
-        public Void visitMatchPredicate(MatchPredicate matchPredicate, Context context) {
+        public Void visitWindowFunction(WindowFunction symbol, String context) {
+            throw new IllegalArgumentException("Window functions are not allowed in GROUP BY");
+        }
+
+        @Override
+        public Void visitMatchPredicate(MatchPredicate matchPredicate, String errorMsgTemplate) {
             throw new UnsupportedOperationException(String.format(Locale.ENGLISH,
                 "%s predicate cannot be used in a GROUP BY clause", io.crate.expression.predicate.MatchPredicate.NAME));
         }
 
         @Override
-        protected Void visitSymbol(Symbol symbol, Context context) {
-            // If is literal no further datatype validation is required
-            if (Symbols.allLiterals(symbol)) {
-                return null;
-            }
-
-            if (context.parentScalar == null) {
-                validateDataType(symbol, context.invalidTypeErrorMessage);
-            } else {
-                validateDataType(context.parentScalar, context.invalidTypeErrorMessage);
-            }
+        protected Void visitSymbol(Symbol symbol, String errorMsgTemplate) {
             return null;
         }
     }
-
 }

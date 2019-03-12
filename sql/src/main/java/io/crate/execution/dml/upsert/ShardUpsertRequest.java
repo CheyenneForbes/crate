@@ -28,7 +28,6 @@ import io.crate.execution.dml.ShardRequest;
 import io.crate.expression.symbol.Symbol;
 import io.crate.expression.symbol.Symbols;
 import io.crate.metadata.Reference;
-import org.elasticsearch.action.support.replication.ReplicationRequest;
 import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
@@ -53,6 +52,9 @@ public class ShardUpsertRequest extends ShardRequest<ShardUpsertRequest, ShardUp
     private boolean continueOnError;
     private boolean validateConstraints = true;
     private boolean isRetry;
+    private String userName;
+    private String currentSchema;
+
 
     /**
      * List of column names used on update
@@ -75,13 +77,17 @@ public class ShardUpsertRequest extends ShardRequest<ShardUpsertRequest, ShardUp
     ShardUpsertRequest() {
     }
 
-    private ShardUpsertRequest(ShardId shardId,
+    private ShardUpsertRequest(String userName,
+                               String currentSchema,
+                               ShardId shardId,
                                @Nullable String[] updateColumns,
                                @Nullable Reference[] insertColumns,
                                UUID jobId) {
         super(shardId, jobId);
         assert updateColumns != null || insertColumns != null
             : "Missing updateAssignments, whether for update nor for insert";
+        this.userName = userName;
+        this.currentSchema = currentSchema;
         this.updateColumns = updateColumns;
         this.insertColumns = insertColumns;
         if (insertColumns != null) {
@@ -90,6 +96,14 @@ public class ShardUpsertRequest extends ShardRequest<ShardUpsertRequest, ShardUp
                 insertValuesStreamer[i] = insertColumns[i].valueType().streamer();
             }
         }
+    }
+
+    public String userName() {
+        return userName;
+    }
+
+    public String currentSchema() {
+        return currentSchema;
     }
 
     String[] updateColumns() {
@@ -163,6 +177,9 @@ public class ShardUpsertRequest extends ShardRequest<ShardUpsertRequest, ShardUp
         duplicateKeyAction = DuplicateKeyAction.values()[in.readVInt()];
         validateConstraints = in.readBoolean();
 
+        userName = in.readString();
+        currentSchema = in.readString();
+
         int numItems = in.readVInt();
         readItems(in, numItems);
     }
@@ -190,6 +207,9 @@ public class ShardUpsertRequest extends ShardRequest<ShardUpsertRequest, ShardUp
         out.writeBoolean(continueOnError);
         out.writeVInt(duplicateKeyAction.ordinal());
         out.writeBoolean(validateConstraints);
+
+        out.writeString(userName);
+        out.writeString(currentSchema);
 
         out.writeVInt(items.size());
         for (Item item : items) {
@@ -331,6 +351,8 @@ public class ShardUpsertRequest extends ShardRequest<ShardUpsertRequest, ShardUp
 
     public static class Builder {
 
+        private final String userName;
+        private final String currentSchema;
         private final TimeValue timeout;
         private final DuplicateKeyAction duplicateKeyAction;
         private final boolean continueOnError;
@@ -341,32 +363,17 @@ public class ShardUpsertRequest extends ShardRequest<ShardUpsertRequest, ShardUp
         private final UUID jobId;
         private boolean validateGeneratedColumns;
 
-        public Builder(TimeValue timeout,
-                       DuplicateKeyAction duplicateKeyAction,
-                       boolean continueOnError,
-                       @Nullable String[] assignmentsColumns,
-                       @Nullable Reference[] missingAssignmentsColumns,
-                       UUID jobId) {
-            this(timeout, duplicateKeyAction, continueOnError, assignmentsColumns, missingAssignmentsColumns, jobId, true);
-        }
-
-        public Builder(DuplicateKeyAction duplicateKeyAction,
-                       boolean continueOnError,
-                       @Nullable String[] assignmentsColumns,
-                       @Nullable Reference[] missingAssignmentsColumns,
-                       UUID jobId,
-                       boolean validateGeneratedColumns) {
-            this(ReplicationRequest.DEFAULT_TIMEOUT, duplicateKeyAction, continueOnError,
-                assignmentsColumns, missingAssignmentsColumns, jobId, validateGeneratedColumns);
-        }
-
-        public Builder(TimeValue timeout,
+        public Builder(String userName,
+                       String currentSchema,
+                       TimeValue timeout,
                        DuplicateKeyAction duplicateKeyAction,
                        boolean continueOnError,
                        @Nullable String[] assignmentsColumns,
                        @Nullable Reference[] missingAssignmentsColumns,
                        UUID jobId,
                        boolean validateGeneratedColumns) {
+            this.userName = userName;
+            this.currentSchema = currentSchema;
             this.timeout = timeout;
             this.duplicateKeyAction = duplicateKeyAction;
             this.continueOnError = continueOnError;
@@ -378,6 +385,8 @@ public class ShardUpsertRequest extends ShardRequest<ShardUpsertRequest, ShardUp
 
         public ShardUpsertRequest newRequest(ShardId shardId) {
             return new ShardUpsertRequest(
+                userName,
+                currentSchema,
                 shardId,
                 assignmentsColumns,
                 missingAssignmentsColumns,

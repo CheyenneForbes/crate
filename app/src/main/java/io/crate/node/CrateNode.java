@@ -23,35 +23,31 @@
 package io.crate.node;
 
 import com.google.common.collect.ImmutableList;
-import io.crate.Build;
-import io.crate.Version;
 import io.crate.plugin.BlobPlugin;
-import io.crate.plugin.CrateCorePlugin;
+import io.crate.plugin.CrateCommonPlugin;
 import io.crate.plugin.HttpTransportPlugin;
+import io.crate.plugin.LicensePlugin;
 import io.crate.plugin.PluginLoaderPlugin;
 import io.crate.plugin.SrvPlugin;
 import io.crate.udc.plugin.UDCPlugin;
-import org.apache.logging.log4j.Logger;
-import org.apache.lucene.util.Constants;
 import org.elasticsearch.analysis.common.CommonAnalysisPlugin;
-import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.logging.LogConfigurator;
 import org.elasticsearch.discovery.ec2.Ec2DiscoveryPlugin;
 import org.elasticsearch.env.Environment;
-import org.elasticsearch.monitor.jvm.JvmInfo;
 import org.elasticsearch.node.Node;
 import org.elasticsearch.plugin.repository.url.URLRepositoryPlugin;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.repositories.s3.S3RepositoryPlugin;
 import org.elasticsearch.transport.Netty4Plugin;
 
-import java.util.Arrays;
 import java.util.Collection;
 
 public class CrateNode extends Node {
 
     private static final Collection<Class<? extends Plugin>> CLASSPATH_PLUGINS = ImmutableList.of(
+        LicensePlugin.class,
         PluginLoaderPlugin.class,
-        CrateCorePlugin.class,
+        CrateCommonPlugin.class,
         HttpTransportPlugin.class,
         BlobPlugin.class,
         SrvPlugin.class,
@@ -63,41 +59,12 @@ public class CrateNode extends Node {
         Netty4Plugin.class);
 
     protected CrateNode(Environment environment) {
-        super(environment, CLASSPATH_PLUGINS);
+        super(environment, CLASSPATH_PLUGINS, true);
     }
 
     @Override
-    protected void startUpLogging(Logger logger,
-                                  Settings tmpSettings,
-                                  String nodeName,
-                                  String nodeId,
-                                  boolean hadPredefinedNodeName) {
-        if (hadPredefinedNodeName == false) {
-            logger.info("node name [{}] derived from node ID [{}]; set [{}] to override", nodeName, nodeId, NODE_NAME_SETTING.getKey());
-        } else {
-            logger.info("node name [{}], node ID [{}]", nodeName, nodeId);
-        }
-
-        final JvmInfo jvmInfo = JvmInfo.jvmInfo();
-        logger.info(
-            "CrateDB version[{}], pid[{}], build[{}/{}], OS[{}/{}/{}], JVM[{}/{}/{}/{}]",
-            Version.CURRENT,
-            jvmInfo.pid(),
-            Build.CURRENT.hashShort(),
-            Build.CURRENT.timestamp(),
-            Constants.OS_NAME,
-            Constants.OS_VERSION,
-            Constants.OS_ARCH,
-            Constants.JVM_VENDOR,
-            Constants.JVM_NAME,
-            Constants.JAVA_VERSION,
-            Constants.JVM_VERSION);
-        logger.info("JVM arguments {}", Arrays.toString(jvmInfo.getInputArguments()));
-
-        if (logger.isDebugEnabled()) {
-            Environment environment = getEnvironment();
-            logger.debug("using config [{}], data [{}], logs [{}], plugins [{}]",
-                environment.configFile(), Arrays.toString(environment.dataFiles()), environment.logsFile(), environment.pluginsFile());
-        }
+    protected void registerDerivedNodeNameWithLogger(String nodeName) {
+        LogConfigurator.setNodeName(nodeName);
     }
 }
+

@@ -71,7 +71,6 @@ number of replicas.
     | doc                | partitioned_table       | BASE TABLE |                4 | 0-1                |
     | doc                | quotes                  | BASE TABLE |                2 | 0                  |
     | information_schema | columns                 | BASE TABLE |             NULL | NULL               |
-    | information_schema | ingestion_rules         | BASE TABLE |             NULL | NULL               |
     | information_schema | key_column_usage        | BASE TABLE |             NULL | NULL               |
     | information_schema | referential_constraints | BASE TABLE |             NULL | NULL               |
     | information_schema | routines                | BASE TABLE |             NULL | NULL               |
@@ -81,6 +80,14 @@ number of replicas.
     | information_schema | table_partitions        | BASE TABLE |             NULL | NULL               |
     | information_schema | tables                  | BASE TABLE |             NULL | NULL               |
     | information_schema | views                   | BASE TABLE |             NULL | NULL               |
+    | pg_catalog         | pg_attrdef              | BASE TABLE |             NULL | NULL               |
+    | pg_catalog         | pg_attribute            | BASE TABLE |             NULL | NULL               |
+    | pg_catalog         | pg_class                | BASE TABLE |             NULL | NULL               |
+    | pg_catalog         | pg_constraint           | BASE TABLE |             NULL | NULL               |
+    | pg_catalog         | pg_database             | BASE TABLE |             NULL | NULL               |
+    | pg_catalog         | pg_description          | BASE TABLE |             NULL | NULL               |
+    | pg_catalog         | pg_index                | BASE TABLE |             NULL | NULL               |
+    | pg_catalog         | pg_namespace            | BASE TABLE |             NULL | NULL               |
     | pg_catalog         | pg_type                 | BASE TABLE |             NULL | NULL               |
     | sys                | allocations             | BASE TABLE |             NULL | NULL               |
     | sys                | checks                  | BASE TABLE |             NULL | NULL               |
@@ -100,7 +107,7 @@ number of replicas.
     | sys                | summits                 | BASE TABLE |             NULL | NULL               |
     | sys                | users                   | BASE TABLE |             NULL | NULL               |
     +--------------------+-------------------------+------------+------------------+--------------------+
-    SELECT 33 rows in set (... sec)
+    SELECT 40 rows in set (... sec)
 
 The table also contains additional information such as specified routing
 (:ref:`sql_ddl_sharding`) and partitioned by (:ref:`partitioned_tables`)
@@ -186,7 +193,7 @@ The settings can be verified by querying ``information_schema.tables``::
     +--------------+------------------+
     | alloc_enable | refresh_interval |
     +--------------+------------------+
-    | PRIMARIES    |              500 |
+    | primaries    |              500 |
     +--------------+------------------+
     SELECT 1 row in set (... sec)
 
@@ -212,11 +219,16 @@ options of all available views.
     cr> SELECT table_schema, table_name, view_definition
     ... FROM information_schema.views
     ... ORDER BY table_schema ASC, table_name ASC;
-    +--------------+------------+--------...----------------------------------------------------------+
-    | table_schema | table_name | view_definition                                                     |
-    +--------------+------------+--------...----------------------------------------------------------+
-    | doc          | galaxies   | SELECT ... FROM doc.locations WHERE (doc.locations.kind = 'Galaxy') |
-    +--------------+------------+--------...----------------------------------------------------------+
+    +--------------+------------+-------------------------+
+    | table_schema | table_name | view_definition         |
+    +--------------+------------+-------------------------+
+    | doc          | galaxies   | SELECT                  |
+    |              |            |   "id"                  |
+    |              |            | , "name"                |
+    |              |            | , "description"         |
+    |              |            | FROM "locations"        |
+    |              |            | WHERE "kind" = 'Galaxy' |
+    +--------------+------------+-------------------------+
     SELECT 1 row in set (... sec)
 
 .. rubric:: Schema
@@ -248,6 +260,8 @@ options of all available views.
 
    cr> DROP view galaxies;
    DROP OK, 1 row affected (... sec)
+
+.. _information_schema_columns:
 
 ``columns``
 -----------
@@ -603,20 +617,20 @@ For example you can use this table to list existing tokenizers like this::
     ... from information_schema.routines
     ... where routine_type='TOKENIZER'
     ... order by routine_name asc limit 10;
-    +----------------+
-    | routine_name   |
-    +----------------+
-    | PathHierarchy  |
-    | classic        |
-    | edgeNGram      |
-    | edge_ngram     |
-    | keyword        |
-    | letter         |
-    | lowercase      |
-    | nGram          |
-    | ngram          |
-    | path_hierarchy |
-    +----------------+
+    +---------------+
+    | routine_name  |
+    +---------------+
+    | PathHierarchy |
+    | char_group    |
+    | classic       |
+    | edgeNGram     |
+    | edge_ngram    |
+    | keyword       |
+    | letter        |
+    | lowercase     |
+    | nGram         |
+    | ngram         |
+    +---------------+
     SELECT 10 rows in set (... sec)
 
 Or get an overview of how many routines and routine types are available::
@@ -630,8 +644,8 @@ Or get an overview of how many routines and routine types are available::
     +----------+--------------+
     |       45 | ANALYZER     |
     |        3 | CHAR_FILTER  |
-    |       17 | TOKENIZER    |
-    |       60 | TOKEN_FILTER |
+    |       18 | TOKENIZER    |
+    |       63 | TOKEN_FILTER |
     +----------+--------------+
     SELECT 4 rows in set (... sec)
 
@@ -761,34 +775,3 @@ CrateDB based to the current SQL standard (see :ref:`sql_supported_features`)::
 :comments:
     Either ``NULL`` or shows a comment about the supported status of the
     feature
-
-.. _information_schema_ingest:
-
-``ingestion_rules``
--------------------
-
-The ``ingestion_rules`` table contains rules created by
-:ref:`create-ingest-rule` statements.
-
-.. rubric:: Schema
-
-+--------------------+-------------+
-| Name               | Data Type   |
-+====================+=============+
-| rule_name          | String      |
-+--------------------+-------------+
-| source_ident       | String      |
-+--------------------+-------------+
-| target_table       | String      |
-+--------------------+-------------+
-| condition          | String      |
-+--------------------+-------------+
-
-:rule_name:
-    The rule name
-:source_ident:
-    The ingestion source identifier
-:target_table:
-    The target table identifier
-:condition:
-    A boolean expression used to filter the source data

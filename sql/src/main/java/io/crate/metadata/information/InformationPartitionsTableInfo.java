@@ -39,6 +39,8 @@ import io.crate.metadata.RowGranularity;
 import io.crate.metadata.expressions.RowCollectExpressionFactory;
 import io.crate.metadata.table.ColumnRegistrar;
 import io.crate.types.DataTypes;
+import io.crate.types.ObjectType;
+import org.elasticsearch.Version;
 
 import javax.annotation.Nullable;
 import java.util.Collections;
@@ -59,13 +61,13 @@ public class InformationPartitionsTableInfo extends InformationTableInfo {
     public static Map<ColumnIdent, RowCollectExpressionFactory<PartitionInfo>> expressions() {
         return ImmutableMap.<ColumnIdent, RowCollectExpressionFactory<PartitionInfo>>builder()
             .put(InformationTablesTableInfo.Columns.TABLE_NAME,
-                () -> NestableCollectExpression.objToBytesRef(r -> r.name().relationName().name()))
+                () -> NestableCollectExpression.forFunction(r -> r.name().relationName().name()))
             .put(Columns.TABLE_SCHEMA,
-                () -> NestableCollectExpression.objToBytesRef(r -> r.name().relationName().schema()))
+                () -> NestableCollectExpression.forFunction(r -> r.name().relationName().schema()))
             .put(InformationTablesTableInfo.Columns.TABLE_TYPE,
-                () -> NestableCollectExpression.objToBytesRef(r -> RelationType.BASE_TABLE.pretty()))
+                () -> NestableCollectExpression.forFunction(r -> RelationType.BASE_TABLE.pretty()))
             .put(Columns.PARTITION_IDENT,
-                () -> NestableCollectExpression.objToBytesRef(r -> r.name().ident()))
+                () -> NestableCollectExpression.forFunction(r -> r.name().ident()))
             .put(Columns.VALUES, () -> new NestableCollectExpression<PartitionInfo, Map<String, Object>>() {
                 private Map<String, Object> value;
 
@@ -90,9 +92,9 @@ public class InformationPartitionsTableInfo extends InformationTableInfo {
             .put(InformationTablesTableInfo.Columns.NUMBER_OF_SHARDS,
                 () -> NestableCollectExpression.forFunction(PartitionInfo::numberOfShards))
             .put(InformationTablesTableInfo.Columns.NUMBER_OF_REPLICAS,
-                () -> NestableCollectExpression.objToBytesRef(PartitionInfo::numberOfReplicas))
+                () -> NestableCollectExpression.forFunction(PartitionInfo::numberOfReplicas))
             .put(InformationTablesTableInfo.Columns.ROUTING_HASH_FUNCTION,
-                () -> NestableCollectExpression.objToBytesRef(r -> IndexMappings.DEFAULT_ROUTING_HASH_FUNCTION_PRETTY_NAME))
+                () -> NestableCollectExpression.forFunction(r -> IndexMappings.DEFAULT_ROUTING_HASH_FUNCTION_PRETTY_NAME))
             .put(InformationTablesTableInfo.Columns.CLOSED,
                 () -> NestableCollectExpression.forFunction(PartitionInfo::isClosed))
             .put(InformationTablesTableInfo.Columns.TABLE_VERSION, PartitionsVersionExpression::new)
@@ -105,39 +107,46 @@ public class InformationPartitionsTableInfo extends InformationTableInfo {
             .register(Columns.TABLE_SCHEMA, DataTypes.STRING)
             .register(InformationTablesTableInfo.Columns.TABLE_NAME, DataTypes.STRING)
             .register(Columns.PARTITION_IDENT, DataTypes.STRING)
-            .register(Columns.VALUES, DataTypes.OBJECT)
+            .register(Columns.VALUES, ObjectType.untyped())
             .register(InformationTablesTableInfo.Columns.NUMBER_OF_SHARDS, DataTypes.INTEGER)
             .register(InformationTablesTableInfo.Columns.NUMBER_OF_REPLICAS, DataTypes.STRING)
             .register(InformationTablesTableInfo.Columns.ROUTING_HASH_FUNCTION, DataTypes.STRING)
-            .register(InformationTablesTableInfo.Columns.TABLE_VERSION, DataTypes.OBJECT)
-            .register(InformationTablesTableInfo.Columns.TABLE_VERSION_CREATED, DataTypes.OBJECT)
-            .register(InformationTablesTableInfo.Columns.TABLE_VERSION_CREATED_CRATEDB, DataTypes.STRING)
-            .register(InformationTablesTableInfo.Columns.TABLE_VERSION_CREATED_ES, DataTypes.STRING)
-            .register(InformationTablesTableInfo.Columns.TABLE_VERSION_UPGRADED, DataTypes.OBJECT)
-            .register(InformationTablesTableInfo.Columns.TABLE_VERSION_UPGRADED_CRATEDB, DataTypes.STRING)
-            .register(InformationTablesTableInfo.Columns.TABLE_VERSION_UPGRADED_ES, DataTypes.STRING)
             .register(InformationTablesTableInfo.Columns.CLOSED, DataTypes.BOOLEAN)
-            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS, DataTypes.OBJECT)
-            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS_BLOCKS, DataTypes.OBJECT)
-            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS_BLOCKS_READ_ONLY, DataTypes.BOOLEAN)
-            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS_BLOCKS_READ, DataTypes.BOOLEAN)
-            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS_BLOCKS_WRITE, DataTypes.BOOLEAN)
-            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS_BLOCKS_METADATA, DataTypes.BOOLEAN)
-            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS_TRANSLOG, DataTypes.OBJECT)
-            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS_TRANSLOG_FLUSH_THRESHOLD_SIZE, DataTypes.LONG)
-            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS_TRANSLOG_SYNC_INTERVAL, DataTypes.LONG)
-            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS_ROUTING, DataTypes.OBJECT)
-            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS_ROUTING_ALLOCATION, DataTypes.OBJECT)
-            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS_ROUTING_ALLOCATION_ENABLE, DataTypes.STRING)
-            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS_ROUTING_ALLOCATION_TOTAL_SHARDS_PER_NODE, DataTypes.INTEGER)
-            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS_WARMER, DataTypes.OBJECT)
-            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS_WARMER_ENABLED, DataTypes.BOOLEAN)
-            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS_UNASSIGNED, DataTypes.OBJECT)
-            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS_UNASSIGNED_NODE_LEFT, DataTypes.OBJECT)
-            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS_UNASSIGNED_NODE_LEFT_DELAYED_TIMEOUT, DataTypes.LONG)
-            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS_MAPPING, DataTypes.OBJECT)
-            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS_MAPPING_TOTAL_FIELDS, DataTypes.OBJECT)
-            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS_MAPPING_TOTAL_FIELDS_LIMIT, DataTypes.INTEGER);
+            .register(InformationTablesTableInfo.Columns.TABLE_VERSION, ObjectType.builder()
+                .setInnerType(Version.Property.CREATED.toString(), DataTypes.STRING)
+                .setInnerType(Version.Property.UPGRADED.toString(), DataTypes.STRING)
+                .build())
+            .register(InformationTablesTableInfo.Columns.TABLE_SETTINGS, ObjectType.builder()
+                .setInnerType("blocks", ObjectType.builder()
+                    .setInnerType("read_only", DataTypes.BOOLEAN)
+                    .setInnerType("read", DataTypes.BOOLEAN)
+                    .setInnerType("write", DataTypes.BOOLEAN)
+                    .setInnerType("metadata", DataTypes.BOOLEAN)
+                    .build())
+                .setInnerType("translog", ObjectType.builder()
+                    .setInnerType("flush_threshold_size", DataTypes.LONG)
+                    .setInnerType("sync_interval", DataTypes.LONG)
+                    .build())
+                .setInnerType("routing", ObjectType.builder()
+                    .setInnerType("allocation", ObjectType.builder()
+                        .setInnerType("enable", DataTypes.STRING)
+                        .setInnerType("total_shards_per_node", DataTypes.INTEGER)
+                        .build())
+                    .build())
+                .setInnerType("warmer", ObjectType.builder()
+                    .setInnerType("enabled", DataTypes.BOOLEAN)
+                    .build())
+                .setInnerType("unassigned", ObjectType.builder()
+                    .setInnerType("node_left", ObjectType.builder()
+                        .setInnerType("delayed_timeout", DataTypes.LONG)
+                        .build())
+                    .build())
+                .setInnerType("mapping", ObjectType.builder()
+                    .setInnerType("total_fields", ObjectType.builder()
+                        .setInnerType("limit", DataTypes.INTEGER)
+                        .build())
+                    .build())
+                .build());
     }
 
     InformationPartitionsTableInfo() {

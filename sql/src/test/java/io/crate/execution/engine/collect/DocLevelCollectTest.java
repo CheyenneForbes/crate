@@ -31,6 +31,7 @@ import io.crate.data.Row;
 import io.crate.execution.dsl.phases.ExecutionPhase;
 import io.crate.execution.dsl.phases.NodeOperation;
 import io.crate.execution.dsl.phases.RoutedCollectPhase;
+import io.crate.execution.engine.distribution.StreamBucket;
 import io.crate.execution.jobs.JobSetup;
 import io.crate.execution.jobs.RootTask;
 import io.crate.execution.jobs.SharedShardContexts;
@@ -193,8 +194,7 @@ public class DocLevelCollectTest extends SQLTransportIntegrationTest {
             toCollect,
             ImmutableList.of(),
             whereClause.queryOrFallback(),
-            DistributionInfo.DEFAULT_BROADCAST,
-            null
+            DistributionInfo.DEFAULT_BROADCAST
         );
     }
 
@@ -207,7 +207,7 @@ public class DocLevelCollectTest extends SQLTransportIntegrationTest {
         RelationName relationName = new RelationName(Schemas.DOC_SCHEMA_NAME, PARTITIONED_TABLE_NAME);
         Routing routing = schemas.getTableInfo(relationName).getRouting(
             clusterService().state(),
-            new RoutingProvider(Randomness.get().nextInt(), new String[0]),
+            new RoutingProvider(Randomness.get().nextInt(), Collections.emptyList()),
             WhereClause.MATCH_ALL,
             RoutingProvider.ShardSelection.ANY,
             SessionContext.systemSessionContext());
@@ -243,8 +243,13 @@ public class DocLevelCollectTest extends SQLTransportIntegrationTest {
         NodeOperation nodeOperation = NodeOperation.withDirectResponse(collectNode, mock(ExecutionPhase.class), (byte) 0,
             "remoteNode");
 
-        List<CompletableFuture<Bucket>> results = jobSetup.prepareOnRemote(
-            ImmutableList.of(nodeOperation), builder, sharedShardContexts);
+        List<CompletableFuture<StreamBucket>> results = jobSetup.prepareOnRemote(
+            "dummyUser",
+            "dummySchema",
+            ImmutableList.of(nodeOperation),
+            builder,
+            sharedShardContexts
+        );
         RootTask rootTask = tasksService.createTask(builder);
         rootTask.start();
         return results.get(0).get(2, TimeUnit.SECONDS);

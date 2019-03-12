@@ -30,9 +30,8 @@ import io.crate.analyze.WhereClause;
 import io.crate.data.Row;
 import io.crate.execution.dsl.phases.RoutedCollectPhase;
 import io.crate.expression.reference.StaticTableReferenceResolver;
-import io.crate.expression.reference.sys.snapshot.SysSnapshot;
-import io.crate.expression.reference.sys.snapshot.SysSnapshots;
 import io.crate.integrationtests.SQLTransportIntegrationTest;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.Reference;
 import io.crate.metadata.ReferenceIdent;
 import io.crate.metadata.RelationName;
@@ -40,13 +39,10 @@ import io.crate.metadata.Routing;
 import io.crate.metadata.RowGranularity;
 import io.crate.metadata.shard.unassigned.UnassignedShard;
 import io.crate.metadata.sys.SysShardsTableInfo;
-import io.crate.metadata.sys.SysTableDefinitions;
 import io.crate.planner.distribution.DistributionInfo;
 import io.crate.types.DataTypes;
 import org.elasticsearch.cluster.routing.ShardRoutingState;
 import org.elasticsearch.cluster.service.ClusterService;
-import org.elasticsearch.repositories.RepositoryException;
-import org.elasticsearch.snapshots.SnapshotException;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.junit.Test;
 
@@ -54,12 +50,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.function.Supplier;
 
-import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.Mockito.mock;
 
@@ -82,13 +73,13 @@ public class SystemCollectSourceTest extends SQLTransportIntegrationTest {
             Collections.singletonList(shardId),
             ImmutableList.of(),
             WhereClause.MATCH_ALL.queryOrFallback(),
-            DistributionInfo.DEFAULT_BROADCAST,
-            null
+            DistributionInfo.DEFAULT_BROADCAST
         );
         collectPhase.orderBy(new OrderBy(Collections.singletonList(shardId), new boolean[]{false}, new Boolean[]{null}));
 
         Iterable<? extends Row> rows = systemCollectSource.toRowsIterableTransformation(
             collectPhase,
+            CoordinatorTxnCtx.systemTransactionContext(),
             unassignedShardRefResolver(),
             false
         ).apply(Collections.singletonList(new UnassignedShard(
@@ -117,16 +108,16 @@ public class SystemCollectSourceTest extends SQLTransportIntegrationTest {
             ImmutableList.of(),
             ImmutableList.of(),
             WhereClause.MATCH_ALL.queryOrFallback(),
-            DistributionInfo.DEFAULT_BROADCAST,
-            null);
+            DistributionInfo.DEFAULT_BROADCAST);
 
         // No read isolation
         List<String> noReadIsolationIterable = new ArrayList<>();
         noReadIsolationIterable.add("a");
         noReadIsolationIterable.add("b");
 
+        CoordinatorTxnCtx txnCtx = CoordinatorTxnCtx.systemTransactionContext();
         Iterable<? extends Row> rows = systemCollectSource.toRowsIterableTransformation(
-            collectPhase, unassignedShardRefResolver(), false)
+            collectPhase, txnCtx, unassignedShardRefResolver(), false)
             .apply(noReadIsolationIterable);
         assertThat(Iterables.size(rows), is(2));
 
@@ -138,29 +129,11 @@ public class SystemCollectSourceTest extends SQLTransportIntegrationTest {
         readIsolationIterable.add("a");
         readIsolationIterable.add("b");
 
-        rows = systemCollectSource.toRowsIterableTransformation(collectPhase, unassignedShardRefResolver(), true)
+        rows = systemCollectSource.toRowsIterableTransformation(collectPhase, txnCtx, unassignedShardRefResolver(), true)
             .apply(readIsolationIterable);
         assertThat(Iterables.size(rows), is(2));
 
         readIsolationIterable.add("c");
         assertThat(Iterables.size(rows), is(2));
-    }
-
-    @Test
-    public void testSnapshotSupplierExposesError() throws Exception {
-        // SysSnapshots issues queries, so errors may occur. This test ensures that this errors are exposed.
-        expectedException.expect(ExecutionException.class);
-        expectedException.expectMessage(containsString("[my_repository] failed to find repository"));
-        Supplier<CompletableFuture<? extends Iterable<SysSnapshot>>> snapshotSupplier = SysTableDefinitions.snapshotSupplier(
-            new SysSnapshots(null, null) {
-
-                @Override
-                public Iterable<SysSnapshot> snapshotsGetter() throws SnapshotException, RepositoryException {
-                    throw new RepositoryException("my_repository", "failed to find repository");
-                }
-            }
-        );
-        CompletableFuture future = snapshotSupplier.get();
-        future.get(1, TimeUnit.SECONDS);
     }
 }

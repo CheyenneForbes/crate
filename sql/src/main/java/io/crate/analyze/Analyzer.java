@@ -28,11 +28,11 @@ import io.crate.analyze.repositories.RepositoryParamValidator;
 import io.crate.exceptions.RelationUnknown;
 import io.crate.exceptions.RelationsUnknown;
 import io.crate.execution.ddl.RepositoryService;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.FulltextAnalyzerResolver;
 import io.crate.metadata.Functions;
 import io.crate.metadata.RelationName;
 import io.crate.metadata.Schemas;
-import io.crate.metadata.TransactionContext;
 import io.crate.sql.tree.AlterBlobTable;
 import io.crate.sql.tree.AlterClusterRerouteRetryFailed;
 import io.crate.sql.tree.AlterTable;
@@ -49,24 +49,25 @@ import io.crate.sql.tree.CopyTo;
 import io.crate.sql.tree.CreateAnalyzer;
 import io.crate.sql.tree.CreateBlobTable;
 import io.crate.sql.tree.CreateFunction;
-import io.crate.sql.tree.CreateIngestRule;
 import io.crate.sql.tree.CreateRepository;
 import io.crate.sql.tree.CreateSnapshot;
 import io.crate.sql.tree.CreateTable;
 import io.crate.sql.tree.CreateUser;
 import io.crate.sql.tree.CreateView;
 import io.crate.sql.tree.DeallocateStatement;
+import io.crate.sql.tree.DecommissionNodeStatement;
 import io.crate.sql.tree.Delete;
 import io.crate.sql.tree.DenyPrivilege;
+import io.crate.sql.tree.DropAnalyzer;
 import io.crate.sql.tree.DropBlobTable;
 import io.crate.sql.tree.DropFunction;
-import io.crate.sql.tree.DropIngestRule;
 import io.crate.sql.tree.DropRepository;
 import io.crate.sql.tree.DropSnapshot;
 import io.crate.sql.tree.DropTable;
 import io.crate.sql.tree.DropUser;
 import io.crate.sql.tree.DropView;
 import io.crate.sql.tree.Explain;
+import io.crate.sql.tree.GCDanglingArtifacts;
 import io.crate.sql.tree.GrantPrivilege;
 import io.crate.sql.tree.InsertFromSubquery;
 import io.crate.sql.tree.InsertFromValues;
@@ -83,9 +84,11 @@ import io.crate.sql.tree.SetStatement;
 import io.crate.sql.tree.ShowColumns;
 import io.crate.sql.tree.ShowCreateTable;
 import io.crate.sql.tree.ShowSchemas;
+import io.crate.sql.tree.ShowSessionParameter;
 import io.crate.sql.tree.ShowTables;
 import io.crate.sql.tree.ShowTransaction;
 import io.crate.sql.tree.Statement;
+import io.crate.sql.tree.SwapTable;
 import io.crate.sql.tree.Update;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.inject.Inject;
@@ -111,6 +114,7 @@ public class Analyzer {
     private final ShowStatementAnalyzer showStatementAnalyzer;
     private final CreateBlobTableAnalyzer createBlobTableAnalyzer;
     private final CreateAnalyzerStatementAnalyzer createAnalyzerStatementAnalyzer;
+    private final DropAnalyzerStatementAnalyzer dropAnalyzerStatementAnalyzer;
     private final DropBlobTableAnalyzer dropBlobTableAnalyzer;
     private final RefreshTableAnalyzer refreshTableAnalyzer;
     private final OptimizeTableAnalyzer optimizeTableAnalyzer;
@@ -132,12 +136,13 @@ public class Analyzer {
     private final CreateFunctionAnalyzer createFunctionAnalyzer;
     private final DropFunctionAnalyzer dropFunctionAnalyzer;
     private final PrivilegesAnalyzer privilegesAnalyzer;
-    private final CreateIngestionRuleAnalyzer createIngestionRuleAnalyzer;
     private final AlterTableRerouteAnalyzer alterTableRerouteAnalyzer;
     private final CreateUserAnalyzer createUserAnalyzer;
     private final AlterUserAnalyzer alterUserAnalyzer;
     private final CreateViewAnalyzer createViewAnalyzer;
     private final Schemas schemas;
+    private final SwapTableAnalyzer swapTableAnalyzer;
+    private final DecommissionNodeAnalyzer decommissionNodeAnalyzer;
 
     /**
      * @param relationAnalyzer is injected because we also need to inject it in
@@ -166,7 +171,8 @@ public class Analyzer {
             functions,
             numberOfShards
         );
-        this.createViewAnalyzer = new CreateViewAnalyzer(functions, relationAnalyzer);
+        this.swapTableAnalyzer = new SwapTableAnalyzer(functions, schemas);
+        this.createViewAnalyzer = new CreateViewAnalyzer(relationAnalyzer);
         this.showCreateTableAnalyzer = new ShowCreateTableAnalyzer(schemas);
         this.explainStatementAnalyzer = new ExplainStatementAnalyzer(this);
         this.showStatementAnalyzer = new ShowStatementAnalyzer(this);
@@ -186,6 +192,7 @@ public class Analyzer {
         );
         this.createBlobTableAnalyzer = new CreateBlobTableAnalyzer(schemas, numberOfShards);
         this.createAnalyzerStatementAnalyzer = new CreateAnalyzerStatementAnalyzer(fulltextAnalyzerResolver);
+        this.dropAnalyzerStatementAnalyzer = new DropAnalyzerStatementAnalyzer(fulltextAnalyzerResolver);
         this.refreshTableAnalyzer = new RefreshTableAnalyzer(schemas);
         this.optimizeTableAnalyzer = new OptimizeTableAnalyzer(schemas);
         this.alterTableAnalyzer = new AlterTableAnalyzer(schemas);
@@ -202,15 +209,15 @@ public class Analyzer {
         this.createFunctionAnalyzer = new CreateFunctionAnalyzer();
         this.dropFunctionAnalyzer = new DropFunctionAnalyzer();
         this.privilegesAnalyzer = new PrivilegesAnalyzer(ENTERPRISE_LICENSE_SETTING.setting().get(settings));
-        this.createIngestionRuleAnalyzer = new CreateIngestionRuleAnalyzer(schemas);
         this.createUserAnalyzer = new CreateUserAnalyzer(functions);
         this.alterUserAnalyzer = new AlterUserAnalyzer(functions);
+        this.decommissionNodeAnalyzer = new DecommissionNodeAnalyzer(functions);
     }
 
-    public Analysis boundAnalyze(Statement statement, TransactionContext transactionContext, ParameterContext parameterContext) {
-        Analysis analysis = new Analysis(transactionContext, parameterContext, ParamTypeHints.EMPTY);
+    public Analysis boundAnalyze(Statement statement, CoordinatorTxnCtx coordinatorTxnCtx, ParameterContext parameterContext) {
+        Analysis analysis = new Analysis(coordinatorTxnCtx, parameterContext, ParamTypeHints.EMPTY);
         AnalyzedStatement analyzedStatement = analyzedStatement(statement, analysis);
-        transactionContext.sessionContext().ensureStatementAuthorized(analyzedStatement);
+        coordinatorTxnCtx.sessionContext().ensureStatementAuthorized(analyzedStatement);
         analysis.analyzedStatement(analyzedStatement);
         return analysis;
     }
@@ -277,6 +284,7 @@ public class Analyzer {
             return createTableStatementAnalyzer.analyze(node, analysis.parameterContext(), analysis.transactionContext());
         }
 
+        @Override
         public AnalyzedStatement visitShowCreateTable(ShowCreateTable node, Analysis analysis) {
             ShowCreateTableAnalyzedStatement showCreateTableStatement =
                 showCreateTableAnalyzer.analyze(node.table(), analysis.sessionContext());
@@ -284,6 +292,7 @@ public class Analyzer {
             return showCreateTableStatement;
         }
 
+        @Override
         public AnalyzedStatement visitShowSchemas(ShowSchemas node, Analysis analysis) {
             return showStatementAnalyzer.analyze(node, analysis);
         }
@@ -293,6 +302,7 @@ public class Analyzer {
             return showStatementAnalyzer.analyzeShowTransaction(context);
         }
 
+        @Override
         public AnalyzedStatement visitShowTables(ShowTables node, Analysis analysis) {
             return showStatementAnalyzer.analyze(node, analysis);
         }
@@ -303,8 +313,18 @@ public class Analyzer {
         }
 
         @Override
+        public AnalyzedStatement visitShowSessionParameter(ShowSessionParameter node, Analysis context) {
+            return new ShowSessionParameterAnalyzedStatement(node.parameter());
+        }
+
+        @Override
         public AnalyzedStatement visitCreateAnalyzer(CreateAnalyzer node, Analysis context) {
             return createAnalyzerStatementAnalyzer.analyze(node, context);
+        }
+
+        @Override
+        public AnalyzedStatement visitDropAnalyzer(DropAnalyzer node, Analysis context) {
+            return dropAnalyzerStatementAnalyzer.analyze(node.name());
         }
 
         @Override
@@ -481,18 +501,32 @@ public class Analyzer {
         }
 
         @Override
-        public AnalyzedStatement visitDropIngestRule(DropIngestRule node, Analysis context) {
-            return new DropIngestionRuleAnalysedStatement(node.name(), node.ifExists());
-        }
-
-        @Override
-        public AnalyzedStatement visitCreateIngestRule(CreateIngestRule node, Analysis context) {
-            return createIngestionRuleAnalyzer.analyze(node, context);
-        }
-
-        @Override
         public AnalyzedStatement visitCreateView(CreateView createView, Analysis analysis) {
             return createViewAnalyzer.analyze(createView, analysis.transactionContext());
+        }
+
+        @Override
+        public AnalyzedStatement visitSwapTable(SwapTable swapTable, Analysis analysis) {
+            return swapTableAnalyzer.analyze(
+                swapTable,
+                analysis.transactionContext(),
+                analysis.paramTypeHints(),
+                analysis.sessionContext().searchPath()
+            );
+        }
+
+        @Override
+        public AnalyzedStatement visitGCDanglingArtifacts(GCDanglingArtifacts gcDanglingArtifacts, Analysis context) {
+            return AnalyzedGCDanglingArtifacts.INSTANCE;
+        }
+
+        @Override
+        public AnalyzedStatement visitAlterClusterDecommissionNode(DecommissionNodeStatement decommissionNodeStatement,
+                                                                   Analysis analysis) {
+            return decommissionNodeAnalyzer.analyze(decommissionNodeStatement,
+                analysis.transactionContext(),
+                analysis.paramTypeHints()
+            );
         }
 
         @Override

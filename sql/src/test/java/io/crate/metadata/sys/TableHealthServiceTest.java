@@ -27,13 +27,12 @@ import io.crate.metadata.RelationName;
 import io.crate.metadata.Schemas;
 import io.crate.metadata.blob.BlobTableInfo;
 import io.crate.test.integration.CrateDummyClusterServiceUnitTest;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.common.settings.Settings;
+import org.hamcrest.Matchers;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.util.Collections;
-import java.util.List;
 import java.util.Map;
 
 import static org.hamcrest.Matchers.is;
@@ -42,8 +41,8 @@ import static org.mockito.Mockito.when;
 
 public class TableHealthServiceTest extends CrateDummyClusterServiceUnitTest {
 
-    private TableHealthService.TablePartitionIdent tablePartitionIdent = new TableHealthService.TablePartitionIdent(
-        new BytesRef("t1"), new BytesRef("doc"), null);
+    private TableHealthService.TablePartitionIdent tablePartitionIdent =
+        new TableHealthService.TablePartitionIdent("t1", "doc", null);
 
     private TableHealthService.ShardsInfo shardsInfo;
 
@@ -91,7 +90,7 @@ public class TableHealthServiceTest extends CrateDummyClusterServiceUnitTest {
     @Test
     public void testTableIsDeletedWhileComputing() {
         TableHealthService.TablePartitionIdent tablePartitionIdent = new TableHealthService.TablePartitionIdent(
-            new BytesRef("t1"), new BytesRef("doc"), null);
+            "t1", "doc", null);
         RelationName relationName = new RelationName("doc", "t1");
         Schemas schemas = mock(Schemas.class);
         when(schemas.getTableInfo(relationName)).thenThrow(new RelationUnknown(relationName));
@@ -99,21 +98,21 @@ public class TableHealthServiceTest extends CrateDummyClusterServiceUnitTest {
         Map<TableHealthService.TablePartitionIdent, TableHealthService.ShardsInfo> tables =
             Collections.singletonMap(tablePartitionIdent, new TableHealthService.ShardsInfo());
 
-        List<TableHealth> tableHealthList = tableHealthService.buildTablesHealth(tables);
-        assertThat(tableHealthList.size(), is(0));
+        Iterable<TableHealth> tableHealth = tableHealthService.buildTablesHealth(tables);
+        assertThat(tableHealth, Matchers.emptyIterable());
     }
 
     @Test
     public void testCalculateHealthOfBlobTable() {
         TableHealthService.TablePartitionIdent tablePartitionIdent = new TableHealthService.TablePartitionIdent(
-            new BytesRef("my_blob_table"), new BytesRef("blob"), null);
+            "my_blob_table", "blob", null);
         RelationName relationName = new RelationName("blob", "my_blob_table");
         Schemas schemas = mock(Schemas.class);
         when(schemas.getTableInfo(relationName)).thenReturn(new BlobTableInfo(
             relationName,
             ".blob_my_blob_table",
             2,
-            new BytesRef(1),
+            "1",
             null,
             null,
             null,
@@ -123,7 +122,8 @@ public class TableHealthServiceTest extends CrateDummyClusterServiceUnitTest {
         Map<TableHealthService.TablePartitionIdent, TableHealthService.ShardsInfo> tables =
             Collections.singletonMap(tablePartitionIdent, new TableHealthService.ShardsInfo());
 
-        List<TableHealth> tableHealthList = tableHealthService.buildTablesHealth(tables);
-        assertThat(tableHealthList.size(), is(1));
+        Iterable<TableHealth> tableHealth = tableHealthService.buildTablesHealth(tables);
+        assertThat(tableHealth, Matchers.contains(
+            new TableHealth("my_blob_table", "blob", null, TableHealth.Health.RED, 2, 0)));
     }
 }

@@ -1,0 +1,83 @@
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+
+sourceCompatibility = "11"
+targetCompatibility = "11"
+
+dependencies {
+    compile project(':es:es-core')
+    compile project(':es:es-x-content')
+    compileOnly project(':es:es-plugin-classloader')
+    testRuntime project(':es:es-plugin-classloader')
+
+    // lucene
+    compile "org.apache.lucene:lucene-core:${versions.lucene}"
+    compile "org.apache.lucene:lucene-analyzers-common:${versions.lucene}"
+    compile "org.apache.lucene:lucene-backward-codecs:${versions.lucene}"
+    compile "org.apache.lucene:lucene-grouping:${versions.lucene}"
+    compile "org.apache.lucene:lucene-join:${versions.lucene}"
+    compile "org.apache.lucene:lucene-misc:${versions.lucene}"
+    compile "org.apache.lucene:lucene-queries:${versions.lucene}"
+    compile "org.apache.lucene:lucene-sandbox:${versions.lucene}"
+    compile "org.apache.lucene:lucene-spatial:${versions.lucene}"
+    compile "org.apache.lucene:lucene-spatial-extras:${versions.lucene}"
+    compile "org.apache.lucene:lucene-spatial3d:${versions.lucene}"
+    compile "org.apache.lucene:lucene-suggest:${versions.lucene}"
+
+    // utilities
+    compile("org.elasticsearch:elasticsearch-cli:${versions.elasticsearch}") {
+        exclude group: 'org.elasticsearch', module: 'elasticsearch-core'
+    }
+    compile "com.carrotsearch:hppc:${versions.carrotsearch_hppc}"
+
+    // time handling
+    compile "joda-time:joda-time:${versions.jodatime}"
+
+    // percentiles aggregation
+    compile "com.tdunning:t-digest:3.2"
+    // percentil ranks aggregation
+    compile "org.hdrhistogram:HdrHistogram:2.1.9"
+
+    // lucene spatial
+    compile "org.locationtech.spatial4j:spatial4j:${versions.spatial4j}"
+    compile "org.locationtech.jts:jts-core:${versions.jts}"
+
+    // logging
+    compile "org.apache.logging.log4j:log4j-api:${versions.log4j2}"
+    compile "org.apache.logging.log4j:log4j-core:${versions.log4j2}"
+    // to bridge dependencies that are still on Log4j 1 to Log4j 2
+    compile "org.apache.logging.log4j:log4j-1.2-api:${versions.log4j2}"
+
+    compile "net.java.dev.jna:jna:${versions.jna}"
+}
+
+task getVersion(dependsOn: 'classes') {
+    doLast {
+        def stdout = new ByteArrayOutputStream()
+        javaexec {
+            classpath = sourceSets.main.runtimeClasspath
+            main = 'org.elasticsearch.Version'
+            standardOutput = stdout
+        }
+        ext.version = stdout.toString().trim().split(" ")[1].replace(',', '').trim()
+        ext.gitTag = "git describe".execute().text.trim()
+
+        ext.buildDate = new Date().format('yyyyMMddHHmm')
+        ext.buildShortHash = "git rev-parse --short HEAD".execute().text.trim()
+        if (gradle.taskGraph.hasTask(':app:release')) {
+            assert gitTag == version, "Version mismatch gitTag: " + gitTag + " does not match crate version: " + version
+        } else {
+
+            if (gradle.taskGraph.hasTask(':app:nightly')) {
+                ext.version = version.replace('-SNAPSHOT', '') + "-" + ext.buildDate + "-" + ext.buildShortHash
+            } else if (!gradle.taskGraph.hasTask(':app:uploadArchives')) {
+                ext.version = version + "-" + ext.buildShortHash
+            }
+        }
+
+        logger.quiet("gitTag:         " + gitTag)
+        logger.quiet("version:        " + version)
+        logger.quiet("buildDate:      " + buildDate)
+        logger.quiet("buildShortHash: " + buildShortHash)
+    }
+}

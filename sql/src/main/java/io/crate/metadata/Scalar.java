@@ -21,11 +21,11 @@
 
 package io.crate.metadata;
 
+import io.crate.data.Input;
 import io.crate.expression.symbol.Function;
 import io.crate.expression.symbol.Literal;
 import io.crate.expression.symbol.Symbol;
 import io.crate.expression.symbol.format.OperatorFormatSpec;
-import io.crate.data.Input;
 
 import java.util.Collection;
 import java.util.List;
@@ -47,6 +47,15 @@ import java.util.List;
  *     An exception is if {@link #compile(List)} returns a NEW instance.
  * </p>
  *
+ * To implement scalar functions, you may want to use one of the following abstractions:
+ *
+ * <ul>
+ *     <li>{@link io.crate.expression.scalar.UnaryScalar}</li>
+ *     <li>{@link io.crate.expression.scalar.arithmetic.BinaryScalar}</li>
+ *     <li>{@link io.crate.expression.scalar.DoubleScalar}</li>
+ *     <li>{@link io.crate.expression.scalar.TripleScalar}</li>
+ * </ul>
+ *
  * @param <ReturnType> the class of the returned value
  */
 public abstract class Scalar<ReturnType, InputType> implements FunctionImplementation {
@@ -59,7 +68,7 @@ public abstract class Scalar<ReturnType, InputType> implements FunctionImplement
     /**
      * Evaluate the function using the provided arguments
      */
-    public abstract ReturnType evaluate(Input<InputType>... args);
+    public abstract ReturnType evaluate(TransactionContext txnCtx, Input<InputType>... args);
 
     /**
      * Called to return a "optimized" version of a scalar implementation.
@@ -68,7 +77,7 @@ public abstract class Scalar<ReturnType, InputType> implements FunctionImplement
      * (or rather, a subset of a single query if executed distributed).
      *
      * @param arguments arguments in symbol form. If any symbols are literals, any arguments passed to
-     *                  {@link #evaluate(Input[])} will have the same value as those literals.
+     *                  {@link #evaluate(TransactionContext, Input[])} will have the same value as those literals.
      *                  (Within the scope of a single operation)
      */
     public Scalar<ReturnType, InputType> compile(List<Symbol> arguments) {
@@ -76,9 +85,9 @@ public abstract class Scalar<ReturnType, InputType> implements FunctionImplement
     }
 
     @Override
-    public Symbol normalizeSymbol(Function symbol, TransactionContext transactionContext) {
+    public Symbol normalizeSymbol(Function symbol, TransactionContext txnCtx) {
         try {
-            return evaluateIfLiterals(this, symbol);
+            return evaluateIfLiterals(this, txnCtx, symbol);
         } catch (Throwable t) {
             return symbol;
         }
@@ -97,7 +106,9 @@ public abstract class Scalar<ReturnType, InputType> implements FunctionImplement
      * This method will evaluate the function using the given scalar if all arguments are literals.
      * Otherwise it will return the function as is or NULL in case it contains a null literal
      */
-    protected static <ReturnType, InputType> Symbol evaluateIfLiterals(Scalar<ReturnType, InputType> scalar, Function function) {
+    protected static <ReturnType, InputType> Symbol evaluateIfLiterals(Scalar<ReturnType, InputType> scalar,
+                                                                       TransactionContext txnCtx,
+                                                                       Function function) {
         List<Symbol> arguments = function.arguments();
         for (Symbol argument : arguments) {
             if (!(argument instanceof Input)) {
@@ -111,7 +122,7 @@ public abstract class Scalar<ReturnType, InputType> implements FunctionImplement
             idx++;
         }
         //noinspection unchecked
-        return Literal.of(function.info().returnType(), scalar.evaluate(inputs));
+        return Literal.of(function.info().returnType(), scalar.evaluate(txnCtx, inputs));
     }
 
     private static class OperatorScalar<R, I> extends Scalar<R, I> implements OperatorFormatSpec {
@@ -129,8 +140,8 @@ public abstract class Scalar<ReturnType, InputType> implements FunctionImplement
         }
 
         @Override
-        public R evaluate(Input<I>... args) {
-            return func.evaluate(args);
+        public R evaluate(TransactionContext txnCtx, Input<I>... args) {
+            return func.evaluate(txnCtx, args);
         }
 
         @Override

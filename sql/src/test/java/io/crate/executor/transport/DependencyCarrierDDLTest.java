@@ -32,15 +32,14 @@ import io.crate.metadata.IndexParts;
 import io.crate.metadata.PartitionName;
 import io.crate.planner.DependencyCarrier;
 import io.crate.planner.Plan;
-import io.crate.planner.node.ddl.ESClusterUpdateSettingsPlan;
+import io.crate.planner.PlannerContext;
+import io.crate.planner.node.ddl.UpdateSettingsPlan;
 import io.crate.planner.operators.SubQueryResults;
 import io.crate.sql.tree.Expression;
 import io.crate.sql.tree.Literal;
 import io.crate.testing.TestingRowConsumer;
-import io.crate.testing.UseJdbc;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.action.admin.indices.alias.Alias;
-import org.elasticsearch.action.admin.indices.exists.indices.IndicesExistsRequest;
+import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.metadata.MetaData;
 import org.elasticsearch.common.collect.MapBuilder;
 import org.elasticsearch.common.settings.Settings;
@@ -57,6 +56,7 @@ import static io.crate.testing.TestingHelpers.isRow;
 import static java.util.Collections.singletonList;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.is;
+import static org.mockito.Mockito.mock;
 
 public class DependencyCarrierDDLTest extends SQLTransportIntegrationTest {
 
@@ -94,7 +94,7 @@ public class DependencyCarrierDDLTest extends SQLTransportIntegrationTest {
         String partitionName = IndexParts.toIndexName(
             sqlExecutor.getCurrentSchema(),
             "test",
-            PartitionName.encodeIdent(singletonList(new BytesRef("foo")))
+            PartitionName.encodeIdent(singletonList("foo"))
         );
         client().admin().indices().prepareCreate(partitionName)
             .addMapping(Constants.DEFAULT_MAPPING_TYPE, TEST_PARTITIONED_MAPPING)
@@ -111,14 +111,13 @@ public class DependencyCarrierDDLTest extends SQLTransportIntegrationTest {
         assertThat((Long) response.rows()[0][0], is(3L));
 
         // check that orphaned partition has been deleted
-        assertThat(client().admin().indices().exists(new IndicesExistsRequest(partitionName)).actionGet().isExists(), is(false));
+        assertThat(internalCluster().clusterService().state().metaData().hasIndex(partitionName), is(false));
     }
 
     @Test
-    @UseJdbc(0) // create table has no rowcount
     public void testCreateTableWithOrphanedAlias() throws Exception {
         String partitionName = IndexParts.toIndexName(
-            sqlExecutor.getCurrentSchema(), "test", PartitionName.encodeIdent(singletonList(new BytesRef("foo"))));
+            sqlExecutor.getCurrentSchema(), "test", PartitionName.encodeIdent(singletonList("foo")));
         client().admin().indices().prepareCreate(partitionName)
             .addMapping(Constants.DEFAULT_MAPPING_TYPE, TEST_PARTITIONED_MAPPING)
             .setSettings(TEST_SETTINGS)
@@ -138,11 +137,13 @@ public class DependencyCarrierDDLTest extends SQLTransportIntegrationTest {
         execute("select count(*) from information_schema.columns where table_name = 'test'");
         assertThat((Long) response.rows()[0][0], is(3L));
 
+        ClusterState state = internalCluster().clusterService().state();
+
         // check that orphaned alias has been deleted
-        assertThat(client().admin().cluster().prepareState().execute().actionGet()
-            .getState().metaData().hasAlias("test"), is(false));
+        assertThat(state.metaData().hasAlias("test"), is(false));
         // check that orphaned partition has been deleted
-        assertThat(client().admin().indices().exists(new IndicesExistsRequest(partitionName)).actionGet().isExists(), is(false));
+
+        assertThat(state.metaData().hasIndex(partitionName), is(false));
     }
 
 
@@ -161,14 +162,11 @@ public class DependencyCarrierDDLTest extends SQLTransportIntegrationTest {
         assertThat(response.rowCount(), is(1L));
         ensureYellow();
 
-        String schema= sqlExecutor.getCurrentSchema();
-        String partitionName = IndexParts.toIndexName(
-            schema, "t", PartitionName.encodeIdent(ImmutableList.of(new BytesRef("1"))));
         PlanForNode plan = plan("delete from t where id = ?");
 
-        assertTrue(client().admin().indices().prepareClose(partitionName).execute().actionGet().isAcknowledged());
+        execute("alter table t partition (id = 1) close");
 
-        Bucket bucket = executePlan(plan.plan, new Row1(1));
+        Bucket bucket = executePlan(plan.plan, plan.plannerContext, new Row1(1));
         assertThat(bucket, contains(isRow(-1L)));
 
         execute("select * from information_schema.table_partitions where table_name = 't'");
@@ -185,8 +183,9 @@ public class DependencyCarrierDDLTest extends SQLTransportIntegrationTest {
             put(persistentSetting, ImmutableList.<Expression>of(Literal.fromObject(false)));
         }};
 
-        ESClusterUpdateSettingsPlan node = new ESClusterUpdateSettingsPlan(persistentSettings);
-        Bucket objects = executePlan(node);
+        UpdateSettingsPlan node = new UpdateSettingsPlan(persistentSettings);
+        PlannerContext plannerContext = mock(PlannerContext.class);
+        Bucket objects = executePlan(node, plannerContext);
 
         assertThat(objects, contains(isRow(1L)));
         assertEquals("false", client().admin().cluster().prepareState().execute().actionGet().getState().metaData()
@@ -198,8 +197,8 @@ public class DependencyCarrierDDLTest extends SQLTransportIntegrationTest {
             put(transientSetting, ImmutableList.<Expression>of(Literal.fromObject("123s")));
         }};
 
-        node = new ESClusterUpdateSettingsPlan(ImmutableMap.<String, List<Expression>>of(), transientSettings);
-        objects = executePlan(node);
+        node = new UpdateSettingsPlan(ImmutableMap.<String, List<Expression>>of(), transientSettings);
+        objects = executePlan(node, plannerContext);
 
         assertThat(objects, contains(isRow(1L)));
         assertEquals("123s", client().admin().cluster().prepareState().execute().actionGet().getState().metaData()
@@ -215,8 +214,8 @@ public class DependencyCarrierDDLTest extends SQLTransportIntegrationTest {
             put(transientSetting, ImmutableList.<Expression>of(Literal.fromObject("243s")));
         }};
 
-        node = new ESClusterUpdateSettingsPlan(persistentSettings, transientSettings);
-        objects = executePlan(node);
+        node = new UpdateSettingsPlan(persistentSettings, transientSettings);
+        objects = executePlan(node, plannerContext);
 
         MetaData md = client().admin().cluster().prepareState().execute().actionGet().getState().metaData();
         assertThat(objects, contains(isRow(1L)));
@@ -224,11 +223,11 @@ public class DependencyCarrierDDLTest extends SQLTransportIntegrationTest {
         assertEquals("243s", md.transientSettings().get(transientSetting));
     }
 
-    private Bucket executePlan(Plan plan, Row params) throws Exception {
+    private Bucket executePlan(Plan plan, PlannerContext plannerContext, Row params) throws Exception {
         TestingRowConsumer consumer = new TestingRowConsumer();
         plan.execute(
             executor,
-            null,
+            plannerContext,
             consumer,
             params,
             SubQueryResults.EMPTY
@@ -236,7 +235,7 @@ public class DependencyCarrierDDLTest extends SQLTransportIntegrationTest {
         return consumer.getBucket();
     }
 
-    private Bucket executePlan(Plan plan) throws Exception {
-        return executePlan(plan, Row.EMPTY);
+    private Bucket executePlan(Plan plan, PlannerContext plannerContext) throws Exception {
+        return executePlan(plan, plannerContext, Row.EMPTY);
     }
 }

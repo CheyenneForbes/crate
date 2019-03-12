@@ -23,12 +23,14 @@ package io.crate.integrationtests;
 
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableMap;
-import io.crate.Version;
 import io.crate.action.sql.SQLActionException;
 import io.crate.metadata.IndexMappings;
+import io.crate.metadata.PartitionName;
+import io.crate.metadata.RelationName;
 import io.crate.testing.TestingHelpers;
+import io.crate.testing.UseJdbc;
 import io.crate.testing.UseRandomizedSchema;
-import org.elasticsearch.action.admin.indices.get.GetIndexRequest;
+import org.elasticsearch.Version;
 import org.elasticsearch.common.collect.MapBuilder;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.hamcrest.Matcher;
@@ -36,9 +38,11 @@ import org.hamcrest.Matchers;
 import org.junit.After;
 import org.junit.Test;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
+import static io.crate.testing.TestingHelpers.printedTable;
 import static org.hamcrest.Matchers.arrayContaining;
 import static org.hamcrest.Matchers.is;
 
@@ -57,11 +61,10 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
     @Test
     public void testDefaultTables() {
         execute("select * from information_schema.tables order by table_schema, table_name");
-        assertEquals(27L, response.rowCount());
+        assertEquals(34L, response.rowCount());
 
-        assertThat(TestingHelpers.printedTable(response.rows()), is(
+        assertThat(printedTable(response.rows()), is(
             "NULL| NULL| NULL| strict| NULL| NULL| NULL| SYSTEM GENERATED| NULL| NULL| NULL| information_schema| columns| information_schema| BASE TABLE| NULL\n" +
-            "NULL| NULL| NULL| strict| NULL| NULL| NULL| SYSTEM GENERATED| NULL| NULL| NULL| information_schema| ingestion_rules| information_schema| BASE TABLE| NULL\n" +
             "NULL| NULL| NULL| strict| NULL| NULL| NULL| SYSTEM GENERATED| NULL| NULL| NULL| information_schema| key_column_usage| information_schema| BASE TABLE| NULL\n" +
             "NULL| NULL| NULL| strict| NULL| NULL| NULL| SYSTEM GENERATED| NULL| NULL| NULL| information_schema| referential_constraints| information_schema| BASE TABLE| NULL\n" +
             "NULL| NULL| NULL| strict| NULL| NULL| NULL| SYSTEM GENERATED| NULL| NULL| NULL| information_schema| routines| information_schema| BASE TABLE| NULL\n" +
@@ -71,6 +74,14 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
             "NULL| NULL| NULL| strict| NULL| NULL| NULL| SYSTEM GENERATED| NULL| NULL| NULL| information_schema| table_partitions| information_schema| BASE TABLE| NULL\n" +
             "NULL| NULL| NULL| strict| NULL| NULL| NULL| SYSTEM GENERATED| NULL| NULL| NULL| information_schema| tables| information_schema| BASE TABLE| NULL\n" +
             "NULL| NULL| NULL| strict| NULL| NULL| NULL| SYSTEM GENERATED| NULL| NULL| NULL| information_schema| views| information_schema| BASE TABLE| NULL\n" +
+            "NULL| NULL| NULL| strict| NULL| NULL| NULL| SYSTEM GENERATED| NULL| NULL| NULL| pg_catalog| pg_attrdef| pg_catalog| BASE TABLE| NULL\n" +
+            "NULL| NULL| NULL| strict| NULL| NULL| NULL| SYSTEM GENERATED| NULL| NULL| NULL| pg_catalog| pg_attribute| pg_catalog| BASE TABLE| NULL\n" +
+            "NULL| NULL| NULL| strict| NULL| NULL| NULL| SYSTEM GENERATED| NULL| NULL| NULL| pg_catalog| pg_class| pg_catalog| BASE TABLE| NULL\n" +
+            "NULL| NULL| NULL| strict| NULL| NULL| NULL| SYSTEM GENERATED| NULL| NULL| NULL| pg_catalog| pg_constraint| pg_catalog| BASE TABLE| NULL\n" +
+            "NULL| NULL| NULL| strict| NULL| NULL| NULL| SYSTEM GENERATED| NULL| NULL| NULL| pg_catalog| pg_database| pg_catalog| BASE TABLE| NULL\n" +
+            "NULL| NULL| NULL| strict| NULL| NULL| NULL| SYSTEM GENERATED| NULL| NULL| NULL| pg_catalog| pg_description| pg_catalog| BASE TABLE| NULL\n" +
+            "NULL| NULL| NULL| strict| NULL| NULL| NULL| SYSTEM GENERATED| NULL| NULL| NULL| pg_catalog| pg_index| pg_catalog| BASE TABLE| NULL\n" +
+            "NULL| NULL| NULL| strict| NULL| NULL| NULL| SYSTEM GENERATED| NULL| NULL| NULL| pg_catalog| pg_namespace| pg_catalog| BASE TABLE| NULL\n" +
             "NULL| NULL| NULL| strict| NULL| NULL| NULL| SYSTEM GENERATED| NULL| NULL| NULL| pg_catalog| pg_type| pg_catalog| BASE TABLE| NULL\n" +
             "NULL| NULL| NULL| strict| NULL| NULL| NULL| SYSTEM GENERATED| NULL| NULL| NULL| sys| allocations| sys| BASE TABLE| NULL\n" +
             "NULL| NULL| NULL| strict| NULL| NULL| NULL| SYSTEM GENERATED| NULL| NULL| NULL| sys| checks| sys| BASE TABLE| NULL\n" +
@@ -120,7 +131,7 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
         assertEquals(1L, response.rowCount());
 
         execute("select * from information_schema.routines");
-        assertEquals(125L, response.rowCount());
+        assertEquals(129L, response.rowCount());
     }
 
     @Test
@@ -135,7 +146,7 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
                 "FROM information_schema.tables " +
                 "WHERE table_name LIKE 't1%' " +
                 "ORDER BY 1, 2");
-        assertThat(TestingHelpers.printedTable(response.rows()), is("BASE TABLE| t1| 2| 1\n" +
+        assertThat(printedTable(response.rows()), is("BASE TABLE| t1| 2| 1\n" +
                                                                     "VIEW| t1_view1| NULL| NULL\n" +
                                                                     "VIEW| t1_view2| NULL| NULL\n"));
 
@@ -144,15 +155,24 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
                 "FROM information_schema.views " +
                 "WHERE table_name LIKE 't1%' " +
                 "ORDER BY 1, 2");
-        assertThat(TestingHelpers.printedTable(response.rows()), is("t1_view1| SELECT doc.t1.id, doc.t1.name FROM doc.t1 WHERE (doc.t1.name = 'foo')\n" +
-                                                                    "t1_view2| SELECT doc.t1.id FROM doc.t1 WHERE (doc.t1.name = 'foo')\n"));
+        Object[][] rows = response.rows();
+        assertThat(rows[0][0], is("t1_view1"));
+        assertThat(rows[0][1],
+            is("SELECT *\n" +
+               "FROM \"t1\"\n" +
+               "WHERE \"name\" = 'foo'\n"));
+        assertThat(rows[1][0], is("t1_view2"));
+        assertThat(rows[1][1],
+            is("SELECT \"id\"\n" +
+               "FROM \"t1\"\n" +
+               "WHERE \"name\" = 'foo'\n"));
 
         // SELECT information_schema.columns
         execute("SELECT table_name, column_name " +
                 "FROM information_schema.columns " +
                 "WHERE table_name LIKE 't1%' " +
                 "ORDER BY 1, 2");
-        assertThat(TestingHelpers.printedTable(response.rows()), is("t1| id\n" +
+        assertThat(printedTable(response.rows()), is("t1| id\n" +
                                                                     "t1| name\n" +
                                                                     "t1_view1| id\n" +
                                                                     "t1_view1| name\n" +
@@ -167,14 +187,22 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
                 "FROM information_schema.views " +
                 "WHERE table_name LIKE 't1%' " +
                 "ORDER BY 1, 2");
-        assertThat(TestingHelpers.printedTable(response.rows()), is("t1_view1| SELECT doc.t1.id, doc.t1.name FROM doc.t1 WHERE (doc.t1.name = 'foo')\n" +
-                                                                    "t1_view2| SELECT doc.t1.id FROM doc.t1 WHERE (doc.t1.name = 'foo')\n"));
+        assertThat(rows[0][0], is("t1_view1"));
+        assertThat(rows[0][1],
+            is("SELECT *\n" +
+               "FROM \"t1\"\n" +
+               "WHERE \"name\" = 'foo'\n"));
+        assertThat(rows[1][0], is("t1_view2"));
+        assertThat(rows[1][1],
+            is("SELECT \"id\"\n" +
+               "FROM \"t1\"\n" +
+               "WHERE \"name\" = 'foo'\n"));
 
         execute("SELECT table_name, column_name " +
                 "FROM information_schema.columns " +
                 "WHERE table_name LIKE 't1%' " +
                 "ORDER BY 1, 2");
-        assertThat(TestingHelpers.printedTable(response.rows()), is(""));
+        assertThat(printedTable(response.rows()), is(""));
 
         // Clean up metadata that does not show up in information_schema any more
         execute("DROP VIEW t1_view1, t1_view2");
@@ -183,13 +211,13 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
     @Test
     public void testSearchInformationSchemaTablesRefresh() {
         execute("select * from information_schema.tables");
-        assertEquals(27L, response.rowCount());
+        assertEquals(34L, response.rowCount());
 
         execute("create table t4 (col1 integer, col2 string) with(number_of_replicas=0)");
         ensureYellow(getFqn("t4"));
 
         execute("select * from information_schema.tables");
-        assertEquals(28L, response.rowCount());
+        assertEquals(35L, response.rowCount());
     }
 
     @Test
@@ -251,7 +279,7 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
                 "order by number_of_shards desc, table_name asc limit 2", new Object[]{sqlExecutor.getCurrentSchema()});
         assertEquals(2L, response.rowCount());
 
-        assertThat(TestingHelpers.printedTable(response.rows()), is(
+        assertThat(printedTable(response.rows()), is(
             "bar| 3\n" +
             "foo| 3\n"));
     }
@@ -366,8 +394,8 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
                 "is_deferrable", "table_catalog", "table_name", "table_schema"));
         execute("SELECT constraint_name, constraint_type, table_name, table_schema FROM " +
                 "information_schema.table_constraints ORDER BY table_schema ASC, table_name ASC");
-        assertEquals(28L, response.rowCount());
-        assertThat(TestingHelpers.printedTable(response.rows()),
+        assertEquals(27L, response.rowCount());
+        assertThat(printedTable(response.rows()),
             is(
                 "columns_pk| PRIMARY KEY| columns| information_schema\n" +
                 "information_schema_columns_column_name_not_null| CHECK| columns| information_schema\n" +
@@ -378,7 +406,6 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
                 "information_schema_columns_table_catalog_not_null| CHECK| columns| information_schema\n" +
                 "information_schema_columns_table_name_not_null| CHECK| columns| information_schema\n" +
                 "information_schema_columns_table_schema_not_null| CHECK| columns| information_schema\n" +
-                "ingestion_rules_pk| PRIMARY KEY| ingestion_rules| information_schema\n" +
                 "key_column_usage_pk| PRIMARY KEY| key_column_usage| information_schema\n" +
                 "referential_constraints_pk| PRIMARY KEY| referential_constraints| information_schema\n" +
                 "schemata_pk| PRIMARY KEY| schemata| information_schema\n" +
@@ -454,31 +481,23 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
                 "  stopwords=[?, ?, ?]" +
                 ")", new Object[]{"der", "die", "das"});
         ensureGreen();
-        execute("SELECT routine_name, routine_type from INFORMATION_SCHEMA.routines " +
+        execute("SELECT routine_name, routine_type, routine_definition from INFORMATION_SCHEMA.routines " +
                 "where routine_name = 'myanalyzer' " +
                 "or routine_name = 'myotheranalyzer' " +
                 "and routine_type = 'ANALYZER' " +
                 "order by routine_name asc");
         assertEquals(2L, response.rowCount());
+        assertThat(printedTable(response.rows()), is(
+            "myanalyzer| ANALYZER| {\"filter\":[\"myanalyzer_mytokenfilter\",\"kstem\"],\"tokenizer\":\"whitespace\",\"type\":\"custom\"}\n" +
+            "myotheranalyzer| ANALYZER| {\"stopwords\":[\"der\",\"die\",\"das\"],\"type\":\"german\"}\n"));
 
         assertEquals("myanalyzer", response.rows()[0][0]);
         assertEquals("ANALYZER", response.rows()[0][1]);
         assertEquals("myotheranalyzer", response.rows()[1][0]);
         assertEquals("ANALYZER", response.rows()[1][1]);
-        client().admin().cluster().prepareUpdateSettings()
-            .setPersistentSettings(
-                MapBuilder.<String, Object>newMapBuilder()
-                    .put("crate.analysis.custom.analyzer.myanalyzer", null)
-                    .put("crate.analysis.custom.analyzer.myotheranalyzer", null)
-                    .put("crate.analysis.custom.filter.myanalyzer_mytokenfilter", null)
-                    .map())
-            .setTransientSettings(
-                MapBuilder.<String, Object>newMapBuilder()
-                    .put("crate.analysis.custom.analyzer.myanalyzer", null)
-                    .put("crate.analysis.custom.analyzer.myotheranalyzer", null)
-                    .put("crate.analysis.custom.filter.myanalyzer_mytokenfilter", null)
-                    .map())
-            .execute().actionGet();
+
+        execute("drop analyzer myanalyzer");
+        execute("drop analyzer myotheranalyzer");
     }
 
     @Test
@@ -508,7 +527,7 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
             tokenizerNames[i] = (String) response.rows()[i][0];
         }
         assertEquals(
-            "PathHierarchy, classic, edgeNGram, edge_ngram, keyword",
+            "PathHierarchy, char_group, classic, edgeNGram, edge_ngram",
             Joiner.on(", ").join(tokenizerNames)
         );
     }
@@ -565,14 +584,14 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
     @Test
     public void testDefaultColumns() {
         execute("select * from information_schema.columns order by table_schema, table_name");
-        assertEquals(530, response.rowCount());
+        assertEquals(656, response.rowCount());
     }
 
     @Test
     public void testColumnsColumns() {
         execute("select * from information_schema.columns where table_schema='information_schema' and table_name='columns' order by ordinal_position asc");
         assertThat(response.rowCount(), is(32L));
-        assertThat(TestingHelpers.printedTable(response.rows()), is(
+        assertThat(printedTable(response.rows()), is(
             "NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| character_maximum_length| integer| NULL| NULL| NULL| NULL| NULL| NULL| NULL| false| true| 32| 2| NULL| 1| information_schema| columns| information_schema| NULL| NULL| NULL\n" +
             "NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| character_octet_length| integer| NULL| NULL| NULL| NULL| NULL| NULL| NULL| false| true| 32| 2| NULL| 2| information_schema| columns| information_schema| NULL| NULL| NULL\n" +
             "NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| character_set_catalog| string| NULL| NULL| NULL| NULL| NULL| NULL| NULL| false| true| NULL| NULL| NULL| 3| information_schema| columns| information_schema| NULL| NULL| NULL\n" +
@@ -606,6 +625,27 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
             "NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| user_defined_type_name| string| NULL| NULL| NULL| NULL| NULL| NULL| NULL| false| true| NULL| NULL| NULL| 31| information_schema| columns| information_schema| NULL| NULL| NULL\n" +
             "NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| NULL| user_defined_type_schema| string| NULL| NULL| NULL| NULL| NULL| NULL| NULL| false| true| NULL| NULL| NULL| 32| information_schema| columns| information_schema| NULL| NULL| NULL\n")
         );
+    }
+
+    @Test
+    public void testSupportedPgTypeColumns() {
+        execute("select column_name, data_type from information_schema.columns " +
+                "where table_schema = 'pg_catalog' " +
+                "and table_name = 'pg_type' " +
+                "order by ordinal_position asc");
+        assertThat(response.rowCount(), is(10L));
+        assertThat(printedTable(response.rows()), is(
+            "oid| integer\n" +
+            "typarray| integer\n" +
+            "typbasetype| integer\n" +
+            "typdelim| string\n" +
+            "typelem| integer\n" +
+            "typlen| short\n" +
+            "typname| string\n" +
+            "typnamespace| integer\n" +
+            "typtype| string\n" +
+            "typtypmod| integer\n"
+        ));
     }
 
     @Test
@@ -716,7 +756,7 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
         execute("select max(ordinal_position) from information_schema.columns");
         assertEquals(1, response.rowCount());
 
-        short max_ordinal = 32;
+        short max_ordinal = 34;
         assertEquals(max_ordinal, response.rows()[0][0]);
 
         execute("create table t1 (id integer, col1 string)");
@@ -782,7 +822,7 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
         ensureYellow();
         execute("select count(*) from information_schema.tables");
         assertEquals(1, response.rowCount());
-        assertEquals(30L, response.rows()[0][0]);
+        assertEquals(37L, response.rows()[0][0]);
     }
 
     @Test
@@ -895,7 +935,7 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
         ensureGreen();
 
         execute("select table_name, number_of_shards, number_of_replicas from information_schema.tables where table_name='parted'");
-        assertThat(TestingHelpers.printedTable(response.rows()), is("parted| 2| 0\n"));
+        assertThat(printedTable(response.rows()), is("parted| 2| 0\n"));
 
         execute("select * from information_schema.table_partitions where table_name='parted' order by table_name, partition_ident");
         assertThat(response.rowCount(), is(0L));
@@ -905,11 +945,11 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
         ensureGreen();
 
         execute("select table_name, number_of_shards, number_of_replicas from information_schema.tables where table_name='parted'");
-        assertThat(TestingHelpers.printedTable(response.rows()), is("parted| 2| 0\n"));
+        assertThat(printedTable(response.rows()), is("parted| 2| 0\n"));
 
         execute("select table_name, partition_ident, values, number_of_shards, number_of_replicas " +
                 "from information_schema.table_partitions where table_name='parted' order by table_name, partition_ident");
-        assertThat(TestingHelpers.printedTable(response.rows()), is(
+        assertThat(printedTable(response.rows()), is(
             "parted| 04132| {par=1}| 2| 0\n" +
             "parted| 04136| {par=3}| 2| 0\n"));
 
@@ -921,12 +961,12 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
         ensureGreen();
 
         execute("select table_name, number_of_shards, number_of_replicas from information_schema.tables where table_name='parted'");
-        assertThat(TestingHelpers.printedTable(response.rows()), is("parted| 6| 0\n"));
+        assertThat(printedTable(response.rows()), is("parted| 6| 0\n"));
 
         execute("select table_name, partition_ident, values, number_of_shards, number_of_replicas " +
                 "from information_schema.table_partitions where table_name='parted' order by table_name, partition_ident");
         assertThat(response.rowCount(), is(3L));
-        assertThat(TestingHelpers.printedTable(response.rows()), is(
+        assertThat(printedTable(response.rows()), is(
             "parted| 04132| {par=1}| 2| 0\n" +
             "parted| 04134| {par=2}| 6| 0\n" +
             "parted| 04136| {par=3}| 2| 0\n"));
@@ -937,12 +977,12 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
 
         // ensure newer index metadata does not override settings in template
         execute("select table_name, number_of_shards, number_of_replicas from information_schema.tables where table_name='parted'");
-        assertThat(TestingHelpers.printedTable(response.rows()), is("parted| 6| 0\n"));
+        assertThat(printedTable(response.rows()), is("parted| 6| 0\n"));
 
         execute("select table_name, partition_ident, values, number_of_shards, number_of_replicas " +
                 "from information_schema.table_partitions where table_name='parted' order by table_name, partition_ident");
         assertThat(response.rowCount(), is(3L));
-        assertThat(TestingHelpers.printedTable(response.rows()), is(
+        assertThat(printedTable(response.rows()), is(
             "parted| 04132| {par=1}| 2| 0\n" +
             "parted| 04134| {par=2}| 6| 0\n" +
             "parted| 04136| {par=3}| 2| 0\n"));
@@ -951,12 +991,12 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
         waitNoPendingTasksOnAll();
 
         execute("select table_name, number_of_shards, number_of_replicas from information_schema.tables where table_name='parted'");
-        assertThat(TestingHelpers.printedTable(response.rows()), is("parted| 6| 0\n"));
+        assertThat(printedTable(response.rows()), is("parted| 6| 0\n"));
         waitNoPendingTasksOnAll();
         execute("select table_name, partition_ident, values, number_of_shards, number_of_replicas " +
                 "from information_schema.table_partitions where table_name='parted' order by table_name, partition_ident");
         assertThat(response.rowCount(), is(2L));
-        assertThat(TestingHelpers.printedTable(response.rows()), is(
+        assertThat(printedTable(response.rows()), is(
             "parted| 04132| {par=1}| 2| 0\n" +
             "parted| 04136| {par=3}| 2| 0\n"));
 
@@ -1012,7 +1052,7 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
         execute("select table_name, partition_ident, values from information_schema.table_partitions order by table_name, partition_ident");
         assertEquals(2, response.rowCount());
 
-        assertThat(TestingHelpers.printedTable(response.rows()),
+        assertThat(printedTable(response.rows()),
             is("my_table| 04130| {metadata['date']=0}\n" +
                "my_table| 04732d1g64p36d9i60o30c1g| {metadata['date']=1401235200000}\n"));
     }
@@ -1059,7 +1099,7 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
                           "data_points| data['somelongroute']| long\n" +
                           "data_points| data['somestringroute']| string\n" +
                           "data_points| day| string\n";
-        assertEquals(expected, TestingHelpers.printedTable(response.rows()));
+        assertEquals(expected, printedTable(response.rows()));
     }
 
     @Test
@@ -1102,7 +1142,7 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
         execute("create table t (lastname string, firstname string, name as (lastname || '_' || firstname)) " +
                 "with (number_of_replicas = 0)");
         execute("select column_name, is_generated, generation_expression from information_schema.columns where is_generated = true");
-        assertThat(TestingHelpers.printedTable(response.rows()),
+        assertThat(printedTable(response.rows()),
             is("name| true| concat(concat(lastname, '_'), firstname)\n"));
     }
 
@@ -1126,7 +1166,7 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
     @Test
     public void testInformationRoutinesColumns() {
         execute("select column_name from information_schema.columns where table_name='routines' order by ordinal_position");
-        assertThat(TestingHelpers.printedTable(response.rows()),
+        assertThat(printedTable(response.rows()),
             is(
               "data_type\n" +
               "is_deterministic\n" +
@@ -1161,8 +1201,10 @@ public class InformationSchemaTest extends SQLTransportIntegrationTest {
         ensureYellow();
 
         execute("insert into t values (1)");
-        ensureYellow();
-        String partitionIdent = client().admin().indices().getIndex(new GetIndexRequest()).actionGet().getIndices()[0];
+        String partitionIdent = new PartitionName(
+            new RelationName(sqlExecutor.getCurrentSchema(), "t"),
+            Collections.singletonList("1")
+        ).ident();
 
         execute("insert into t values (2), (3)");
         ensureYellow();

@@ -27,7 +27,7 @@ import io.crate.metadata.FunctionImplementation;
 import io.crate.operation.aggregation.AggregationTest;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
-import org.apache.lucene.util.BytesRef;
+import io.crate.types.ObjectType;
 import org.junit.Test;
 
 public class MinimumAggregationTest extends AggregationTest {
@@ -80,13 +80,13 @@ public class MinimumAggregationTest extends AggregationTest {
     @Test
     public void testString() throws Exception {
         Object[][] result = executeAggregation(DataTypes.STRING,
-            new Object[][]{{new BytesRef("Youri")}, {new BytesRef("Ruben")}});
+            new Object[][]{{"Youri"}, {"Ruben"}});
 
-        assertEquals(new BytesRef("Ruben"), result[0][0]);
+        assertEquals("Ruben", result[0][0]);
     }
 
     @Test(expected = NullPointerException.class)
     public void testUnsupportedType() throws Exception {
-        Object[][] result = executeAggregation(DataTypes.OBJECT, new Object[][]{{new Object()}});
+        Object[][] result = executeAggregation(ObjectType.untyped(), new Object[][]{{new Object()}});
     }
 }

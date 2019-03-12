@@ -21,22 +21,5 @@
  */
 
 dependencies {
-    compile project(':es:es-core')
-}
-
-def moduleDir = file('../upstream/modules/analysis-common')
-
-sourceSets {
-    main {
-        java {
-            srcDir "$moduleDir/src/main/java"
-        }
-    }
-}
-
-idea {
-    module {
-        contentRoot = moduleDir
-        excludeDirs += file('build')
-    }
+    compile project(':es:es-server')
 }

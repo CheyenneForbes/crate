@@ -30,12 +30,12 @@ import io.crate.data.RowConsumer;
 import io.crate.exceptions.SQLExceptions;
 import io.crate.execution.support.MultiActionListener;
 import io.crate.execution.support.OneRowActionListener;
+import io.crate.metadata.TransactionContext;
 import io.crate.metadata.Functions;
 import io.crate.metadata.IndexParts;
 import io.crate.metadata.PartitionName;
 import io.crate.metadata.doc.DocTableInfo;
 import io.crate.planner.operators.SubQueryResults;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.index.IndexNotFoundException;
@@ -58,6 +58,7 @@ import java.util.function.Function;
 public class ShardRequestExecutor<Req> {
 
     private final ClusterService clusterService;
+    private final TransactionContext txnCtx;
     private final Functions functions;
     private final DocTableInfo table;
     private final RequestGrouper<Req> grouper;
@@ -81,12 +82,14 @@ public class ShardRequestExecutor<Req> {
     }
 
     public ShardRequestExecutor(ClusterService clusterService,
+                                TransactionContext txnCtx,
                                 Functions functions,
                                 DocTableInfo table,
                                 RequestGrouper<Req> grouper,
                                 BiConsumer<Req, ActionListener<ShardResponse>> transportAction,
                                 DocKeys docKeys) {
         this.clusterService = clusterService;
+        this.txnCtx = txnCtx;
         this.functions = functions;
         this.table = table;
         this.grouper = grouper;
@@ -133,15 +136,15 @@ public class ShardRequestExecutor<Req> {
 
     private int addRequests(int location, Row parameters, Map<ShardId, Req> requests, SubQueryResults subQueryResults) {
         for (DocKeys.DocKey docKey : docKeys) {
-            String id = docKey.getId(functions, parameters, subQueryResults);
+            String id = docKey.getId(txnCtx, functions, parameters, subQueryResults);
             if (id == null) {
                 continue;
             }
-            String routing = docKey.getRouting(functions, parameters, subQueryResults);
-            List<BytesRef> partitionValues = docKey.getPartitionValues(functions, parameters, subQueryResults);
+            String routing = docKey.getRouting(txnCtx, functions, parameters, subQueryResults);
+            List<String> partitionValues = docKey.getPartitionValues(txnCtx, functions, parameters, subQueryResults);
             final String indexName;
             if (partitionValues == null) {
-                indexName = table.ident().indexName();
+                indexName = table.ident().indexNameOrAlias();
             } else {
                 indexName = IndexParts.toIndexName(table.ident(), PartitionName.encodeIdent(partitionValues));
             }
@@ -159,7 +162,7 @@ public class ShardRequestExecutor<Req> {
                 request = grouper.newRequest(shardId);
                 requests.put(shardId, request);
             }
-            Long version = docKey.version(functions, parameters, subQueryResults).orElse(null);
+            Long version = docKey.version(txnCtx, functions, parameters, subQueryResults).orElse(null);
             grouper.addItem(request, location, id, version);
             location++;
         }

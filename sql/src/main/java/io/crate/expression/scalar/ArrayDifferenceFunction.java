@@ -24,15 +24,16 @@ package io.crate.expression.scalar;
 
 import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
+import io.crate.data.Input;
 import io.crate.expression.symbol.FuncArg;
 import io.crate.expression.symbol.Symbol;
-import io.crate.data.Input;
-import io.crate.metadata.functions.params.FuncParams;
 import io.crate.metadata.FunctionIdent;
 import io.crate.metadata.FunctionImplementation;
 import io.crate.metadata.FunctionInfo;
 import io.crate.metadata.FunctionResolver;
 import io.crate.metadata.Scalar;
+import io.crate.metadata.TransactionContext;
+import io.crate.metadata.functions.params.FuncParams;
 import io.crate.metadata.functions.params.Param;
 import io.crate.types.ArrayType;
 import io.crate.types.DataType;
@@ -40,6 +41,7 @@ import io.crate.types.DataTypes;
 import org.elasticsearch.common.Nullable;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -87,18 +89,20 @@ class ArrayDifferenceFunction extends Scalar<Object[], Object> {
 
         DataType innerType = ((ArrayType) this.info().returnType()).innerType();
         Object[] array = (Object[]) inputValue;
-        Set<Object> subtractSet = new HashSet<>();
-        if (array.length > 0) {
+        Set<Object> subtractSet;
+        if (array == null) {
+            subtractSet = Collections.emptySet();
+        } else {
+            subtractSet = new HashSet<>();
             for (Object element : array) {
-                subtractSet.add(innerType.value(element));
+                subtractSet.add(innerType.hashableValue(element));
             }
         }
-
         return new ArrayDifferenceFunction(this.functionInfo, subtractSet);
     }
 
     @Override
-    public Object[] evaluate(Input[] args) {
+    public Object[] evaluate(TransactionContext txnCtx, Input[] args) {
         Object[] originalArray = (Object[]) args[0].value();
         if (originalArray == null) {
             return null;
@@ -116,7 +120,7 @@ class ArrayDifferenceFunction extends Scalar<Object[], Object> {
 
                 Object[] array = (Object[]) argValue;
                 for (Object element : array) {
-                    localSubtractSet.add(innerType.value(element));
+                    localSubtractSet.add(innerType.hashableValue(element));
                 }
             }
         } else {
@@ -124,13 +128,11 @@ class ArrayDifferenceFunction extends Scalar<Object[], Object> {
         }
 
         List<Object> resultList = new ArrayList<>(originalArray.length);
-        for (Object anOriginalArray : originalArray) {
-            Object element = innerType.value(anOriginalArray);
-            if (!localSubtractSet.contains(element)) {
-                resultList.add(element);
+        for (Object value : originalArray) {
+            if (!localSubtractSet.contains(innerType.hashableValue(value))) {
+                resultList.add(value);
             }
         }
-
         return resultList.toArray();
     }
 

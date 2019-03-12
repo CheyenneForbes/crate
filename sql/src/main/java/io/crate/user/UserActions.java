@@ -26,9 +26,10 @@ import com.google.common.annotations.VisibleForTesting;
 import io.crate.analyze.SymbolEvaluator;
 import io.crate.data.Row;
 import io.crate.expression.symbol.Symbol;
+import io.crate.metadata.TransactionContext;
 import io.crate.metadata.Functions;
 import io.crate.planner.operators.SubQueryResults;
-import org.elasticsearch.common.lucene.BytesRefs;
+import io.crate.types.DataTypes;
 import org.elasticsearch.common.settings.SecureString;
 
 import javax.annotation.Nullable;
@@ -44,8 +45,9 @@ public final class UserActions {
     @Nullable
     public static SecureHash generateSecureHash(Map<String, Symbol> userStmtProperties,
                                                 Row parameters,
+                                                TransactionContext txnCtx,
                                                 Functions functions) throws GeneralSecurityException, IllegalArgumentException {
-        try (SecureString pw = getUserPasswordProperty(userStmtProperties, parameters, functions)) {
+        try (SecureString pw = getUserPasswordProperty(userStmtProperties, parameters, txnCtx, functions)) {
             if (pw != null) {
                 if (pw.length() == 0) {
                     throw new IllegalArgumentException("Password must not be empty");
@@ -60,12 +62,13 @@ public final class UserActions {
     @Nullable
     static SecureString getUserPasswordProperty(Map<String, Symbol> userStmtProperties,
                                                 Row parameters,
+                                                TransactionContext txnCtx,
                                                 Functions functions) throws IllegalArgumentException {
         final String PASSWORD_PROPERTY = "password";
         for (String key : userStmtProperties.keySet()) {
             if (PASSWORD_PROPERTY.equals(key)) {
-                String value = BytesRefs.toString(
-                    SymbolEvaluator.evaluate(functions, userStmtProperties.get(key), parameters, SubQueryResults.EMPTY));
+                String value = DataTypes.STRING.value(
+                    SymbolEvaluator.evaluate(txnCtx, functions, userStmtProperties.get(key), parameters, SubQueryResults.EMPTY));
                 if (value != null) {
                     return new SecureString(value.toCharArray());
                 }

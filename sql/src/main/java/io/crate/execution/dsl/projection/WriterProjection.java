@@ -32,10 +32,10 @@ import io.crate.expression.symbol.Symbols;
 import io.crate.metadata.ColumnIdent;
 import io.crate.metadata.FunctionIdent;
 import io.crate.metadata.FunctionInfo;
+import io.crate.metadata.TransactionContext;
 import io.crate.metadata.Reference;
 import io.crate.metadata.ReferenceIdent;
 import io.crate.metadata.RowGranularity;
-import io.crate.metadata.TransactionContext;
 import io.crate.metadata.sys.SysShardsTableInfo;
 import io.crate.types.DataType;
 import io.crate.types.DataTypes;
@@ -72,7 +72,7 @@ public class WriterProjection extends Projection {
         new FunctionIdent(FormatFunction.NAME, Arrays.<DataType>asList(StringType.INSTANCE,
             StringType.INSTANCE, StringType.INSTANCE, StringType.INSTANCE)),
         StringType.INSTANCE),
-        Arrays.<Symbol>asList(Literal.of("%s_%s_%s.json"), TABLE_NAME_REF, SHARD_ID_REF, PARTITION_IDENT_REF)
+        Arrays.asList(Literal.of("%s_%s_%s.json"), TABLE_NAME_REF, SHARD_ID_REF, PARTITION_IDENT_REF)
     );
 
     private Symbol uri;
@@ -240,8 +240,8 @@ public class WriterProjection extends Projection {
                '}';
     }
 
-    public WriterProjection normalize(EvaluatingNormalizer normalizer, TransactionContext transactionContext) {
-        Symbol nUri = normalizer.normalize(uri, transactionContext);
+    public WriterProjection normalize(EvaluatingNormalizer normalizer, TransactionContext txnCtx) {
+        Symbol nUri = normalizer.normalize(uri, txnCtx);
         if (uri != nUri) {
             return new WriterProjection(
                 inputs,

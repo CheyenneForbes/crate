@@ -29,14 +29,15 @@ import io.crate.execution.engine.collect.CollectTask;
 import io.crate.execution.engine.collect.MapSideDataCollectOperation;
 import io.crate.execution.engine.collect.stats.JobsLogs;
 import io.crate.execution.engine.distribution.merge.PassThroughPagingIterator;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.Routing;
 import io.crate.metadata.RowGranularity;
 import io.crate.profile.ProfilingContext;
 import io.crate.test.integration.CrateUnitTest;
 import io.crate.testing.TestingRowConsumer;
 import io.crate.types.IntegerType;
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.elasticsearch.common.logging.Loggers;
 import org.hamcrest.Matchers;
 import org.junit.Test;
 import org.mockito.Mockito;
@@ -60,7 +61,7 @@ import static org.mockito.Mockito.when;
 
 public class RootTaskTest extends CrateUnitTest {
 
-    private Logger logger = Loggers.getLogger(RootTaskTest.class);
+    private Logger logger = LogManager.getLogger(RootTaskTest.class);
 
     private String coordinatorNode = "dummyNode";
 
@@ -128,6 +129,7 @@ public class RootTaskTest extends CrateUnitTest {
 
         CollectTask collectChildTask = new CollectTask(
             collectPhase,
+            CoordinatorTxnCtx.systemTransactionContext(),
             mock(MapSideDataCollectOperation.class),
             mock(RamAccountingContext.class),
             new TestingRowConsumer(),
@@ -135,7 +137,6 @@ public class RootTaskTest extends CrateUnitTest {
         TestingRowConsumer batchConsumer = new TestingRowConsumer();
 
         PageBucketReceiver pageBucketReceiver = new CumulativePageBucketReceiver(
-            Loggers.getLogger(DistResultRXTask.class),
             "n1",
             2,
             MoreExecutors.directExecutor(),

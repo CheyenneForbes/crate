@@ -484,15 +484,6 @@ Layer Security (TLS).
   Set this to true to enable secure communication between the CrateDB node
   and the client through SSL via the PostgreSQL wire protocol.
 
-.. _ssl_ingestion_mqtt_enabled:
-
-**ssl.ingestion.mqtt.enabled**
-  | *Runtime:*  ``no``
-  | *Default:* ``false``
-
-  Set this to true to enable secure communication between the CrateDB node and
-  the client through SSL via the MQTT protocol.
-
 **ssl.keystore_filepath**
   | *Runtime:* ``no``
 
@@ -525,24 +516,6 @@ Layer Security (TLS).
 
   The password used to decrypt the truststore file defined with
   ``ssl.truststore_filepath``.
-
-.. _es_api_setting:
-
-Elasticsearch HTTP REST API
-===========================
-
-**es.api.enabled**
-  | *Default:* ``false``
-  | *Runtime:* ``no``
-
-  Enable or disable elasticsearch HTTP REST API.
-
-  .. WARNING::
-
-    This setting is deprecated and will be removed in the future.
-
-    Manipulating your data via elasticsearch API and not via SQL might result
-    in inconsistent data. You have been warned!
 
 Cross-Origin Resource Sharing (CORS)
 ====================================
@@ -697,6 +670,7 @@ Custom attributes are not validated by CrateDB, unlike core node attributes.
 Custom attributes can, however, be :ref:`used to control shard allocation
 <conf-routing-allocation-awareness>`.
 
+
 .. _conf-node-enterprise-license:
 
 Enterprise License
@@ -706,6 +680,11 @@ Enterprise License
   | *Default:*  ``true``
   | *Runtime:*  ``no``
 
-  Setting this to ``false`` disables the `Enterprise Edition`_ of CrateDB.
+  This is a deprecated setting that allows you to disable the `Enterprise
+  Edition`_ features of CrateDB, enabling you to use all community edition
+  features of CrateDB without restrictions or license.
+  The setting will be removed in CrateDB 4.0 and instead you'll have to
+  `Acquire a license`_ or switch to the :ref:`community-edition` distribution.
 
 .. _`Enterprise Edition`: https://crate.io/enterprise-edition/
+.. _`Acquire a license`: https://crate.io/pricing/

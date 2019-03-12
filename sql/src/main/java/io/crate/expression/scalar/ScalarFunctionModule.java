@@ -21,9 +21,6 @@
 
 package io.crate.expression.scalar;
 
-import io.crate.metadata.FunctionIdent;
-import io.crate.metadata.FunctionImplementation;
-import io.crate.metadata.FunctionResolver;
 import io.crate.expression.scalar.arithmetic.AbsFunction;
 import io.crate.expression.scalar.arithmetic.ArithmeticFunctions;
 import io.crate.expression.scalar.arithmetic.ArrayFunction;
@@ -31,7 +28,7 @@ import io.crate.expression.scalar.arithmetic.CeilFunction;
 import io.crate.expression.scalar.arithmetic.FloorFunction;
 import io.crate.expression.scalar.arithmetic.LogFunction;
 import io.crate.expression.scalar.arithmetic.MapFunction;
-import io.crate.expression.scalar.arithmetic.NegateFunction;
+import io.crate.expression.scalar.arithmetic.NegateFunctions;
 import io.crate.expression.scalar.arithmetic.RandomFunction;
 import io.crate.expression.scalar.arithmetic.RoundFunction;
 import io.crate.expression.scalar.arithmetic.SquareRootFunction;
@@ -50,12 +47,20 @@ import io.crate.expression.scalar.geo.IntersectsFunction;
 import io.crate.expression.scalar.geo.WithinFunction;
 import io.crate.expression.scalar.postgres.PgBackendPidFunction;
 import io.crate.expression.scalar.regex.MatchesFunction;
-import io.crate.expression.scalar.regex.ReplaceFunction;
+import io.crate.expression.scalar.regex.RegexpReplaceFunction;
 import io.crate.expression.scalar.string.HashFunctions;
+import io.crate.expression.scalar.string.InitCapFunction;
 import io.crate.expression.scalar.string.LengthFunction;
 import io.crate.expression.scalar.string.StringCaseFunction;
+import io.crate.expression.scalar.string.ReplaceFunction;
 import io.crate.expression.scalar.systeminformation.CurrentSchemaFunction;
+import io.crate.expression.scalar.systeminformation.CurrentSchemasFunction;
+import io.crate.expression.scalar.systeminformation.PgGetExpr;
 import io.crate.expression.scalar.timestamp.CurrentTimestampFunction;
+import io.crate.metadata.FunctionIdent;
+import io.crate.metadata.FunctionImplementation;
+import io.crate.metadata.FunctionName;
+import io.crate.metadata.FunctionResolver;
 import org.elasticsearch.common.inject.AbstractModule;
 import org.elasticsearch.common.inject.multibindings.MapBinder;
 
@@ -65,27 +70,31 @@ import java.util.Map;
 public class ScalarFunctionModule extends AbstractModule {
 
     private Map<FunctionIdent, FunctionImplementation> functions = new HashMap<>();
-    private Map<String, FunctionResolver> resolver = new HashMap<>();
+    private Map<FunctionName, FunctionResolver> resolver = new HashMap<>();
     private MapBinder<FunctionIdent, FunctionImplementation> functionBinder;
-    private MapBinder<String, FunctionResolver> resolverBinder;
+    private MapBinder<FunctionName, FunctionResolver> resolverBinder;
 
     public void register(FunctionImplementation impl) {
         functions.put(impl.info().ident(), impl);
     }
 
     public void register(String name, FunctionResolver functionResolver) {
-        resolver.put(name, functionResolver);
+        register(new FunctionName(name), functionResolver);
+    }
+
+    public void register(FunctionName qualifiedName, FunctionResolver functionResolver) {
+        resolver.put(qualifiedName, functionResolver);
     }
 
     @Override
     protected void configure() {
-        NegateFunction.register(this);
+        NegateFunctions.register(this);
         CollectionCountFunction.register(this);
         CollectionAverageFunction.register(this);
         FormatFunction.register(this);
         SubstrFunction.register(this);
         MatchesFunction.register(this);
-        ReplaceFunction.register(this);
+        RegexpReplaceFunction.register(this);
 
         ArithmeticFunctions.register(this);
 
@@ -115,11 +124,13 @@ public class ScalarFunctionModule extends AbstractModule {
         TryCastScalarFunction.register(this);
 
         StringCaseFunction.register(this);
+        InitCapFunction.register(this);
 
         ConcatFunction.register(this);
 
         LengthFunction.register(this);
         HashFunctions.register(this);
+        ReplaceFunction.register(this);
 
         Ignore3vlFunction.register(this);
 
@@ -128,6 +139,8 @@ public class ScalarFunctionModule extends AbstractModule {
         ArrayCatFunction.register(this);
         ArrayDifferenceFunction.register(this);
         ArrayUniqueFunction.register(this);
+        ArrayUpperFunction.register(this);
+        ArrayLowerFunction.register(this);
 
         CoalesceFunction.register(this);
         GreatestFunction.register(this);
@@ -136,19 +149,22 @@ public class ScalarFunctionModule extends AbstractModule {
         IfFunction.register(this);
 
         CurrentSchemaFunction.register(this);
+        CurrentSchemasFunction.register(this);
+        PgGetExpr.register(this);
 
         PgBackendPidFunction.register(this);
+        register(new CurrentDatabaseFunction());
 
         // bind all registered functions and resolver
         // by doing it here instead of the register functions, plugins can also use the
         // register functions in their onModule(...) hooks
         functionBinder = MapBinder.newMapBinder(binder(), FunctionIdent.class, FunctionImplementation.class);
-        resolverBinder = MapBinder.newMapBinder(binder(), String.class, FunctionResolver.class);
+        resolverBinder = MapBinder.newMapBinder(binder(), FunctionName.class, FunctionResolver.class);
         for (Map.Entry<FunctionIdent, FunctionImplementation> entry : functions.entrySet()) {
             functionBinder.addBinding(entry.getKey()).toInstance(entry.getValue());
 
         }
-        for (Map.Entry<String, FunctionResolver> entry : resolver.entrySet()) {
+        for (Map.Entry<FunctionName, FunctionResolver> entry : resolver.entrySet()) {
             resolverBinder.addBinding(entry.getKey()).toInstance(entry.getValue());
         }
 
@@ -156,4 +172,5 @@ public class ScalarFunctionModule extends AbstractModule {
         functions = null;
         resolver = null;
     }
+
 }

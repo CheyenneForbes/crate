@@ -24,7 +24,9 @@ package io.crate.metadata;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Splitter;
+import com.google.common.collect.ImmutableList;
 import io.crate.blob.v2.BlobIndex;
+import io.crate.execution.ddl.tables.AlterTableOperation;
 import io.crate.metadata.blob.BlobSchemaInfo;
 
 import javax.annotation.Nullable;
@@ -34,14 +36,17 @@ import java.util.List;
  * 1) Class which unpacks and holds the different entities of a CrateDB index name.
  * 2) Static methods to check index names or generate them for RelationName or PartitionName
  */
-@SuppressWarnings("WeakerAccess")
 public class IndexParts {
 
     // Index names are only allowed to contain '.' as separators
     private static final Splitter SPLITTER = Splitter.on(".").limit(6);
     private static final String PARTITIONED_KEY_WORD = "partitioned";
     @VisibleForTesting
-    public static final String PARTITIONED_TABLE_PART = "." + PARTITIONED_KEY_WORD + ".";
+    static final String PARTITIONED_TABLE_PART = "." + PARTITIONED_KEY_WORD + ".";
+
+    public static final List<String> DANGLING_INDICES_PREFIX_PATTERNS = ImmutableList.of(
+        AlterTableOperation.RESIZE_PREFIX + "*"
+    );
 
     private final String schema;
     private final String table;
@@ -154,27 +159,34 @@ public class IndexParts {
     }
 
     /**
-     * Checks whether the index name belongs to a partitioned table.
+     * Checks whether the index/template name belongs to a partitioned table.
      *
      * A partition index name looks like on of these:
      *
      * .partitioned.table.ident
      * schema..partitioned.table.ident
+     * schema..partitioned.table.
      *
-     * @param indexName The index name to check
-     * @return True if the index name denotes a partitioned table
+     * @param templateOrIndex The index name to check
+     * @return True if the index/template name denotes a partitioned table
      */
-    public static boolean isPartitioned(String indexName) {
-        int idx1 = indexName.indexOf('.');
+    public static boolean isPartitioned(String templateOrIndex) {
+        int idx1 = templateOrIndex.indexOf('.');
         if (idx1 == -1) {
             return false;
         }
-        int idx2 = indexName.indexOf(PARTITIONED_TABLE_PART, idx1);
+        int idx2 = templateOrIndex.indexOf(PARTITIONED_TABLE_PART, idx1);
         if (idx2 == -1) {
             return false;
         }
         int diff = idx2 - idx1;
-        return ((diff == 0 && idx1 == 0) || diff == 1) && idx2 + PARTITIONED_TABLE_PART.length() < indexName.length();
+        return ((diff == 0 && idx1 == 0) || diff == 1) && idx2 + PARTITIONED_TABLE_PART.length() < templateOrIndex.length();
+    }
+
+    public static boolean isDangling(String indexName) {
+        return indexName.startsWith(".") &&
+               !indexName.startsWith(PARTITIONED_TABLE_PART) &&
+               !BlobIndex.isBlobIndex(indexName);
     }
 
     private static void assertPartitionPrefix(String prefix) {

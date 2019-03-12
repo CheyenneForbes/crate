@@ -686,14 +686,13 @@ Inserting objects::
 Object Arrays
 =============
 
-Arrays in CrateDB can only be queried for containment using the
-:ref:`sql_dql_any_array` operator. One exception are object arrays. As you can
-access fields of :ref:`sql_dql_objects` using subscript expressions, you can
-access fields of object arrays.
+Arrays in CrateDB can be queried for containment using the
+:ref:`sql_dql_any_array` operator. 
 
-As an object array is no object, you won't get the value for a single field,
-but an array of all the values of that field for all objects in that object
-array.
+It is possible to access fields of :ref:`sql_dql_objects` using subscript
+expressions. If the parent is an object array, you'll get an array of the
+selected field.
+
 
 Examples::
 
@@ -747,6 +746,13 @@ Examples::
     | North West Ripple |
     +-------------------+
     SELECT 2 rows in set (... sec)
+
+
+.. note::
+
+    Although it is possible to use ``? = ANY (object_array)`` it's usage is
+    discouraged as it cannot utilize the index and has to do the equivalent of
+    a table scan.
 
 .. _sql_dql_object_arrays_select:
 
@@ -969,6 +975,34 @@ Some Examples::
     |            29 | City        |
     +---------------+-------------+
     SELECT 4 rows in set (... sec)
+
+Window Functions
+================
+
+CrateDB supports the :ref:`OVER <over>` clause to enable the execution of
+:ref:`window functions <window-functions>`::
+
+   cr> select sum(position) OVER(), name from locations order by name;
+   +-----------------------+------------------------------------+
+   | sum(position) OVER () | name                               |
+   +-----------------------+------------------------------------+
+   |                    67 |                                    |
+   |                    67 | Aldebaran                          |
+   |                    67 | Algol                              |
+   |                    67 | Allosimanius Syneca                |
+   |                    67 | Alpha Centauri                     |
+   |                    67 | Altair                             |
+   |                    67 | Argabuthon                         |
+   |                    67 | Arkintoofle Minor                  |
+   |                    67 | Bartledan                          |
+   |                    67 | Berlin                             |
+   |                    67 | Dornbirn                           |
+   |                    67 | Galactic Sector QQ7 Active J Gamma |
+   |                    67 | North West Ripple                  |
+   |                    67 | Outer Eastern Rim                  |
+   |                    67 | NULL                               |
+   +-----------------------+------------------------------------+
+   SELECT 15 rows in set (... sec)
 
 .. _sql_dql_group_by:
 

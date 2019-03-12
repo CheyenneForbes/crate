@@ -28,11 +28,10 @@ import io.crate.execution.dml.ShardRequest;
 import io.crate.execution.engine.collect.CollectExpression;
 import io.crate.execution.engine.collect.RowShardResolver;
 import org.apache.logging.log4j.Logger;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.cluster.routing.ShardIterator;
 import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.cluster.service.ClusterService;
-import org.elasticsearch.common.logging.Loggers;
+import org.apache.logging.log4j.LogManager;
 import org.elasticsearch.index.IndexNotFoundException;
 
 import javax.annotation.Nullable;
@@ -48,7 +47,7 @@ import java.util.function.Supplier;
 public final class GroupRowsByShard<TReq extends ShardRequest<TReq, TItem>, TItem extends ShardRequest.Item>
     implements BiConsumer<ShardedRequests<TReq, TItem>, Row> {
 
-    private static final Logger LOGGER = Loggers.getLogger(GroupRowsByShard.class);
+    private static final Logger LOGGER = LogManager.getLogger(GroupRowsByShard.class);
 
     private final RowShardResolver rowShardResolver;
     private final List<? extends CollectExpression<Row, ?>> expressions;
@@ -59,7 +58,7 @@ public final class GroupRowsByShard<TReq extends ShardRequest<TReq, TItem>, TIte
     private final boolean autoCreateIndices;
     private final BiConsumer<ShardedRequests, String> itemFailureRecorder;
     private final Predicate<ShardedRequests> hasSourceUriFailure;
-    private final Input<BytesRef> sourceUriInput;
+    private final Input<String> sourceUriInput;
     private final Input<Long> lineNumberInput;
 
     GroupRowsByShard(ClusterService clusterService,
@@ -70,7 +69,7 @@ public final class GroupRowsByShard<TReq extends ShardRequest<TReq, TItem>, TIte
                      Function<String, TItem> itemFactory,
                      BiConsumer<ShardedRequests, String> itemFailureRecorder,
                      Predicate<ShardedRequests> hasSourceUriFailure,
-                     Input<BytesRef> sourceUriInput,
+                     Input<String> sourceUriInput,
                      Input<Long> lineNumberInput,
                      boolean autoCreateIndices) {
         assert expressions instanceof RandomAccess
@@ -109,7 +108,7 @@ public final class GroupRowsByShard<TReq extends ShardRequest<TReq, TItem>, TIte
             TItem item = itemFactory.apply(id);
             String indexName = indexNameResolver.get();
             String routing = rowShardResolver.routing();
-            BytesRef sourceUri = sourceUriInput.value();
+            String sourceUri = sourceUriInput.value();
             Long lineNumber = lineNumberInput.value();
 
             RowSourceInfo rowSourceInfo = RowSourceInfo.emptyMarkerOrNewInstance(sourceUri, lineNumber);

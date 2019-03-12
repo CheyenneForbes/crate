@@ -26,7 +26,6 @@ import io.crate.execution.ddl.AbstractDDLTransportAction;
 import io.crate.metadata.cluster.CloseTableClusterStateTaskExecutor;
 import io.crate.metadata.cluster.DDLClusterStateService;
 import io.crate.metadata.cluster.OpenTableClusterStateTaskExecutor;
-import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.ClusterStateTaskExecutor;
@@ -47,7 +46,7 @@ import org.elasticsearch.transport.TransportService;
 public class TransportOpenCloseTableOrPartitionAction extends AbstractDDLTransportAction<OpenCloseTableOrPartitionRequest, OpenCloseTableOrPartitionResponse> {
 
     private static final IndicesOptions STRICT_INDICES_OPTIONS = IndicesOptions.fromOptions(false, false, false, false);
-    private static final String ACTION_NAME = "crate/sql/table_or_partition/open_close";
+    private static final String ACTION_NAME = "internal:crate:sql/table_or_partition/open_close";
 
     private final OpenTableClusterStateTaskExecutor openExecutor;
     private final CloseTableClusterStateTaskExecutor closeExecutor;
@@ -57,13 +56,12 @@ public class TransportOpenCloseTableOrPartitionAction extends AbstractDDLTranspo
                                                     TransportService transportService,
                                                     ClusterService clusterService,
                                                     ThreadPool threadPool,
-                                                    ActionFilters actionFilters,
                                                     IndexNameExpressionResolver indexNameExpressionResolver,
                                                     AllocationService allocationService,
                                                     DDLClusterStateService ddlClusterStateService,
                                                     MetaDataIndexUpgradeService metaDataIndexUpgradeService,
                                                     IndicesService indexServices) {
-        super(settings, ACTION_NAME, transportService, clusterService, threadPool, actionFilters,
+        super(settings, ACTION_NAME, transportService, clusterService, threadPool,
             indexNameExpressionResolver, OpenCloseTableOrPartitionRequest::new,
             OpenCloseTableOrPartitionResponse::new, OpenCloseTableOrPartitionResponse::new,
             "open-table-or-partition");
@@ -85,6 +83,6 @@ public class TransportOpenCloseTableOrPartitionAction extends AbstractDDLTranspo
     @Override
     protected ClusterBlockException checkBlock(OpenCloseTableOrPartitionRequest request, ClusterState state) {
         return state.blocks().indicesBlockedException(ClusterBlockLevel.METADATA_WRITE,
-            indexNameExpressionResolver.concreteIndexNames(state, STRICT_INDICES_OPTIONS, request.tableIdent().indexName()));
+            indexNameExpressionResolver.concreteIndexNames(state, STRICT_INDICES_OPTIONS, request.tableIdent().indexNameOrAlias()));
     }
 }

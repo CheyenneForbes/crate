@@ -34,9 +34,10 @@ import io.crate.planner.TableStatsService;
 import io.crate.settings.CrateSetting;
 import io.crate.settings.SharedSettings;
 import io.crate.types.DataTypes;
+import io.crate.types.ObjectType;
 import io.crate.udc.service.UDCService;
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.cluster.ClusterChangedEvent;
 import org.elasticsearch.cluster.ClusterStateListener;
 import org.elasticsearch.cluster.InternalClusterInfoService;
@@ -49,8 +50,6 @@ import org.elasticsearch.cluster.routing.allocation.decider.FilterAllocationDeci
 import org.elasticsearch.cluster.routing.allocation.decider.ThrottlingAllocationDecider;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.inject.Inject;
-import org.elasticsearch.common.logging.Loggers;
-import org.elasticsearch.common.lucene.BytesRefs;
 import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.discovery.DiscoverySettings;
@@ -98,7 +97,6 @@ public final class CrateSettings implements ClusterStateListener {
             // GRACEFUL STOP
             DecommissioningService.DECOMMISSION_INTERNAL_SETTING_GROUP,
             DecommissioningService.GRACEFUL_STOP_MIN_AVAILABILITY_SETTING,
-            DecommissioningService.GRACEFUL_STOP_REALLOCATE_SETTING,
             DecommissioningService.GRACEFUL_STOP_TIMEOUT_SETTING,
             DecommissioningService.GRACEFUL_STOP_FORCE_SETTING,
 
@@ -237,9 +235,6 @@ public final class CrateSettings implements ClusterStateListener {
                 flattenSettings(settingsBuilder, DOT_JOINER.join(key, setting.getKey()), setting.getValue());
             }
         } else {
-            if (value instanceof BytesRef) {
-                value = BytesRefs.toString(value);
-            }
             settingsBuilder.put(key, value.toString());
         }
     }
@@ -257,7 +252,7 @@ public final class CrateSettings implements ClusterStateListener {
 
     @Inject
     public CrateSettings(ClusterService clusterService, Settings settings) {
-        logger = Loggers.getLogger(this.getClass(), settings);
+        logger = LogManager.getLogger(this.getClass());
         Settings.Builder defaultsBuilder = Settings.builder();
         for (CrateSetting builtInSetting : BUILT_IN_SETTINGS) {
             defaultsBuilder.put(builtInSetting.getKey(), builtInSetting.setting().getDefaultRaw(settings));
@@ -316,7 +311,7 @@ public final class CrateSettings implements ClusterStateListener {
             buildReferenceTree(referenceMap,
                 CrateSetting.of(Setting.groupSetting(prefix + settingKey + ".",
                     Setting.Property.NodeScope),
-                    DataTypes.OBJECT));
+                    ObjectType.untyped()));
             //build the reference tree for every child setting
             for (String settingName : settingValue.keySet()) {
                 String nestedPrefix = prefix + settingKey + "." + settingName;

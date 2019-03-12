@@ -38,7 +38,7 @@ import io.crate.exceptions.SQLExceptions;
 import io.crate.execution.engine.collect.stats.JobsLogs;
 import io.crate.expression.symbol.Field;
 import io.crate.metadata.RoutingProvider;
-import io.crate.metadata.TransactionContext;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.planner.DependencyCarrier;
 import io.crate.planner.Plan;
 import io.crate.planner.Planner;
@@ -50,7 +50,7 @@ import io.crate.types.DataType;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.common.Randomness;
-import org.elasticsearch.common.logging.Loggers;
+import org.apache.logging.log4j.LogManager;
 
 import javax.annotation.Nullable;
 import java.util.Collections;
@@ -60,7 +60,7 @@ import java.util.concurrent.CompletableFuture;
 
 public class SimplePortal extends AbstractPortal {
 
-    private static final Logger LOGGER = Loggers.getLogger(SimplePortal.class);
+    private static final Logger LOGGER = LogManager.getLogger(SimplePortal.class);
 
     private List<Object> params;
     private String query;
@@ -70,12 +70,12 @@ public class SimplePortal extends AbstractPortal {
     @Nullable
     private FormatCodes.FormatCode[] resultFormatCodes;
     private List<? extends DataType> outputTypes;
-    private ResultReceiver resultReceiver;
+    private ResultReceiver<?> resultReceiver;
     private RowConsumerToResultReceiver consumer = null;
     private int maxRows = 0;
     private int defaultLimit;
     private Row rowParams;
-    private TransactionContext transactionContext;
+    private CoordinatorTxnCtx coordinatorTxnCtx;
 
     public SimplePortal(String name,
                         Analyzer analyzer,
@@ -111,7 +111,7 @@ public class SimplePortal extends AbstractPortal {
     public Portal bind(String statementName,
                        String query,
                        Statement statement,
-                       @Nullable  AnalyzedStatement analyzedStatement,
+                       @Nullable AnalyzedStatement analyzedStatement,
                        List<Object> params,
                        @Nullable FormatCodes.FormatCode[] resultFormatCodes) {
 
@@ -143,13 +143,13 @@ public class SimplePortal extends AbstractPortal {
         this.params = params;
         this.rowParams = new RowN(params.toArray());
         this.resultFormatCodes = resultFormatCodes;
-        if (transactionContext == null) {
-            transactionContext = new TransactionContext(sessionContext);
+        if (coordinatorTxnCtx == null) {
+            coordinatorTxnCtx = new CoordinatorTxnCtx(sessionContext);
         }
         if (analyzedStatement == null || analyzedStatement.isUnboundPlanningSupported() == false) {
             Analysis analysis = portalContext.getAnalyzer().boundAnalyze(
                 statement,
-                transactionContext,
+                coordinatorTxnCtx,
                 new ParameterContext(rowParams, Collections.emptyList()));
             analyzedStatement = analysis.analyzedStatement();
         }
@@ -177,6 +177,14 @@ public class SimplePortal extends AbstractPortal {
     @Override
     public CompletableFuture<?> sync(Planner planner, JobsLogs jobsLogs) {
         assert analyzedStatement != null : "analyzedStatement must not be null";
+
+        if (consumer != null && consumer.suspended()) {
+            LOGGER.trace("Resuming existing consumer {}", consumer);
+            consumer.replaceResultReceiver(resultReceiver, maxRows);
+            consumer.resume();
+            return resultReceiver.completionFuture();
+        }
+
         UUID jobId = UUID.randomUUID();
         RoutingProvider routingProvider = new RoutingProvider(Randomness.get().nextInt(), planner.getAwarenessAttributes());
         ClusterState clusterState = planner.currentClusterState();
@@ -185,7 +193,7 @@ public class SimplePortal extends AbstractPortal {
             routingProvider,
             jobId,
             planner.functions(),
-            transactionContext,
+            coordinatorTxnCtx,
             defaultLimit,
             maxRows
         );
@@ -213,35 +221,36 @@ public class SimplePortal extends AbstractPortal {
         }
 
         jobsLogs.logExecutionStart(jobId, query, sessionContext.user(), StatementClassifier.classify(plan));
-        JobsLogsUpdateListener jobsLogsUpdateListener = new JobsLogsUpdateListener(jobId, jobsLogs);
-        CompletableFuture<?> completableFuture = resultReceiver.completionFuture()
-            .whenComplete(jobsLogsUpdateListener);
-
-        if (!resumeIfSuspended()) {
-            consumer = new RowConsumerToResultReceiver(resultReceiver, maxRows);
-            plan.execute(
-                dependencyCarrier,
-                plannerContext,
-                consumer,
-                rowParams,
-                SubQueryResults.EMPTY
-            );
-        }
+        consumer = new RowConsumerToResultReceiver(
+            resultReceiver,
+            maxRows,
+            new JobsLogsUpdateListener(jobId, jobsLogs)
+        );
+        plan.execute(
+            dependencyCarrier,
+            plannerContext,
+            consumer,
+            rowParams,
+            SubQueryResults.EMPTY
+        );
         synced = true;
-        return completableFuture;
+        return resultReceiver.completionFuture();
     }
 
     private void retryQuery(Planner planner, UUID jobId) {
+        if (consumer == null) {
+            return; // portal was closed
+        }
         Analysis analysis = portalContext
             .getAnalyzer()
-            .boundAnalyze(statement, transactionContext, new ParameterContext(rowParams, Collections.emptyList()));
+            .boundAnalyze(statement, coordinatorTxnCtx, new ParameterContext(rowParams, Collections.emptyList()));
         RoutingProvider routingProvider = new RoutingProvider(Randomness.get().nextInt(), planner.getAwarenessAttributes());
         PlannerContext plannerContext = new PlannerContext(
             planner.currentClusterState(),
             routingProvider,
             jobId,
             planner.functions(),
-            transactionContext,
+            coordinatorTxnCtx,
             defaultLimit,
             maxRows
         );
@@ -259,21 +268,7 @@ public class SimplePortal extends AbstractPortal {
     public void close() {
         if (consumer != null) {
             consumer.closeAndFinishIfSuspended();
-        }
-    }
-
-    private boolean resumeIfSuspended() {
-        LOGGER.trace("method=resumeIfSuspended");
-        if (consumer == null) {
-            return false;
-        }
-        if (consumer.suspended()) {
-            consumer.replaceResultReceiver(resultReceiver, maxRows);
-            LOGGER.trace("Resuming {}", consumer);
-            consumer.resume();
-            return true;
-        } else {
-            return false;
+            consumer = null;
         }
     }
 

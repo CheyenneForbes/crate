@@ -26,7 +26,7 @@ import io.crate.action.sql.SessionContext;
 import io.crate.data.InMemoryBatchIterator;
 import io.crate.data.Row;
 import io.crate.data.RowConsumer;
-import io.crate.metadata.settings.session.SessionSettingApplier;
+import io.crate.metadata.settings.session.SessionSetting;
 import io.crate.metadata.settings.session.SessionSettingRegistry;
 import io.crate.planner.DependencyCarrier;
 import io.crate.planner.Plan;
@@ -34,7 +34,7 @@ import io.crate.planner.PlannerContext;
 import io.crate.planner.operators.SubQueryResults;
 import io.crate.sql.tree.Expression;
 import org.apache.logging.log4j.Logger;
-import org.elasticsearch.common.logging.Loggers;
+import org.apache.logging.log4j.LogManager;
 
 import java.util.List;
 import java.util.Map;
@@ -43,14 +43,12 @@ import static io.crate.data.SentinelRow.SENTINEL;
 
 public class SetSessionPlan implements Plan {
 
-    private static final Logger LOGGER = Loggers.getLogger(SetSessionPlan.class);
+    private static final Logger LOGGER = LogManager.getLogger(SetSessionPlan.class);
 
     private final Map<String, List<Expression>> settings;
-    private final SessionContext sessionContext;
 
-    public SetSessionPlan(Map<String, List<Expression>> settings, SessionContext sessionContext) {
+    public SetSessionPlan(Map<String, List<Expression>> settings) {
         this.settings = settings;
-        this.sessionContext = sessionContext;
     }
 
     @Override
@@ -59,17 +57,18 @@ public class SetSessionPlan implements Plan {
     }
 
     @Override
-    public void execute(DependencyCarrier executor,
-                        PlannerContext plannerContext,
-                        RowConsumer consumer,
-                        Row params,
-                        SubQueryResults subQueryResults) {
+    public void executeOrFail(DependencyCarrier executor,
+                              PlannerContext plannerContext,
+                              RowConsumer consumer,
+                              Row params,
+                              SubQueryResults subQueryResults) throws Exception {
+        SessionContext sessionContext = plannerContext.transactionContext().sessionContext();
         for (Map.Entry<String, List<Expression>> entry : settings.entrySet()) {
-            SessionSettingApplier applier = SessionSettingRegistry.getApplier(entry.getKey());
-            if (applier == null) {
-                LOGGER.warn("SET SESSION STATEMENT WILL BE IGNORED: {}", entry.getKey());
+            SessionSetting<?> sessionSetting = SessionSettingRegistry.SETTINGS.get(entry.getKey());
+            if (sessionSetting == null) {
+                LOGGER.info("SET SESSION STATEMENT WILL BE IGNORED: {}", entry.getKey());
             } else {
-                applier.apply(params, entry.getValue(), sessionContext);
+                sessionSetting.apply(params, entry.getValue(), sessionContext);
             }
         }
         consumer.accept(InMemoryBatchIterator.empty(SENTINEL), null);

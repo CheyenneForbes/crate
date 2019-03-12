@@ -27,17 +27,15 @@ import io.crate.data.BatchIterator;
 import io.crate.data.Input;
 import io.crate.data.Row;
 import io.crate.execution.dsl.phases.FileUriCollectPhase;
-import io.crate.metadata.FunctionIdent;
-import io.crate.metadata.FunctionImplementation;
-import io.crate.metadata.FunctionResolver;
-import io.crate.metadata.Functions;
-import io.crate.metadata.Reference;
 import io.crate.expression.InputFactory;
 import io.crate.expression.reference.file.FileLineReferenceResolver;
+import io.crate.metadata.CoordinatorTxnCtx;
+import io.crate.metadata.TransactionContext;
+import io.crate.metadata.Functions;
+import io.crate.metadata.Reference;
 import io.crate.test.integration.CrateUnitTest;
 import io.crate.testing.BatchIteratorTester;
 import io.crate.types.DataTypes;
-import org.apache.lucene.util.BytesRef;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -62,16 +60,17 @@ public class FileReadingIteratorTest extends CrateUnitTest {
     private Path tempFilePath;
     private String fileUri;
     private File tmpFile;
-    private byte[] JSON_AS_MAP_FIRST_LINE = "{\"name\": \"Arthur\", \"id\": 4, \"details\": {\"age\": 38}}".getBytes(StandardCharsets.UTF_8);
-    private byte[] JSON_AS_MAP_SECOND_LINE = "{\"id\": 5, \"name\": \"Trillian\", \"details\": {\"age\": 33}}".getBytes(StandardCharsets.UTF_8);
-    private byte[] CSV_AS_MAP_FIRST_LINE = "{\"name\":\"Arthur\",\"id\":\"4\",\"age\":\"38\"}".getBytes(StandardCharsets.UTF_8);
-    private byte[] CSV_AS_MAP_SECOND_LINE = "{\"name\":\"Trillian\",\"id\":\"5\",\"age\":\"33\"}".getBytes(StandardCharsets.UTF_8);
+    private String JSON_AS_MAP_FIRST_LINE = "{\"name\": \"Arthur\", \"id\": 4, \"details\": {\"age\": 38}}";
+    private String JSON_AS_MAP_SECOND_LINE = "{\"id\": 5, \"name\": \"Trillian\", \"details\": {\"age\": 33}}";
+    private String CSV_AS_MAP_FIRST_LINE = "{\"name\":\"Arthur\",\"id\":\"4\",\"age\":\"38\"}";
+    private String CSV_AS_MAP_SECOND_LINE = "{\"name\":\"Trillian\",\"id\":\"5\",\"age\":\"33\"}";
+    private TransactionContext txnCtx = CoordinatorTxnCtx.systemTransactionContext();
 
     @Before
     public void prepare() {
         Functions functions = new Functions(
-            ImmutableMap.<FunctionIdent, FunctionImplementation>of(),
-            ImmutableMap.<String, FunctionResolver>of()
+            ImmutableMap.of(),
+            ImmutableMap.of()
         );
         inputFactory = new InputFactory(functions);
     }
@@ -91,8 +90,8 @@ public class FileReadingIteratorTest extends CrateUnitTest {
         );
 
         List<Object[]> expectedResult = Arrays.asList(
-            new Object[]{new BytesRef(JSON_AS_MAP_FIRST_LINE)},
-            new Object[]{new BytesRef(JSON_AS_MAP_SECOND_LINE)});
+            new Object[]{JSON_AS_MAP_FIRST_LINE},
+            new Object[]{JSON_AS_MAP_SECOND_LINE});
         BatchIteratorTester tester = new BatchIteratorTester(batchIteratorSupplier);
         tester.verifyResultAndEdgeCaseBehaviour(expectedResult);
     }
@@ -113,8 +112,8 @@ public class FileReadingIteratorTest extends CrateUnitTest {
         );
 
         List<Object[]> expectedResult = Arrays.asList(
-            new Object[]{new BytesRef(CSV_AS_MAP_FIRST_LINE)},
-            new Object[]{new BytesRef(CSV_AS_MAP_SECOND_LINE)});
+            new Object[]{CSV_AS_MAP_FIRST_LINE},
+            new Object[]{CSV_AS_MAP_SECOND_LINE});
         BatchIteratorTester tester = new BatchIteratorTester(batchIteratorSupplier);
         tester.verifyResultAndEdgeCaseBehaviour(expectedResult);
     }
@@ -134,8 +133,8 @@ public class FileReadingIteratorTest extends CrateUnitTest {
         );
 
         List<Object[]> expectedResult = Arrays.asList(
-            new Object[]{new BytesRef(JSON_AS_MAP_FIRST_LINE)},
-            new Object[]{new BytesRef(JSON_AS_MAP_SECOND_LINE)});
+            new Object[]{JSON_AS_MAP_FIRST_LINE},
+            new Object[]{JSON_AS_MAP_SECOND_LINE});
         BatchIteratorTester tester = new BatchIteratorTester(batchIteratorSupplier);
         tester.verifyResultAndEdgeCaseBehaviour(expectedResult);
     }
@@ -156,8 +155,8 @@ public class FileReadingIteratorTest extends CrateUnitTest {
         );
 
         List<Object[]> expectedResult = Arrays.asList(
-            new Object[]{new BytesRef(CSV_AS_MAP_FIRST_LINE)},
-            new Object[]{new BytesRef(CSV_AS_MAP_SECOND_LINE)});
+            new Object[]{CSV_AS_MAP_FIRST_LINE},
+            new Object[]{CSV_AS_MAP_SECOND_LINE});
         BatchIteratorTester tester = new BatchIteratorTester(batchIteratorSupplier);
         tester.verifyResultAndEdgeCaseBehaviour(expectedResult);
     }
@@ -165,7 +164,7 @@ public class FileReadingIteratorTest extends CrateUnitTest {
     private BatchIterator<Row> createBatchIterator(Collection<String> fileUris, String compression, FileUriCollectPhase.InputFormat format) {
         Reference raw = createReference("_raw", DataTypes.STRING);
         InputFactory.Context<LineCollectorExpression<?>> ctx =
-            inputFactory.ctxForRefs(FileLineReferenceResolver::getImplementation);
+            inputFactory.ctxForRefs(txnCtx, FileLineReferenceResolver::getImplementation);
 
         List<Input<?>> inputs = Collections.singletonList(ctx.add(raw));
         return FileReadingIterator.newInstance(

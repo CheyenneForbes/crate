@@ -52,11 +52,13 @@ import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.SortedSetDocValues;
 import org.apache.lucene.index.Terms;
 import org.apache.lucene.search.DocIdSetIterator;
+import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.Weight;
 import org.apache.lucene.util.Bits;
 import org.apache.lucene.util.BytesRef;
 import org.elasticsearch.Version;
+import org.elasticsearch.common.lucene.BytesRefs;
 import org.elasticsearch.common.util.BigArrays;
 import org.elasticsearch.common.util.ObjectArray;
 import org.elasticsearch.index.engine.Engine;
@@ -136,19 +138,15 @@ final class GroupByOptimizedIterator {
         SharedShardContext sharedShardContext = collectTask.sharedShardContexts().getOrCreateContext(shardId);
         Engine.Searcher searcher = sharedShardContext.acquireSearcher();
         try {
-            QueryShardContext queryShardContext = sharedShardContext.indexService().newQueryShardContext(
-                shardId.getId(),
-                searcher.reader(),
-                System::currentTimeMillis,
-                null
-            );
+            QueryShardContext queryShardContext =
+                sharedShardContext.indexService().newQueryShardContext(System::currentTimeMillis);
             collectTask.addSearcher(sharedShardContext.readerId(), searcher);
 
-            InputFactory.Context<? extends LuceneCollectorExpression<?>> docCtx = docInputFactory.getCtx();
+            InputFactory.Context<? extends LuceneCollectorExpression<?>> docCtx = docInputFactory.getCtx(collectTask.txnCtx());
             docCtx.add(collectPhase.toCollect().stream().filter(s -> !s.equals(keyRef))::iterator);
             IndexOrdinalsFieldData keyIndexFieldData = queryShardContext.getForField(keyFieldType);
 
-            InputFactory.Context<CollectExpression<Row, ?>> ctxForAggregations = inputFactory.ctxForAggregations();
+            InputFactory.Context<CollectExpression<Row, ?>> ctxForAggregations = inputFactory.ctxForAggregations(collectTask.txnCtx());
             ctxForAggregations.add(groupProjection.values());
 
             List<AggregationContext> aggregations = ctxForAggregations.aggregations();
@@ -157,7 +155,7 @@ final class GroupByOptimizedIterator {
             RamAccountingContext ramAccounting = collectTask.queryPhaseRamAccountingContext();
 
             CollectorContext collectorContext = getCollectorContext(
-                sharedShardContext.readerId(), docCtx, queryShardContext::getForField);
+                sharedShardContext.readerId(), queryShardContext::getForField);
 
             for (int i = 0, expressionsSize = expressions.size(); i < expressionsSize; i++) {
                 expressions.get(i).startCollect(collectorContext);
@@ -166,6 +164,7 @@ final class GroupByOptimizedIterator {
 
             LuceneQueryBuilder.Context queryContext = luceneQueryBuilder.convert(
                 collectPhase.where(),
+                collectTask.txnCtx(),
                 indexShard.mapperService(),
                 queryShardContext,
                 sharedShardContext.indexService().cache()
@@ -196,7 +195,8 @@ final class GroupByOptimizedIterator {
                     } catch (Throwable t) {
                         return failedFuture(t);
                     }
-                }
+                },
+                true
             );
         } catch (Throwable t) {
             searcher.close();
@@ -236,7 +236,7 @@ final class GroupByOptimizedIterator {
 
                 @Override
                 public Row apply(Map.Entry<BytesRef, Object[]> entry) {
-                    cells[0] = entry.getKey();
+                    cells[0] = BytesRefs.toString(entry.getKey());
                     Object[] states = entry.getValue();
                     for (int i = 0, c = 1; i < states.length; i++, c++) {
                         //noinspection unchecked
@@ -258,8 +258,9 @@ final class GroupByOptimizedIterator {
                                                                        InputRow inputRow,
                                                                        LuceneQueryBuilder.Context queryContext) throws IOException {
         final Map<BytesRef, Object[]> statesByKey = new HashMap<>();
-        final Weight weight = searcher.searcher().createNormalizedWeight(queryContext.query(), false);
-        final List<LeafReaderContext> leaves = searcher.searcher().getTopReaderContext().leaves();
+        IndexSearcher indexSearcher = searcher.searcher();
+        final Weight weight = indexSearcher.createWeight(indexSearcher.rewrite(queryContext.query()), false, 1f);
+        final List<LeafReaderContext> leaves = indexSearcher.getTopReaderContext().leaves();
         final List<CollectExpression<Row, ?>> aggExpressions = ctxForAggregations.expressions();
         Object[] nullStates = null;
 

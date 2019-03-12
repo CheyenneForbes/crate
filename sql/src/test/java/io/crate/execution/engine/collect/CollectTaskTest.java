@@ -28,6 +28,7 @@ import io.crate.data.Row;
 import io.crate.exceptions.JobKilledException;
 import io.crate.execution.dsl.phases.RoutedCollectPhase;
 import io.crate.execution.jobs.SharedShardContexts;
+import io.crate.metadata.CoordinatorTxnCtx;
 import io.crate.metadata.Routing;
 import io.crate.metadata.RowGranularity;
 import io.crate.testing.TestingRowConsumer;
@@ -66,6 +67,7 @@ public class CollectTaskTest extends RandomizedTest {
         when(collectPhase.maxRowGranularity()).thenReturn(RowGranularity.DOC);
         collectTask = new CollectTask(
             collectPhase,
+            CoordinatorTxnCtx.systemTransactionContext(),
             mock(MapSideDataCollectOperation.class),
             ramAccountingContext,
             new TestingRowConsumer(),
@@ -107,8 +109,10 @@ public class CollectTaskTest extends RandomizedTest {
         Engine.Searcher mock1 = mock(Engine.Searcher.class);
         MapSideDataCollectOperation collectOperationMock = mock(MapSideDataCollectOperation.class);
 
+        CoordinatorTxnCtx txnCtx = CoordinatorTxnCtx.systemTransactionContext();
         CollectTask jobCtx = new CollectTask(
             collectPhase,
+            txnCtx,
             collectOperationMock,
             ramAccountingContext,
             new TestingRowConsumer(),
@@ -117,13 +121,13 @@ public class CollectTaskTest extends RandomizedTest {
         jobCtx.addSearcher(1, mock1);
 
         BatchIterator<Row> batchIterator = mock(BatchIterator.class);
-        when(collectOperationMock.createIterator(eq(collectPhase), anyBoolean(), eq(jobCtx)))
+        when(collectOperationMock.createIterator(eq(txnCtx), eq(collectPhase), anyBoolean(), eq(jobCtx)))
             .thenReturn(batchIterator);
         jobCtx.prepare();
         jobCtx.start();
         jobCtx.kill(new JobKilledException());
 
-        verify(batchIterator, times(1)).kill(any(InterruptedException.class));
+        verify(batchIterator, times(1)).kill(any(JobKilledException.class));
         verify(mock1, times(1)).close();
         verify(ramAccountingContext, times(1)).close();
     }

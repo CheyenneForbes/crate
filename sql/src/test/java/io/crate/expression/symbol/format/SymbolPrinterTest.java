@@ -48,7 +48,6 @@ import io.crate.test.integration.CrateUnitTest;
 import io.crate.testing.SqlExpressions;
 import io.crate.types.ArrayType;
 import io.crate.types.DataTypes;
-import org.apache.lucene.util.BytesRef;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -130,6 +129,12 @@ public class SymbolPrinterTest extends CrateUnitTest {
     }
 
     @Test
+    public void testWindowFunction() throws Exception {
+        Symbol f = sqlExpressions.asSymbol("avg(idx) over (partition by idx order by foo)");
+        assertPrint(f, "avg(doc.formatter.idx)");
+    }
+
+    @Test
     public void testFormatAggregation() throws Exception {
         FunctionInfo functionInfo = new FunctionInfo(
             new FunctionIdent("agg", Collections.singletonList(DataTypes.INTEGER)),
@@ -205,7 +210,7 @@ public class SymbolPrinterTest extends CrateUnitTest {
 
     @Test
     public void visitStringLiteral() throws Exception {
-        Literal<BytesRef> l = Literal.of("fooBar");
+        Literal<String> l = Literal.of("fooBar");
         assertPrint(l, "'fooBar'");
     }
 

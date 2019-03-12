@@ -25,8 +25,8 @@ package io.crate.metadata.upgrade;
 import io.crate.Constants;
 import io.crate.test.integration.CrateUnitTest;
 import org.elasticsearch.cluster.metadata.MappingMetaData;
+import org.elasticsearch.common.bytes.BytesReference;
 import org.elasticsearch.common.compress.CompressedXContent;
-import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.junit.Test;
@@ -40,7 +40,7 @@ public class MetaDataIndexUpgraderTest extends CrateUnitTest {
 
     @Test
     public void testDynamicStringTemplateIsPurged() throws IOException {
-        MetaDataIndexUpgrader metaDataIndexUpgrader = new MetaDataIndexUpgrader(Settings.EMPTY);
+        MetaDataIndexUpgrader metaDataIndexUpgrader = new MetaDataIndexUpgrader();
         MappingMetaData mappingMetaData = new MappingMetaData(createDynamicStringMappingTemplate());
         MappingMetaData newMappingMetaData = metaDataIndexUpgrader.purgeDynamicStringTemplate(mappingMetaData, "dummy");
 
@@ -72,6 +72,6 @@ public class MetaDataIndexUpgraderTest extends CrateUnitTest {
             .endObject();
         // @formatter:on
 
-        return new CompressedXContent(builder.bytes().utf8ToString());
+        return new CompressedXContent(BytesReference.bytes(builder));
     }
 }

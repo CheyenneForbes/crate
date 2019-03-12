@@ -24,13 +24,13 @@ package io.crate.expression.tablefunctions;
 
 import io.crate.action.sql.SessionContext;
 import io.crate.analyze.WhereClause;
-import io.crate.data.Bucket;
 import io.crate.data.CollectionBucket;
 import io.crate.data.Input;
 import io.crate.metadata.BaseFunctionResolver;
 import io.crate.metadata.FunctionIdent;
 import io.crate.metadata.FunctionImplementation;
 import io.crate.metadata.FunctionInfo;
+import io.crate.metadata.TransactionContext;
 import io.crate.metadata.RelationName;
 import io.crate.metadata.Routing;
 import io.crate.metadata.RoutingProvider;
@@ -40,10 +40,9 @@ import io.crate.metadata.table.StaticTableInfo;
 import io.crate.metadata.table.TableInfo;
 import io.crate.metadata.tablefunctions.TableFunctionImplementation;
 import io.crate.types.DataType;
-import io.crate.types.DataTypes;
+import io.crate.types.ObjectType;
 import org.elasticsearch.cluster.ClusterState;
 
-import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 
@@ -55,7 +54,7 @@ public class EmptyRowTableFunction {
     private static final String NAME = "empty_row";
     public static final RelationName TABLE_IDENT = new RelationName("", NAME);
 
-    static class EmptyRowTableFunctionImplementation implements TableFunctionImplementation {
+    static class EmptyRowTableFunctionImplementation extends TableFunctionImplementation {
 
         private final FunctionInfo info;
 
@@ -69,7 +68,7 @@ public class EmptyRowTableFunction {
         }
 
         @Override
-        public Bucket execute(Collection<? extends Input> arguments) {
+        public Object evaluate(TransactionContext txnCtx, Input[] args) {
             return new CollectionBucket(Collections.singletonList(new Object[0]));
         }
 
@@ -99,7 +98,7 @@ public class EmptyRowTableFunction {
             @Override
             public FunctionImplementation getForTypes(List<DataType> dataTypes) throws IllegalArgumentException {
                 return new EmptyRowTableFunctionImplementation(
-                    new FunctionInfo(new FunctionIdent(NAME, dataTypes), DataTypes.OBJECT, FunctionInfo.Type.TABLE));
+                    new FunctionInfo(new FunctionIdent(NAME, dataTypes), ObjectType.untyped(), FunctionInfo.Type.TABLE));
             }
         });
     }

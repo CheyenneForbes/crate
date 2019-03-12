@@ -25,8 +25,10 @@ import io.crate.analyze.TableParameterInfo;
 import io.crate.execution.engine.collect.NestableCollectExpression;
 import io.crate.metadata.RelationInfo;
 import io.crate.metadata.doc.DocTableInfo;
-import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.common.lucene.BytesRefs;
+import org.elasticsearch.cluster.metadata.IndexMetaData;
+
+import java.util.HashMap;
+import java.util.Map;
 
 public class TablesSettingsExpression extends AbstractTablesSettingsExpression {
 
@@ -71,25 +73,27 @@ public class TablesSettingsExpression extends AbstractTablesSettingsExpression {
         }
     }
 
-    static class BytesRefTableParameterExpression extends NestableCollectExpression<RelationInfo, BytesRef> {
+    static class StringTableParameterExpression extends NestableCollectExpression<RelationInfo, String> {
 
         private final String paramName;
-        private BytesRef value;
+        private String value;
 
-        BytesRefTableParameterExpression(String paramName) {
+        StringTableParameterExpression(String paramName) {
             this.paramName = paramName;
         }
 
         @Override
         public void setNextRow(RelationInfo row) {
-            value = null;
-            if (row instanceof DocTableInfo) {
-                value = BytesRefs.toBytesRef(row.parameters().get(paramName));
+            Object o = row.parameters().get(paramName);
+            if (o == null) {
+                value = null;
+            } else {
+                value = o.toString();
             }
         }
 
         @Override
-        public BytesRef value() {
+        public String value() {
             return value;
         }
     }
@@ -157,11 +161,36 @@ public class TablesSettingsExpression extends AbstractTablesSettingsExpression {
 
         static final String ENABLE = "enable";
         static final String TOTAL_SHARDS_PER_NODE = "total_shards_per_node";
+        static final String REQUIRE = "require";
+        static final String INCLUDE = "include";
+        static final String EXCLUDE = "exclude";
 
         private void addChildImplementations() {
-            childImplementations.put(ENABLE, new BytesRefTableParameterExpression(TableParameterInfo.ROUTING_ALLOCATION_ENABLE.getKey()));
+            childImplementations.put(ENABLE, new StringTableParameterExpression(TableParameterInfo.ROUTING_ALLOCATION_ENABLE.getKey()));
             childImplementations.put(TOTAL_SHARDS_PER_NODE, new TableParameterExpression(TableParameterInfo.TOTAL_SHARDS_PER_NODE.getKey()));
+            childImplementations.put(REQUIRE, NestableCollectExpression.<RelationInfo, Map<String, Object>>forFunction(
+                r -> mapOfDynamicGroupSetting(IndexMetaData.INDEX_ROUTING_REQUIRE_GROUP_PREFIX, r)));
+            childImplementations.put(INCLUDE, NestableCollectExpression.<RelationInfo, Map<String, Object>>forFunction(
+                r -> mapOfDynamicGroupSetting(IndexMetaData.INDEX_ROUTING_INCLUDE_GROUP_PREFIX, r)));
+            childImplementations.put(EXCLUDE, NestableCollectExpression.<RelationInfo, Map<String, Object>>forFunction(
+                r -> mapOfDynamicGroupSetting(IndexMetaData.INDEX_ROUTING_EXCLUDE_GROUP_PREFIX, r)));
         }
+    }
+
+    private static Map<String, Object> mapOfDynamicGroupSetting(String groupName, RelationInfo row) {
+        if (row instanceof DocTableInfo) {
+            Map<String, Object> valueMap = new HashMap<>();
+            for (Map.Entry<String, Object> entry : row.parameters().entrySet()) {
+                String key = entry.getKey();
+                if (key.startsWith(groupName)) {
+                    valueMap.put(key.substring(groupName.length() + 1), entry.getValue());
+                }
+            }
+            if (valueMap.size() > 0) {
+                return valueMap;
+            }
+        }
+        return null;
     }
 
     static class TablesSettingsWarmerExpression extends AbstractTablesSettingsExpression {
@@ -211,7 +240,7 @@ public class TablesSettingsExpression extends AbstractTablesSettingsExpression {
         private void addChildImplementations() {
             childImplementations.put(
                 WAIT_FOR_ACTIVE_SHARDS,
-                new BytesRefTableParameterExpression(TableParameterInfo.SETTING_WAIT_FOR_ACTIVE_SHARDS.getKey()));
+                new StringTableParameterExpression(TableParameterInfo.SETTING_WAIT_FOR_ACTIVE_SHARDS.getKey()));
         }
     }
 

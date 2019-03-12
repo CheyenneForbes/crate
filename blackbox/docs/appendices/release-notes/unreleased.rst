@@ -29,6 +29,10 @@ Unreleased Changes
 .. When resetting this file during a release, leave the headers in place, but
 .. add a single paragraph to each section with the word "None".
 
+.. Always cluster items into bigger topics. Link to the documentation whenever feasible.
+.. Remember to give the right level of information: Users should understand
+.. the impact of the change without going into the depth of tech.
+
 .. rubric:: Table of Contents
 
 .. contents::
@@ -37,32 +41,98 @@ Unreleased Changes
 Breaking Changes
 ================
 
+- Removed the deprecated average duration and query frequency JMX metrics. The
+  total counts and sum of durations as documented in :ref:`query_stats_mbean`
+  should be used instead.
+
+- Removed the deprecated setting ``cluster.graceful_stop.reallocate``.
+
+- Removed the deprecated ``ON DUPLICATE KEY`` syntax of :ref:`ref-insert`
+  statements.
+
+- Dropped support for Java versions < 11
+
+- The Elasticsearch REST API has been removed.
+
+- Changed the layout of the ``version`` column in the
+  ``information_schema.tables`` and ``information_schema.table_partitions``
+  tables. The version is now displayed directly under ``created`` and
+  ``upgraded``. The ``cratedb`` and ``elasticsearch`` sub-category has been
+  removed.
+
+- Removed the ``index`` thread-pool and the ``bulk`` alias for the ``write``
+  thread-pool. The JMX ``getBulk`` property of the ``ThreadPools`` bean has
+  been renamed too ``getWrite``.
+
+- Removed the deprecated ``http.enabled`` setting. ``HTTP`` is now always
+  enabled and can no longer be disabled.
+
+- Removed the deprecated ``ingest`` framework, including the ``MQTT`` endpoint.
+
+
+Deprecations
+============
+
+- The query frequency and average duration :ref:`query_stats_mbean` metrics
+  have been deprecated in favour of the new total count and sum of durations
+  metrics.
+
+- Marked the ``cluster.graceful_stop.reallocate`` setting as deprecated.
+  This setting was already being ignored, setting the value to `false` has
+  no effect.
+
+- The node decommission using the ``USR2`` :ref:`cli_signals` has been
+  deprecated in favour of the
+  :ref:`ALTER CLUSTER DECOMISSION <alter_cluster_decommission>` statement.
+
+- Marked ``CREATE INGEST RULE`` and ``DROP INGEST RULE`` as deprecated.
+  Given that the only implementation (MQTT) was deprecated and will be removed,
+  the framework itself will also be removed.
+
 Changes
 =======
 
-- Expand the ``search_path`` setting to accept a list of schemas that will be
-  searched when a relation (table, view or user defined function) is referenced
-  without specifying a schema. The system ``pg_catalog`` schema is implicitly
-  included as the first one in the path.
+- Added support for :ref:`sql_escape_string_literals`.
 
-- Improved the handling of function expressions inside subscripts used on
-  object columns. This allows expressions like ``obj['x' || 'x']`` to be used.
+- Expose the sum of durations, total, and failed count metrics under the
+  :ref:`query_stats_mbean` for ``QUERY``, ``INSERT``, ``UPDATE``, ``DELETE``,
+  ``MANAGEMENT``, ``DDL`` and ``COPY`` statement types.
 
-- The ``= ANY`` operator now also supports operations on nested arrays. This
-  enables queries like ``WHERE ['foo', 'bar'] =
-  ANY(object_array(string_array))``.
+- Expose the sum of statement durations, total, and failed count classified by
+  statement type under the sum_of_durations, total_count and failed_count
+  columns, respectively, in the :ref:`sys-jobs-metrics` table.
 
-- Added support for the ``array(subquery)`` expression.
+- Added a node check that checks the JVM version under which CrateDB is
+  running. We recommend users to upgrade to JVM 11 as support for older
+  versions will be dropped in the future.
 
-- ``<object_column> = <object_literal>`` comparisons now try to utilize the
-  index for the objects contents and can therefore run much faster.
+- Added ``ALTER CLUSTER DECOMMISSION <nodeId | nodeName>`` statement that
+  triggers the existing node decommission functionality.
 
-- Values of byte-size and time based configuration setting do not require a unit
-  suffix anymore. Without a unit time values are treat as milliseconds since
-  epoch and byte size values are treat as bytes.
+- Added ``pg_type.typlen``, ``pg_type.typarray`` and ``pg_type.typnamespace``
+  columns for improved postgresql compatibility.
 
-- Added support of using units inside byte-size or time bases statement
-  parameters values. E.g. '1mb' for 1 MegaByte or '1s' for 1 Second.
+- Added ``current_schemas(boolean)`` scalar function which will return the
+  names of schemas in the ``search_path``.
+
+- Added support for the ``first_value``, ``last_value`` and ``nth_value``
+  window functions as enterprise features.
+
+- Implemented the ``DROP ANALYZER`` statement to support removal of custom
+  analyzer definitions from the cluster.
+
+- Output the custom analyzer/tokenizer/token_filter/char_filter definition inside
+  the ``information_schema.routines.routine_definition`` column.
+
+- Added a ``pg_description`` table to the ``pg_catalog`` schema for improved
+  postgresql compatibility.
+
+- Added support for window function ``row_number()``.
+
+- Added support to use any expression in the operand of a ``CASE`` clause.
+
+- Buffer the file output of ``COPY TO`` operations to improve performance by not
+  writing to disk on every row.
 
 Fixes
 =====
